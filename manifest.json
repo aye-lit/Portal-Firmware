@@ -1,6 +1,6 @@
 {
   "name": "Vortex Portal firmware",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "builds": {
     "portal_s3_gc9a01": {
       "file": "firmware/portal_s3_gc9a01.bin",

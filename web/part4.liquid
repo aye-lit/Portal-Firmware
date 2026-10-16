@@ -586,31 +586,57 @@ function picPixels(i) {                             // preview pixels, rounded t
   pic._pixKey = key; pic._pix = d;
   return d;
 }
-function sceneNow() {                               // same timing as the board
-  const L = sceneList().map(x => x === 255 ? -1 : x), n = L.length;
+function sceneNow() {                               // same timing as the board (scene codes: 255 portal, k picture, 128+k portal around picture)
+  const L = sceneList(), n = L.length, now = performance.now() / 1000;
   if (!n) return null;
-  if (n === 1) return { a: L[0], b: L[0], mix: 0 };
-  const per = S.holdsec + S.scenefade, pos = (performance.now() / 1000) % (per * n);
+  if (n === 1) return { a: L[0], b: L[0], mix: 0, ageA: now, ageB: 0 };
+  const per = S.holdsec + S.scenefade, pos = now % (per * n);
   const i = Math.min(Math.floor(pos / per), n - 1), w = pos - i * per;
   let mix = 0;
   if (w >= S.holdsec && S.scenefade > 0) { let f = (w - S.holdsec) / S.scenefade; f = f * f * (3 - 2 * f); mix = Math.trunc(f * 256); }
-  return { a: L[i], b: L[(i + 1) % n], mix };
+  return { a: L[i], b: L[(i + 1) % n], mix, ageA: w + S.scenefade, ageB: Math.max(0, w - S.holdsec) };
 }
+function sceneLayer(code, age) {
+  if (code === 255) return { kind: 0 };
+  if (code < 128) return { kind: 1, pix: picPixels(code) };
+  const pix = picPixels(code - 128);
+  if (!pix) return { kind: 0 };
+  const close = S.scenefade + 1.5;
+  let k = Math.min(1, age / close); k = k * k * (3 - 2 * k);
+  const hole = S.radius * (1 - S.frame / 100 * k), alpha = new Int16Array(256);
+  for (let r = 0; r < 256; r++) { const a = (hole + 4 - r) / 8; alpha[r] = a <= 0 ? 0 : a >= 1 ? 256 : Math.trunc(a * 256); }
+  return { kind: 2, pix, alpha };
+}
+const mixABGR = (x, y, m) => { const n = 256 - m; return (255 << 24) | ((((x >> 16) & 255) * n + ((y >> 16) & 255) * m) >> 8 << 16) | ((((x >> 8) & 255) * n + ((y >> 8) & 255) * m) >> 8 << 8) | (((x & 255) * n + (y & 255) * m) >> 8); };
 function composePreview(out) {
   const sc = sceneNow(); if (!sc) return;
-  const pa = sc.a >= 0 ? picPixels(sc.a) : null, pb = sc.b >= 0 ? picPixels(sc.b) : null;
-  if (!(sc.mix > 0 && (pa || pb))) { const p = sc.mix >= 128 ? pb : pa; if (p) out.set(p); else if (sc.mix >= 128 ? sc.b >= 0 : sc.a >= 0) out.fill(0xFF000000); return; }
-  const m = sc.mix, n = 256 - m;
-  for (let k = 0; k < out.length; k++) {
-    const x = pa ? pa[k] : out[k], y = pb ? pb[k] : out[k];
-    const r = ((x & 255) * n + (y & 255) * m) >> 8, g = (((x >> 8) & 255) * n + ((y >> 8) & 255) * m) >> 8, b = (((x >> 16) & 255) * n + ((y >> 16) & 255) * m) >> 8;
-    out[k] = (255 << 24) | (b << 16) | (g << 8) | r;
+  let A = sceneLayer(sc.a, sc.ageA), B = sc.mix > 0 && sc.b !== sc.a ? sceneLayer(sc.b, sc.ageB) : null, m = sc.mix;
+  if (!B && m >= 128) A = sceneLayer(sc.b, sc.ageB);
+  if (!B) m = 0;
+  if (A.kind === 0 && (!B || B.kind === 0)) return;
+  const color = (L, k, r) => L.kind === 0 ? out[k] : L.kind === 1 ? (L.pix ? L.pix[k] : 0xFF000000) : (L.alpha[r] ? (L.alpha[r] === 256 ? L.pix[k] : mixABGR(out[k], L.pix[k], L.alpha[r])) : out[k]);
+  const needR = A.kind === 2 || (B && B.kind === 2);
+  for (let y = 0, k = 0; y < TH; y++) {
+    const qy = y < QY ? QY - 1 - y : y - QY;
+    for (let x = 0; x < TW; x++, k++) {
+      const r = needR ? rT[qy * TQX + colMap[x]] : 0;
+      const ca = color(A, k, r);
+      out[k] = m ? mixABGR(ca, color(B, k, r), m) : ca;
+    }
   }
 }
-function thumb(c, pic, size) {                      // small picture of a scene
+function thumb(c, pic, size, framed) {              // small picture of a scene
   const k = size / Math.max(M.w, M.h);
   c.width = Math.round(M.w * k); c.height = Math.round(M.h * k);
   const x = c.getContext("2d");
+  if (framed) {                                     // portal around the picture
+    thumb(c, null, size);
+    const src = cropCanvas(pic); if (!src) return;
+    const r = Math.min(c.width, c.height) / 2 * (S.radius / rmax(M)) * (1 - S.frame / 100);
+    x.save(); x.beginPath(); x.arc(c.width / 2, c.height / 2, Math.max(2, r), 0, Math.PI * 2); x.clip();
+    x.drawImage(src, 0, 0, c.width, c.height); x.restore();
+    return;
+  }
   if (!pic) {                                       // the portal
     const gr = x.createRadialGradient(c.width / 2, c.height / 2, 1, c.width / 2, c.height / 2, Math.min(c.width, c.height) / 2);
     gr.addColorStop(0, "#fff"); gr.addColorStop(0.25, S.c1); gr.addColorStop(0.8, S.c2); gr.addColorStop(1, "#000");
@@ -648,11 +674,12 @@ function renderScenes() {
   S.scenes.forEach((sc, i) => {
     const row = document.createElement("div"); row.className = "scene" + (round ? " round" : "");
     const opts = [`<option value="-1"${sc === -1 ? " selected" : ""}>Portal</option>`]
-      .concat(S.pics.map((_, k) => `<option value="${k}"${sc === k ? " selected" : ""}>Picture ${k + 1}</option>`)).join("");
+      .concat(S.pics.map((_, k) => `<option value="${k}"${sc === k ? " selected" : ""}>Picture ${k + 1}</option>`))
+      .concat(S.pics.map((_, k) => `<option value="${100 + k}"${sc === 100 + k ? " selected" : ""}>Portal around picture ${k + 1}</option>`)).join("");
     row.innerHTML = `<span class="snum">${i + 1}</span><canvas></canvas>
       <select aria-label="Scene ${i + 1}">${opts}</select>
       <span class="sgap"><button type="button" data-up aria-label="Move scene ${i + 1} earlier">▲</button><button type="button" data-down aria-label="Move scene ${i + 1} later">▼</button><button type="button" data-del aria-label="Remove scene ${i + 1}">Remove</button></span>`;
-    thumb(row.querySelector("canvas"), sc >= 0 ? S.pics[sc] : null, 34);
+    thumb(row.querySelector("canvas"), sc >= 0 ? S.pics[sc % 100] : null, 34, sc >= 100);
     row.querySelector("select").addEventListener("change", e => { S.scenes[i] = +e.target.value; renderScenes(); changed(); });
     const move = d => { const j = i + d; if (j < 0 || j >= S.scenes.length) return; [S.scenes[i], S.scenes[j]] = [S.scenes[j], S.scenes[i]]; renderScenes(); changed(); };
     row.querySelector("[data-up]").addEventListener("click", () => move(-1));
@@ -663,10 +690,12 @@ function renderScenes() {
   $("scene-add").hidden = S.scenes.length >= 8;
   $("hold-min").value = Math.floor(S.holdsec / 60); $("hold-sec").value = S.holdsec % 60;
   $("scene-fade").value = S.scenefade;
+  $("frame-wrap").hidden = !S.scenes.some(x => x >= 100);
+  $("frame").value = S.frame; $("o-frame").textContent = S.frame + "%";
 }
 function removePic(i) {
   S.pics.splice(i, 1);
-  S.scenes = S.scenes.filter(x => x !== i).map(x => x > i ? x - 1 : x);
+  S.scenes = S.scenes.filter(x => x !== i && x !== 100 + i).map(x => (x >= 100 ? x - 100 : x) > i ? x - 1 : x);
   savePics(); renderPics(); changed();
 }
 async function addPictures(files) {
@@ -702,6 +731,8 @@ $("hold-min").addEventListener("input", readHold); $("hold-sec").addEventListene
 $("hold-min").addEventListener("change", renderScenes); $("hold-sec").addEventListener("change", renderScenes);
 $("scene-fade").addEventListener("input", e => { const v = parseInt(e.target.value, 10); S.scenefade = Number.isFinite(v) ? Math.min(60, Math.max(0, v)) : 0; changed(); });
 $("scene-fade").addEventListener("change", renderScenes);
+$("frame").addEventListener("input", e => { S.frame = +e.target.value; $("o-frame").textContent = S.frame + "%"; changed(); });
+$("frame").addEventListener("change", renderScenes);
 function showPictures() {
   const ok = picturesAllowed();
   $("pics-wrap").hidden = !ok; $("send-pics-box").hidden = !ok || !S.pics.length;
@@ -899,7 +930,7 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
 const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${S.drift ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
-function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade}`; }
+function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame}`; }
 
 async function readReply(ms) {
   const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "";

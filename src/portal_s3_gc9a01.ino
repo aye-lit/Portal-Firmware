@@ -92,14 +92,15 @@ uint8_t  RIPPLES    = 2;       // Starburst: rings expanding at once (0-6)
 float    RIP_SPEED  = 0.09;    // Starburst: ripple speed (0.03-0.30)
 float    GLOW_SIZE  = 0.55;    // Starburst: centre glow size (0.30-0.90)
 uint8_t  SCENE_COUNT = 0;      // scenes shown in turn (0 = just the portal)
-uint8_t  SCENES[8]  = { 255, 255, 255, 255, 255, 255, 255, 255 };   // 255 = the portal, 0-7 = pictures sent from the Studio
+uint8_t  SCENES[8]  = { 255, 255, 255, 255, 255, 255, 255, 255 };   // 255 = the portal, 0-7 = pictures, 128-135 = portal around a picture
 float    HOLD_SECS  = 10;       // seconds each scene stays on screen
 float    SCENE_FADE = 2;       // seconds to fade into the next scene (0 = instant)
+uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + picture): how much of the picture the portal covers, 10-95 %
 // --------------------------------------------------------
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x7B2EA5D6UL;
+const uint32_t BUILD_ID = 0x23655008UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -135,7 +136,7 @@ Spark sparks[MAX_SPARKS];
 int16_t sparkX[MAX_SPARKS], sparkY[MAX_SPARKS];
 float t = 0;
 
-struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; };
+struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct; };
 
 // ---------- tables ----------
 // Cartoon styles: smooth looping noise tables
@@ -291,7 +292,11 @@ void updateSparks() {
 // ---------- saved settings (EEPROM) ----------
 bool validScenes(const Saved &s) {
   if (s.sceneCount > 8 || !(s.holdSecs >= 1 && s.holdSecs <= 3600) || !(s.sceneFade >= 0 && s.sceneFade <= 600)) return false;
-  for (uint8_t i = 0; i < s.sceneCount; i++) if (s.scenes[i] != PORTAL && s.scenes[i] >= MAX_PICS) return false;
+  if (s.framePct < 10 || s.framePct > 95) return false;
+  for (uint8_t i = 0; i < s.sceneCount; i++) {
+    uint8_t c = s.scenes[i];
+    if (c != PORTAL && c >= MAX_PICS && (c < 128 || c >= 128 + MAX_PICS)) return false;
+  }
   return true;
 }
 
@@ -311,7 +316,7 @@ void apply(const Saved &s) {
   RIPPLES = s.ripples; RIP_SPEED = s.ripSpeed; GLOW_SIZE = s.glow; STARS = s.stars;
   FADE_ON = s.fadeOn; FADE_COUNT = s.fadeCount; FADE_SECS = s.fadeSecs; RIM_SMOOTH = s.rimSmooth;
   for (int k = 0; k < 6; k++) FADE_COLS[k] = s.fadeCols[k] & 0xFFFFFF;
-  SCENE_COUNT = s.sceneCount; HOLD_SECS = s.holdSecs; SCENE_FADE = s.sceneFade;
+  SCENE_COUNT = s.sceneCount; HOLD_SECS = s.holdSecs; SCENE_FADE = s.sceneFade; FRAME_PCT = s.framePct;
   for (int k = 0; k < 8; k++) SCENES[k] = s.scenes[k];
 }
 
@@ -329,7 +334,7 @@ void saveSettings() {
   for (int k = 0; k < 6; k++) s.fadeCols[k] = FADE_COLS[k];
   s.fadeSecs = FADE_SECS;
   s.rimSmooth = RIM_SMOOTH;
-  s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE;
+  s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE; s.framePct = FRAME_PCT;
   for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
   EEPROM.put(0, s);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
@@ -486,29 +491,30 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 
 // ---------- live tuning over USB serial (and Bluetooth below) ----------
 // Command: SET radius oval arms twist speed sparks drift core rim brightness style ripples ripspeed glow stars fade count core2 rim2 core3 rim3 core4 rim4 fadesecs rimsmooth
-//              [scenecount scene1..scene8 holdsecs scenefade]   (reply: OK or ERR)
+//              [scenecount scene1..scene8 holdsecs scenefade [framepct]]   (reply: OK or ERR)
 // Pictures: INFO, then IMG slot bytes id / D base64... / END   (see "pictures" above)
 char cmd[256];
 uint8_t cmdLen = 0;
 
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strncasecmp(line, "SET ", 4) == 0) {
-    float v[36];
+    float v[37];
     uint8_t n = 0;
     char *p = strtok(line + 4, " ");
-    while (p && n < 36) { v[n++] = atof(p); p = strtok(NULL, " "); }
-    if (n == 25 || n == 36) {
+    while (p && n < 37) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36 || n == 37) {
       Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
       for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
       s.fadeSecs = v[23];
       s.rimSmooth = (uint8_t)v[24];
-      s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE;
+      s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE; s.framePct = FRAME_PCT;
       for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
-      if (n == 36) {
+      if (n >= 36) {
         s.sceneCount = (uint8_t)v[25];
         for (int k = 0; k < 8; k++) s.scenes[k] = (uint8_t)v[26 + k];
         s.holdSecs = v[34]; s.sceneFade = v[35];
       }
+      if (n == 37) s.framePct = (uint8_t)v[36];
       if (valid(s)) {
         pendingSettings = s;
         havePending = true;              // the drawing loop picks it up before the next frame
@@ -614,42 +620,70 @@ void readBluetooth() {                    // handle a received line in the main 
 // ---------- scenes: the portal and pictures shown in turn, with fades ----------
 uint8_t sceneA = PORTAL, sceneB = PORTAL;
 int     sceneMix = 0;                    // 0 = all scene A, 256 = all scene B
+float   ageA = 0, ageB = 0;              // seconds since each scene started to appear
 
 void updateScene() {
   if (SCENE_COUNT == 0) { sceneA = sceneB = PORTAL; sceneMix = 0; return; }
-  if (SCENE_COUNT == 1) { sceneA = sceneB = SCENES[0]; sceneMix = 0; return; }
+  if (SCENE_COUNT == 1) { sceneA = sceneB = SCENES[0]; sceneMix = 0; ageA = millis() / 1000.0f; return; }
   float per = HOLD_SECS + SCENE_FADE;
   float pos = fmodf(millis() / 1000.0f, per * SCENE_COUNT);
   int i = min((int)(pos / per), SCENE_COUNT - 1);
   float w = pos - i * per;
   sceneA = SCENES[i];
   sceneB = SCENES[(i + 1) % SCENE_COUNT];
+  ageA = w + SCENE_FADE;                 // it began fading in during the previous scene
+  ageB = max(0.0f, w - HOLD_SECS);
   if (w < HOLD_SECS || SCENE_FADE <= 0) sceneMix = 0;
   else { float f = (w - HOLD_SECS) / SCENE_FADE; f = f * f * (3 - 2 * f); sceneMix = (int)(f * 256); }
 }
 
-void blendStrip(uint16_t *a, const uint16_t *b, int n, int m) {   // a = a + (b - a) * m / 256
-  for (int i = 0; i < n; i++) {
-    uint16_t x = a[i], y = b[i];
-    int r  = ((x >> 11) * (256 - m) + (y >> 11) * m) >> 8;
-    int g  = (((x >> 5) & 63) * (256 - m) + ((y >> 5) & 63) * m) >> 8;
-    int bl = ((x & 31) * (256 - m) + (y & 31) * m) >> 8;
-    a[i] = (r << 11) | (g << 5) | bl;
+// "Portal around a picture": the picture shows through the portal's centre. When the scene
+// starts, the portal forms at its outer edge and closes in until it covers FRAME_PCT.
+inline bool isFramed(uint8_t s) { return s >= 128 && isPicture(s - 128); }
+
+inline uint16_t mix565(uint16_t x, uint16_t y, int m) {
+  int r  = ((x >> 11) * (256 - m) + (y >> 11) * m) >> 8;
+  int g  = (((x >> 5) & 63) * (256 - m) + ((y >> 5) & 63) * m) >> 8;
+  int bl = ((x & 31) * (256 - m) + (y & 31) * m) >> 8;
+  return (r << 11) | (g << 5) | bl;
+}
+
+void framePicture(uint8_t pic, float age, int y0, int rows, uint16_t *dst) {
+  static uint16_t line[SCR_W];
+  float close = SCENE_FADE + 1.5f;                            // seconds to close in (keeps going after the fade)
+  float k = min(1.0f, age / close); k = k * k * (3 - 2 * k);
+  float hole = RADIUS * (1.0f - FRAME_PCT / 100.0f * k);      // radius where the picture shows
+  int16_t alpha[256];                                          // soft 8-pixel edge
+  for (int r = 0; r < 256; r++) { float a = (hole + 4 - r) / 8.0f; alpha[r] = a <= 0 ? 0 : a >= 1 ? 256 : (int16_t)(a * 256); }
+  for (int y = y0; y < y0 + rows; y++) {
+    int qy = y < QY ? QY - 1 - y : y - QY;
+    if (qy > hole + 4) continue;                                // this row is all portal
+    readPicture(pic, y, 1, line);
+    uint16_t *d = dst + (y - y0) * SCR_W;
+    for (int x = 0; x < SCR_W; x++) {
+      int m = alpha[rT[qy * TQX + colMap[x]]];
+      if (m) d[x] = m == 256 ? line[x] : mix565(d[x], line[x], m);
+    }
   }
+}
+
+void blendStrip(uint16_t *a, const uint16_t *b, int n, int m) {   // a = a + (b - a) * m / 256
+  for (int i = 0; i < n; i++) a[i] = mix565(a[i], b[i], m);
 }
 
 void renderStrip(int y0, int rows, uint16_t *strip);
 
-void drawScene(uint8_t s, int y0, int rows, uint16_t *dst) {
-  if (isPicture(s)) readPicture(s, y0, rows, dst);
-  else renderStrip(y0, rows, dst);
+void drawScene(uint8_t s, float age, int y0, int rows, uint16_t *dst) {
+  if (isPicture(s)) { readPicture(s, y0, rows, dst); return; }
+  renderStrip(y0, rows, dst);
+  if (isFramed(s)) framePicture(s - 128, age, y0, rows, dst);
 }
 
 void composeStrip(int y0, int rows, uint16_t *dst) {
-  bool fading = sceneMix > 0 && (isPicture(sceneA) || isPicture(sceneB));
-  if (!fading || !picBuf) { drawScene(sceneMix >= 128 ? sceneB : sceneA, y0, rows, dst); return; }
-  drawScene(sceneA, y0, rows, dst);
-  drawScene(sceneB, y0, rows, picBuf);
+  bool fading = sceneMix > 0 && sceneA != sceneB;
+  if (!fading || !picBuf) { if (sceneMix >= 128) drawScene(sceneB, ageB, y0, rows, dst); else drawScene(sceneA, ageA, y0, rows, dst); return; }
+  drawScene(sceneA, ageA, y0, rows, dst);
+  drawScene(sceneB, ageB, y0, rows, picBuf);
   blendStrip(dst, picBuf, rows * SCR_W, sceneMix);
 }
 
