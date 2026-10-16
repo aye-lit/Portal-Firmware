@@ -49,7 +49,7 @@ void beginBus() {
   SPI.begin();                     // fixed hardware SPI pins
 #endif
 }
-#define SPI_HZ    40000000UL   // screen speed; lower it if the picture glitches
+#define SPI_HZ    27000000UL   // screen speed; lower it if the picture glitches
 
 #define SCR_W      480          // screen width and height as mounted
 #define SCR_H      320
@@ -86,7 +86,7 @@ float    GLOW_SIZE  = 0.55;    // Starburst: centre glow size (0.30-0.90)
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x99C1A3C1UL;
+const uint32_t BUILD_ID = 0xD65D5578UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -617,6 +617,8 @@ bool allocBuffers() {
 
 void setup() {
   Serial.begin(115200);
+  delay(300);
+  Serial.println(F("[portal] starting"));
   // Board extras: backlight on, touch chip off the shared SPI bus, speaker and RGB LED off
   pinMode(27, OUTPUT); digitalWrite(27, HIGH);
   pinMode(33, OUTPUT); digitalWrite(33, HIGH);
@@ -624,24 +626,26 @@ void setup() {
   pinMode(22, OUTPUT); digitalWrite(22, HIGH);
   pinMode(16, OUTPUT); digitalWrite(16, HIGH);
   pinMode(17, OUTPUT); digitalWrite(17, HIGH);
-  if (!allocBuffers()) {
-    for (;;) { Serial.println(F("Not enough memory for this screen")); delay(2000); }
-  }
-  loadSettings();
   beginBus();
-#if HAS_BLE
-  beginBluetooth();
-#endif
   tft.init(320, 480, 0, 0, ST7796S_BGR);   // if red and blue look swapped, change ST7796S_BGR to ST7796S_RGB
   tft.invertDisplay(true);               // if the colours look like a photo negative, change true to false
   tft.setSPISpeed(SPI_HZ);
   tft.setRotation(1);                // landscape
   tft.fillScreen(0);
+  Serial.println(F("[portal] screen ready"));
+  if (!allocBuffers()) {
+    for (;;) { Serial.println(F("[portal] not enough memory for this screen")); delay(2000); }
+  }
+  loadSettings();
   randomSeed(micros());
   buildGeometry();
   buildParams();
   buildPalette();
   resetSparks();
+#if HAS_BLE
+  beginBluetooth();
+  Serial.println(F("[portal] bluetooth ready"));
+#endif
 #if DUAL_CORE
   for (int i = 0; i < 2; i++) {
     readySem[i] = xSemaphoreCreateBinary();
@@ -650,6 +654,7 @@ void setup() {
   }
   xTaskCreatePinnedToCore(renderTask, "portal", 4096, NULL, 1, NULL, 0);
 #endif
+  Serial.println(F("[portal] running"));
 }
 
 void loop() {

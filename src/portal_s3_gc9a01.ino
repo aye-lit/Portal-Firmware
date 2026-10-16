@@ -86,7 +86,7 @@ float    GLOW_SIZE  = 0.55;    // Starburst: centre glow size (0.30-0.90)
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x99C1A3C1UL;
+const uint32_t BUILD_ID = 0xD65D5578UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -617,21 +617,25 @@ bool allocBuffers() {
 
 void setup() {
   Serial.begin(115200);
-  if (!allocBuffers()) {
-    for (;;) { Serial.println(F("Not enough memory for this screen")); delay(2000); }
-  }
-  loadSettings();
+  delay(300);
+  Serial.println(F("[portal] starting"));
   beginBus();
-#if HAS_BLE
-  beginBluetooth();
-#endif
   tft.begin(SPI_HZ);
   tft.fillScreen(0);
+  Serial.println(F("[portal] screen ready"));
+  if (!allocBuffers()) {
+    for (;;) { Serial.println(F("[portal] not enough memory for this screen")); delay(2000); }
+  }
+  loadSettings();
   randomSeed(micros());
   buildGeometry();
   buildParams();
   buildPalette();
   resetSparks();
+#if HAS_BLE
+  beginBluetooth();
+  Serial.println(F("[portal] bluetooth ready"));
+#endif
 #if DUAL_CORE
   for (int i = 0; i < 2; i++) {
     readySem[i] = xSemaphoreCreateBinary();
@@ -640,6 +644,7 @@ void setup() {
   }
   xTaskCreatePinnedToCore(renderTask, "portal", 4096, NULL, 1, NULL, 0);
 #endif
+  Serial.println(F("[portal] running"));
 }
 
 void loop() {
