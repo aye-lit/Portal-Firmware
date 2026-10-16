@@ -76,6 +76,12 @@
 #vps .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 #vps .seg button { border: 0; border-radius: 0; background: transparent; padding: 5px 10px; font: 500 12px var(--mono); color: var(--dim); cursor: pointer; }
 #vps .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+#vps .styles { margin: 0 0 14px; }
+#vps .styles-title { font-size: 13px; margin-bottom: 8px; }
+#vps .style-groups { display: grid; gap: 8px; }
+#vps .srow { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 10px; }
+#vps .srow .seg { justify-self: start; }
+#vps .slab { font: 600 11px var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 #vps .fps { font: 12px var(--mono); color: var(--dim); margin: 8px 0 0; }
 #vps .swatches { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 #vps .sw { width: 26px; height: 26px; border-radius: 50%; padding: 0; cursor: pointer; border: 2px solid var(--line);
@@ -292,9 +298,12 @@
     <div class="col">
       <section class="card" aria-label="Settings">
         <h2>Settings</h2>
-        <div class="row" id="vps-style-wrap" style="margin:0 0 14px">
-          <span style="font-size:13px">Style</span>
-          <div class="seg" role="group" aria-label="Portal style" id="vps-style"></div>
+        <div class="styles" id="vps-style-wrap">
+          <div class="styles-title">Style</div>
+          <div class="style-groups" id="vps-style">
+            <div class="srow"><span class="slab">Portal</span><div class="seg" role="group" aria-label="Portal styles" id="vps-style-portal"></div></div>
+            <div class="srow"><span class="slab">Space</span><div class="seg" role="group" aria-label="Space styles" id="vps-style-space"></div></div>
+          </div>
         </div>
         <div class="grid">
           <label class="ctl" for="vps-radius"><span>Portal size <output id="vps-o-radius"></output></span><input id="vps-radius" type="range" min="6" max="31" step="1"></label>

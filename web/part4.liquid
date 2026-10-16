@@ -362,13 +362,13 @@ const STYLES = [
   { name: "Cartoon Sticker", c: PRESETS.Slime, arms: 2, twist: 1.8 },
 ];
 function markStyle() {
-  $("style").querySelectorAll("button").forEach((b, i) => b.setAttribute("aria-pressed", i === S.style));
+  $("style").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.i === S.style));
   root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style === 2); });
   root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style >= 3); });
 }
 STYLES.forEach((st, i) => {
   const b = document.createElement("button");
-  b.type = "button"; b.textContent = st.name;
+  b.type = "button"; b.textContent = st.name; b.dataset.i = i;
   b.addEventListener("click", () => {
     S.style = i;
     if (st.c) { S.c1 = st.c[0]; S.c2 = st.c[1]; }
@@ -376,7 +376,7 @@ STYLES.forEach((st, i) => {
     if (st.twist) S.twist = st.twist;
     bindAll(); markStyle(); changed(true);
   });
-  $("style").appendChild(b);
+  $(i >= 3 && i <= 5 ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole are space styles
 });
 // colour presets
 for (const [name, [a, z]] of Object.entries(PRESETS)) {
