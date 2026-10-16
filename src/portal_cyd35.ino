@@ -104,7 +104,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x7EA21402UL;
+const uint32_t BUILD_ID = 0xE34F48BDUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -364,6 +364,7 @@ uint8_t crossRimT[128], crossHaloT[128];  // rim and outer glow, sized to the be
 #if HAS_PICS
 struct PicHead { uint32_t magic; uint16_t w, h; uint32_t id, check; };
 const uint32_t PIC_MAGIC = 0x43495056UL;   // "VPIC"
+const uint32_t STAGE_SIZE = 0x30000;       // room for one arriving JPEG (192 KB, enough for high quality on big screens)
 const esp_partition_t *picPart = NULL;
 uint32_t slotSize = 0, stageOff = 0;      // stageOff: where an arriving JPEG waits (last 64 KB)
 uint32_t crossOff = 0, crossSize = 0;     // the cross outline: distance to the edge for every pixel
@@ -378,9 +379,9 @@ int      bandTop = 0;
 void beginPictures() {
   picPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
   if (!picPart) picPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, NULL);
-  if (!picPart || picPart->size < 0x30000) { picPart = NULL; return; }
+  if (!picPart || picPart->size < 0x80000) { picPart = NULL; return; }
   slotSize = (sizeof(PicHead) + (uint32_t)SCR_W * SCR_H * 2 + 4095) & ~4095UL;
-  stageOff = (picPart->size - 0x10000) & ~4095UL;
+  stageOff = (picPart->size - STAGE_SIZE) & ~4095UL;
   crossSize = (16 + (uint32_t)SCR_W * SCR_H + 4095) & ~4095UL;   // the cross outline lives just before the staging area
   crossOff = stageOff - crossSize;
   picSlots = min((uint32_t)MAX_PICS, crossOff / slotSize);
@@ -595,10 +596,10 @@ const char *pictureCommand(char *line) {
   }
   if (strncasecmp(line, "IMG ", 4) == 0) {       // start a picture: slot, JPEG size, picture id
     unsigned slot; unsigned long len, id;
-    if (!picPart || sscanf(line + 4, "%u %lu %lx", &slot, &len, &id) != 3 || slot >= picSlots || !len || len > 0x10000 || !id) return "ERR";
+    if (!picPart || sscanf(line + 4, "%u %lu %lx", &slot, &len, &id) != 3 || slot >= picSlots || !len || len > STAGE_SIZE || !id) return "ERR";
     picId[slot] = 0;                             // stop showing the old picture
     upSlot = slot; upLen = len; upId = id; upPos = 0;
-    esp_partition_erase_range(picPart, stageOff, 0x10000);
+    esp_partition_erase_range(picPart, stageOff, (len + 4095) & ~4095UL);   // only what this picture needs
     uploading = true; upLast = millis();
     return "READY";
   }

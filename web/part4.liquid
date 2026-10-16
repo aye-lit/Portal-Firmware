@@ -556,7 +556,7 @@ let boardPics = null;                               // what the connected board 
 function picLimit() {
   if (boardPics && boardPics.w === M.w && boardPics.h === M.h && boardPics.slots) return boardPics.slots;
   const slot = Math.ceil((16 + M.w * M.h * 2) / 4096) * 4096, cross = Math.ceil((16 + M.w * M.h) / 4096) * 4096;
-  return Math.max(1, Math.min(8, Math.floor((PIC_PART - 0x10000 - cross) / slot)));
+  return Math.max(1, Math.min(8, Math.floor((PIC_PART - 0x30000 - cross) / slot)));
 }
 function loadPicImage(pic) {
   if (pic._img) return pic._img;
@@ -565,15 +565,21 @@ function loadPicImage(pic) {
   img.src = pic.src;
   return (pic._img = img);
 }
-function cropCanvas(pic) {                          // the picture cropped (or fitted) to this screen
+function cropCanvas(pic) {                          // the picture cropped (or fitted) to this screen, pixel-aligned
   const c = document.createElement("canvas"); c.width = M.w; c.height = M.h;
   const x = c.getContext("2d"); x.fillStyle = "#000"; x.fillRect(0, 0, M.w, M.h);
   const img = loadPicImage(pic);
   if (!pic._ready) return null;
   const k = (pic.fit === "fit" ? Math.min : Math.max)(M.w / img.naturalWidth, M.h / img.naturalHeight);
-  const w = img.naturalWidth * k, h = img.naturalHeight * k;
+  const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+  let src = img, sw = img.naturalWidth, sh = img.naturalHeight;
+  while (sw > w * 2 && sh > h * 2) {                // shrink in halves: keeps fine detail crisp
+    const t = document.createElement("canvas"); t.width = Math.round(sw / 2); t.height = Math.round(sh / 2);
+    const tx = t.getContext("2d"); tx.imageSmoothingQuality = "high"; tx.drawImage(src, 0, 0, t.width, t.height);
+    src = t; sw = t.width; sh = t.height;
+  }
   x.imageSmoothingQuality = "high";
-  x.drawImage(img, (M.w - w) / 2, (M.h - h) / 2, w, h);
+  x.drawImage(src, Math.round((M.w - w) / 2), Math.round((M.h - h) / 2), w, h);   // whole-pixel position, no extra blur
   return c;
 }
 const picPixCache = new Map();
@@ -707,10 +713,11 @@ async function addPictures(files) {
     if (S.pics.length >= picLimit()) { $("pic-count").textContent = `This screen holds ${picLimit()} pictures. Remove one to add another.`; break; }
     try {
       const bmp = await createImageBitmap(file);
-      const k = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));      // keep a reasonably sized copy
+      const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));      // keep a sharp copy, well above any screen's size
       const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
-      c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-      S.pics.push({ src: c.toDataURL("image/jpeg", 0.88), fit: "fill" });
+      const cx = c.getContext("2d"); cx.imageSmoothingQuality = "high";
+      cx.drawImage(bmp, 0, 0, c.width, c.height);
+      S.pics.push({ src: c.toDataURL("image/jpeg", 0.94), fit: "fill" });
       const idx = S.pics.length - 1;
       if (!S.scenes.length) S.scenes = [-1, idx];                          // first picture: portal, then the picture
       else if (S.scenes.length < 8) S.scenes.push(idx);
@@ -744,11 +751,11 @@ function showPictures() {
 }
 
 // ---------- sending pictures to the board ----------
-async function picJpeg(pic) {                       // the screen-sized JPEG the board unpacks (64 KB max)
+async function picJpeg(pic) {                       // the screen-sized JPEG the board unpacks (192 KB max), as sharp as fits
   const c = cropCanvas(pic); if (!c) throw new Error("a picture is still loading");
-  for (let q = 0.9; q >= 0.3; q -= 0.1) {
+  for (const q of [0.95, 0.92, 0.88, 0.84, 0.8, 0.7, 0.6, 0.5, 0.4]) {
     const blob = await new Promise(r => c.toBlob(r, "image/jpeg", q));
-    if (blob && blob.size <= 0xFF00) return new Uint8Array(await blob.arrayBuffer());
+    if (blob && blob.size <= 0x2FF00) return new Uint8Array(await blob.arrayBuffer());
   }
   throw new Error("a picture is too detailed to fit");
 }
