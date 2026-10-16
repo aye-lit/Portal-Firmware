@@ -311,18 +311,22 @@ const fmt = { crossw: v => v + "%", beam: v => v + "%", bar: v => v + "%", radiu
 let codeTimer;
 const refreshCode = () => { clearTimeout(codeTimer); codeTimer = setTimeout(() => codeEl.textContent = sketch(), 120); };
 
-// model cards
-for (const [key, m] of Object.entries(MODELS)) {
-  const lab = document.createElement("label");
-  lab.className = "model" + (m.wide ? " wide" : ""); lab.htmlFor = "vps-m-" + key;
-  const tag = m.kind === "mono" ? "ONE COLOR" : "COLOR";
-  const [size, ...rest] = m.spec.split(" · ");            // screen size first, part number and details below
-  const title = /round|rectangle|square/.test(size) ? size : `${size} ${m.w === m.h ? "square" : "rectangle"}`;
-  lab.innerHTML = `<input type="radio" name="model" id="vps-m-${key}" value="${key}">
-    <b>${title} <span class="tag ${m.kind !== "mono" ? "rgb" : ""}">${tag}</span></b>
-    <small>${[m.chip, ...rest].join(" · ")}</small>`;
-  lab.querySelector("input").addEventListener("change", () => selectModel(key, true));
-  $("models").appendChild(lab);
+// display model dropdown: screen size first, part number and details underneath
+const modelTitle = m => { const size = m.spec.split(" · ")[0]; return /round|rectangle|square/.test(size) ? size : `${size} ${m.w === m.h ? "square" : "rectangle"}`; };
+for (const [label, mono] of [["Color screens", false], ["One-color screens", true]]) {
+  const grp = document.createElement("optgroup"); grp.label = label;
+  const bySize = Object.entries(MODELS).sort((x, y) => parseFloat(x[1].spec) - parseFloat(y[1].spec));   // smallest screen first
+  for (const [key, m] of bySize) {
+    if ((m.kind === "mono") !== mono) continue;
+    const o = document.createElement("option"); o.value = key; o.textContent = modelTitle(m);
+    grp.appendChild(o);
+  }
+  $("model").appendChild(grp);
+}
+$("model").addEventListener("change", e => selectModel(e.target.value, true));
+function showModelDetail() {
+  const m = MODELS[S.model], rest = m.spec.split(" · ").slice(1);
+  $("model-detail").innerHTML = `<span class="tag ${m.kind !== "mono" ? "rgb" : ""}">${m.kind === "mono" ? "ONE COLOR" : "COLOR"}</span><span>${[m.chip, ...rest].join(" · ")}</span>`;
 }
 // board picker (every display)
 for (const [k, b] of Object.entries(BOARDS)) { const o = document.createElement("option"); o.value = k; o.textContent = b.name; $("board").appendChild(o); }
@@ -480,7 +484,7 @@ function selectModel(key, userChose) {
   S.model = key; M = { ...MODELS[key] };
   if (M.rect && S.portrait && M.w !== M.h) [M.w, M.h] = [M.h, M.w];      // stood upright
   if (userChose || S.radius > rmax(M)) S.radius = Math.min(M.r, rmax(M));
-  $("m-" + key).checked = true;
+  $("model").value = key; showModelDetail();
   $("radius").max = rmax(M);
   sizeCanvas();
   const tft = M.kind === "tft", rgb = M.kind !== "mono";
