@@ -307,7 +307,7 @@ ${frame}
 // ---------------- UI ----------------
 
 const codeEl = $("code");
-const fmt = { radius: v => v + " px", oval: v => f2(v), arms: v => v, twist: v => (+v).toFixed(1), speed: v => f2(v), sparks: v => v, bright: v => v + "%", ripples: v => v, rspeed: v => f2(v), glow: v => f2(v), stars: v => v, rimsmooth: v => v + "%" };
+const fmt = { crossw: v => v + "%", beam: v => v + "%", bar: v => v + "%", radius: v => v + " px", oval: v => f2(v), arms: v => v, twist: v => (+v).toFixed(1), speed: v => f2(v), sparks: v => v, bright: v => v + "%", ripples: v => v, rspeed: v => f2(v), glow: v => f2(v), stars: v => v, rimsmooth: v => v + "%" };
 let codeTimer;
 const refreshCode = () => { clearTimeout(codeTimer); codeTimer = setTimeout(() => codeEl.textContent = sketch(), 120); };
 
@@ -360,11 +360,14 @@ const STYLES = [
   { name: "Black hole", c: PRESETS.Event },
   { name: "Cartoon Swirl", c: PRESETS.Slime, arms: 2, twist: 1.8 },
   { name: "Cartoon Sticker", c: PRESETS.Slime, arms: 2, twist: 1.8 },
+  ...CROSS_NAMES.map((name, k) => ({ name, cross: CROSS_SHAPE[k] })),
 ];
 function markStyle() {
   $("style").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.i === S.style));
   root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style === 2); });
-  root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style >= 3); });
+  root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style >= 3 && S.style <= 5); });
+  root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style >= 8); });
+  $("cross-row").hidden = !picturesAllowed() && S.style < 8;
 }
 STYLES.forEach((st, i) => {
   const b = document.createElement("button");
@@ -374,9 +377,10 @@ STYLES.forEach((st, i) => {
     if (st.c) { S.c1 = st.c[0]; S.c2 = st.c[1]; }
     if (st.arms) S.arms = st.arms;
     if (st.twist) S.twist = st.twist;
+    if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; }
     bindAll(); markStyle(); changed(true);
   });
-  $(i >= 3 && i <= 5 ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole are space styles
+  $(i >= 8 ? "style-cross" : i >= 3 && i <= 5 ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole are space styles
 });
 // colour presets
 for (const [name, [a, z]] of Object.entries(PRESETS)) {
@@ -551,8 +555,8 @@ const PIC_PART = 0x1E0000;                          // quick-install firmware: "
 let boardPics = null;                               // what the connected board reported: { slots, w, h, ids }
 function picLimit() {
   if (boardPics && boardPics.w === M.w && boardPics.h === M.h && boardPics.slots) return boardPics.slots;
-  const slot = Math.ceil((16 + M.w * M.h * 2) / 4096) * 4096;
-  return Math.max(1, Math.min(8, Math.floor((PIC_PART - 0x10000) / slot)));
+  const slot = Math.ceil((16 + M.w * M.h * 2) / 4096) * 4096, cross = Math.ceil((16 + M.w * M.h) / 4096) * 4096;
+  return Math.max(1, Math.min(8, Math.floor((PIC_PART - 0x10000 - cross) / slot)));
 }
 function loadPicImage(pic) {
   if (pic._img) return pic._img;
@@ -930,7 +934,7 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
 const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${S.drift ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
-function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame}`; }
+function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}`; }
 
 async function readReply(ms) {
   const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "";

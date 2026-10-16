@@ -81,7 +81,11 @@ bool     DRIFT      = true;    // not used on LCDs (they don't burn in)
 uint32_t COLOR_CORE = 0x3B1CFF;  // inner colour
 uint32_t COLOR_RIM  = 0x38F0FF;  // outer colour
 uint8_t  BRIGHTNESS = 100;     // 10-100 %: dims the portal's colours
-uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker
+uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
+                                // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
+uint8_t  CROSS_W    = 46;      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
+uint8_t  BEAM       = 14;      // crosses: beam thickness, % of the portal size (5-30)
+uint8_t  BAR        = 32;      // crosses: crossbar height (20-50, 50 = all arms the same length)
 uint8_t  STARS      = 3;       // space styles: star density (1-6)
 bool     FADE_ON    = false;    // fade through the colour sets
 uint8_t  FADE_COUNT = 1;       // extra colour sets after the main colours (1-3)
@@ -100,7 +104,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x23655008UL;
+const uint32_t BUILD_ID = 0x99FAECA2UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -136,7 +140,7 @@ Spark sparks[MAX_SPARKS];
 int16_t sparkX[MAX_SPARKS], sparkY[MAX_SPARKS];
 float t = 0;
 
-struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct; };
+struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; };
 
 // ---------- tables ----------
 // Cartoon styles: smooth looping noise tables
@@ -293,6 +297,7 @@ void updateSparks() {
 bool validScenes(const Saved &s) {
   if (s.sceneCount > 8 || !(s.holdSecs >= 1 && s.holdSecs <= 3600) || !(s.sceneFade >= 0 && s.sceneFade <= 600)) return false;
   if (s.framePct < 10 || s.framePct > 95) return false;
+  if (s.crossW < 25 || s.crossW > 100 || s.beam < 5 || s.beam > 30 || s.bar < 20 || s.bar > 50) return false;
   for (uint8_t i = 0; i < s.sceneCount; i++) {
     uint8_t c = s.scenes[i];
     if (c != PORTAL && c >= MAX_PICS && (c < 128 || c >= 128 + MAX_PICS)) return false;
@@ -304,7 +309,7 @@ bool valid(const Saved &s) {
   return s.radius >= 6 && s.radius <= RADIUS_MAX && s.oval >= 1 && s.oval <= 2 &&
          s.arms >= 1 && s.arms <= 8 && s.twist >= 0 && s.twist <= 6 &&
          s.speed >= 0 && s.speed <= 0.4 && s.sparks <= MAX_SPARKS &&
-         s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && s.style <= 7 && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
+         s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && s.style <= 13 && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
          s.ripples <= 6 && s.ripSpeed >= 0.03f && s.ripSpeed <= 0.3f && s.glow >= 0.3f && s.glow <= 0.9f &&
          validScenes(s);
 }
@@ -317,6 +322,7 @@ void apply(const Saved &s) {
   FADE_ON = s.fadeOn; FADE_COUNT = s.fadeCount; FADE_SECS = s.fadeSecs; RIM_SMOOTH = s.rimSmooth;
   for (int k = 0; k < 6; k++) FADE_COLS[k] = s.fadeCols[k] & 0xFFFFFF;
   SCENE_COUNT = s.sceneCount; HOLD_SECS = s.holdSecs; SCENE_FADE = s.sceneFade; FRAME_PCT = s.framePct;
+  CROSS_W = s.crossW; BEAM = s.beam; BAR = s.bar;
   for (int k = 0; k < 8; k++) SCENES[k] = s.scenes[k];
 }
 
@@ -335,6 +341,7 @@ void saveSettings() {
   s.fadeSecs = FADE_SECS;
   s.rimSmooth = RIM_SMOOTH;
   s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE; s.framePct = FRAME_PCT;
+  s.crossW = CROSS_W; s.beam = BEAM; s.bar = BAR;
   for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
   EEPROM.put(0, s);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
@@ -349,12 +356,16 @@ Saved pendingSettings;
 // board unpacks it into flash. Tools -> Partition Scheme -> "No OTA (2MB APP/2MB SPIFFS)"
 // gives the most room. Commands: INFO, IMG slot bytes id, D base64..., END.
 // (HAS_PICS and the JPEG decoder are set up with the other #includes at the top)
+bool    crossReady = false;               // cross outline ready to read (styles 8-13)
+int8_t *edgeBuf = NULL;                   // one strip of the cross outline
+uint8_t crossRimT[128], crossHaloT[128];  // rim and outer glow, sized to the beam
 
 #if HAS_PICS
 struct PicHead { uint32_t magic; uint16_t w, h; uint32_t id, check; };
 const uint32_t PIC_MAGIC = 0x43495056UL;   // "VPIC"
 const esp_partition_t *picPart = NULL;
 uint32_t slotSize = 0, stageOff = 0;      // stageOff: where an arriving JPEG waits (last 64 KB)
+uint32_t crossOff = 0, crossSize = 0;     // the cross outline: distance to the edge for every pixel
 uint8_t  picSlots = 0;
 volatile uint32_t picId[MAX_PICS];        // 0 = empty slot
 volatile bool uploading = false;
@@ -369,7 +380,9 @@ void beginPictures() {
   if (!picPart || picPart->size < 0x30000) { picPart = NULL; return; }
   slotSize = (sizeof(PicHead) + (uint32_t)SCR_W * SCR_H * 2 + 4095) & ~4095UL;
   stageOff = (picPart->size - 0x10000) & ~4095UL;
-  picSlots = min((uint32_t)MAX_PICS, stageOff / slotSize);
+  crossSize = (16 + (uint32_t)SCR_W * SCR_H + 4095) & ~4095UL;   // the cross outline lives just before the staging area
+  crossOff = stageOff - crossSize;
+  picSlots = min((uint32_t)MAX_PICS, crossOff / slotSize);
   for (uint8_t i = 0; i < picSlots; i++) {
     PicHead h;
     esp_partition_read(picPart, i * slotSize, &h, sizeof(h));
@@ -453,6 +466,118 @@ const char *finishPicture() {
   return "OK";
 }
 
+// ---------- cross shapes (styles 8-13), from the Cross Portal Tuner ----------
+// Each cross is a union of simple shapes around its junction (the screen centre). The board works out
+// the distance to the cross edge for every pixel once, stores it in flash, and reads it back per strip.
+struct XShape { uint8_t t, dir; float cx, cy, hw, hh, r, w, a, b, len; };   // t: 0 box, 1 circle, 2 ring, 3 tilted box, 4 flared arm
+XShape xs[6];
+uint8_t nxs = 0;
+const uint32_t CROSS_MAGIC = 0x52435856UL;   // "VXCR"
+uint32_t crossKey = 0;
+
+void addX(uint8_t t, float cx, float cy, float hw, float hh, float r = 0, float w = 0, float a = 0, float b = 0, float len = 0, uint8_t dir = 0) {
+  XShape &o = xs[nxs++];
+  o.t = t; o.cx = cx; o.cy = cy; o.hw = hw; o.hh = hh; o.r = r; o.w = w; o.a = a; o.b = b; o.len = len; o.dir = dir;
+}
+
+void crossShapes() {
+  float R = RADIUS;
+  float bot = min(R, SCR_H / 2.0f - 2), top = min(bot * BAR / (100.0f - BAR), SCR_H / 2.0f - 2);
+  float AW = max(2.0f, R * BEAM / 100.0f), HHL = max(AW + 1, min(R * CROSS_W / 100.0f, SCR_W / 2.0f - 2));
+  nxs = 0;
+  switch (STYLE - 8) {
+    case 1:                                        // Celtic: ring around the junction
+      addX(0, 0, (bot - top) / 2, AW, (bot + top) / 2); addX(0, 0, 0, HHL, AW);
+      addX(2, 0, 0, 0, 0, max(AW * 1.9f, 0.62f * min(HHL, top)), max(2.0f, AW * 0.42f));
+      break;
+    case 2: {                                      // Budded: round ends
+      float br = AW * 1.45f;
+      addX(0, 0, (bot - top) / 2, AW, (bot - br - (-top + br)) / 2); addX(0, 0, 0, HHL - br, AW);
+      addX(1, 0, -top + br, 0, 0, br); addX(1, 0, bot - br, 0, 0, br);
+      addX(1, -(HHL - br), 0, 0, 0, br); addX(1, HHL - br, 0, 0, 0, br);
+      break;
+    }
+    case 3: case 4: {                              // Patriarchal / Orthodox: extra bars
+      float th = AW * 0.85f, gap = min(AW * 3.4f, top - th - 2);
+      addX(0, 0, (bot - top) / 2, AW, (bot + top) / 2); addX(0, 0, 0, HHL, AW);
+      addX(0, 0, -gap, HHL * 0.6f, th);
+      if (STYLE == 12) addX(3, 0, bot * 0.62f, HHL * 0.55f, th, 0, 0, -0.35f);
+      break;
+    }
+    case 5: {                                      // Pattee: flared arms
+      float a = AW * 0.55f, b = AW * 1.75f;
+      addX(0, 0, 0, a, a);
+      addX(4, 0, 0, 0, 0, 0, 0, a, b, top, 0); addX(4, 0, 0, 0, 0, 0, 0, a, b, bot, 1);
+      addX(4, 0, 0, 0, 0, 0, 0, a, b, HHL, 2); addX(4, 0, 0, 0, 0, 0, 0, a, b, HHL, 3);
+      break;
+    }
+    default:                                       // Latin
+      addX(0, 0, (bot - top) / 2, AW, (bot + top) / 2); addX(0, 0, 0, HHL, AW);
+  }
+}
+
+float sdBox(float x, float y, float cx, float cy, float hw, float hh) {
+  float dx = fabsf(x - cx) - hw, dy = fabsf(y - cy) - hh;
+  return hypotf(fmaxf(dx, 0), fmaxf(dy, 0)) + fminf(fmaxf(dx, dy), 0);
+}
+
+float crossSD(float x, float y) {               // signed distance: negative inside the cross
+  float d = 1e9f;
+  for (uint8_t i = 0; i < nxs; i++) {
+    const XShape &o = xs[i];
+    float e;
+    switch (o.t) {
+      case 0: e = sdBox(x, y, o.cx, o.cy, o.hw, o.hh); break;
+      case 1: e = hypotf(x - o.cx, y - o.cy) - o.r; break;
+      case 2: e = fabsf(hypotf(x, y) - o.r) - o.w; break;
+      case 3: { float c = cosf(o.a), s = sinf(o.a), dx = x - o.cx, dy = y - o.cy; e = sdBox(c * dx + s * dy, -s * dx + c * dy, 0, 0, o.hw, o.hh); break; }
+      default: {
+        float u = o.dir == 0 ? -y : o.dir == 1 ? y : o.dir == 2 ? -x : x, v = o.dir < 2 ? x : y, k = (o.b - o.a) / o.len;
+        float side = (fabsf(v) - (o.a + k * constrain(u, 0.0f, o.len))) / sqrtf(1 + k * k);
+        e = fmaxf(side, fmaxf(-u, u - o.len));
+      }
+    }
+    d = fminf(d, e);
+  }
+  return d;
+}
+
+bool crossAvailable() { return picPart != NULL; }
+
+void prepareCross() {                           // (re)build the outline when the cross settings change
+  uint32_t key = 2166136261UL;
+  uint32_t parts[] = { STYLE, (uint32_t)(RADIUS * 16), CROSS_W, BEAM, BAR, SCR_W, SCR_H, 1 };
+  for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
+  if (key == crossKey && crossReady) return;
+  crossReady = false;
+  float rw = max(1.5f, max(2.0f, RADIUS * BEAM / 100.0f) * 0.3f);
+  for (int k = 0; k < 128; k++) { crossRimT[k] = (uint8_t)(255 * expf(-(k / rw) * (k / rw))); crossHaloT[k] = (uint8_t)(115 * expf(-k / 12.0f)); }
+  uint32_t head[4];
+  esp_partition_read(picPart, crossOff, head, 16);
+  if (head[0] != CROSS_MAGIC || head[1] != key) {
+    crossShapes();
+    esp_partition_erase_range(picPart, crossOff, crossSize);
+    static int8_t row[SCR_W];
+    for (int y = 0; y < SCR_H; y++) {
+      float fy = y + 0.5f - SCR_H / 2.0f;
+      for (int x = 0; x < SCR_W; x++) {
+        float e = -crossSD(x + 0.5f - SCR_W / 2.0f, fy);
+        if (e > 0 && e < 1) e = 1;
+        if (e <= 0 && e > -1) e = -1;
+        row[x] = (int8_t)constrain((int)e, -127, 127);
+      }
+      esp_partition_write(picPart, crossOff + 16 + (uint32_t)y * SCR_W, row, SCR_W);
+      if ((y & 7) == 7) delay(1);
+    }
+    uint32_t h2[4] = { CROSS_MAGIC, key, 0, 0 };
+    esp_partition_write(picPart, crossOff, h2, 16);
+  }
+  crossKey = key;
+  crossReady = true;
+}
+
+void readCrossRows(int y0, int rows) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W); }
+
 const char *pictureCommand(char *line) {
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
     static char info[128];
@@ -482,6 +607,9 @@ const char *pictureCommand(char *line) {
 }
 #else
 void beginPictures() {}
+bool crossAvailable() { return false; }
+void prepareCross() {}
+void readCrossRows(int y0, int rows) {}
 int  picturesAvailable() { return 0; }
 bool isPicture(uint8_t s) { return false; }
 void readPicture(uint8_t s, int y0, int rows, uint16_t *dst) {}
@@ -491,30 +619,32 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 
 // ---------- live tuning over USB serial (and Bluetooth below) ----------
 // Command: SET radius oval arms twist speed sparks drift core rim brightness style ripples ripspeed glow stars fade count core2 rim2 core3 rim3 core4 rim4 fadesecs rimsmooth
-//              [scenecount scene1..scene8 holdsecs scenefade [framepct]]   (reply: OK or ERR)
+//              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar]]]   (reply: OK or ERR)
 // Pictures: INFO, then IMG slot bytes id / D base64... / END   (see "pictures" above)
 char cmd[256];
 uint8_t cmdLen = 0;
 
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strncasecmp(line, "SET ", 4) == 0) {
-    float v[37];
+    float v[40];
     uint8_t n = 0;
     char *p = strtok(line + 4, " ");
-    while (p && n < 37) { v[n++] = atof(p); p = strtok(NULL, " "); }
-    if (n == 25 || n == 36 || n == 37) {
+    while (p && n < 40) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36 || n == 37 || n == 40) {
       Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
       for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
       s.fadeSecs = v[23];
       s.rimSmooth = (uint8_t)v[24];
       s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE; s.framePct = FRAME_PCT;
+      s.crossW = CROSS_W; s.beam = BEAM; s.bar = BAR;
       for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
       if (n >= 36) {
         s.sceneCount = (uint8_t)v[25];
         for (int k = 0; k < 8; k++) s.scenes[k] = (uint8_t)v[26 + k];
         s.holdSecs = v[34]; s.sceneFade = v[35];
       }
-      if (n == 37) s.framePct = (uint8_t)v[36];
+      if (n >= 37) s.framePct = (uint8_t)v[36];
+      if (n == 40) { s.crossW = (uint8_t)v[37]; s.beam = (uint8_t)v[38]; s.bar = (uint8_t)v[39]; }
       if (valid(s)) {
         pendingSettings = s;
         havePending = true;              // the drawing loop picks it up before the next frame
@@ -688,6 +818,8 @@ void composeStrip(int y0, int rows, uint16_t *dst) {
 }
 
 // ---------- one frame ----------
+uint8_t look = 0;                        // the style being drawn (crosses fall back to Vortex without flash storage)
+
 void frameStart() {
   updateScene();
   if (havePending) {
@@ -698,6 +830,8 @@ void frameStart() {
     resetSparks();
     havePending = false;
   }
+  if (STYLE >= 8 && crossAvailable() && edgeBuf) prepareCross();
+  look = STYLE >= 8 && !crossReady ? 0 : STYLE;
   updateColourFade();
   updateSparks();
   for (int a = 0; a < 256; a++) {                     // wobbly rim edge for this frame
@@ -752,20 +886,37 @@ inline int cartoonV(int a, int r, int phase) {   // blobby flat-shaded swirl
 void renderStrip(int y0, int rows, uint16_t *strip) {
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);
   uint16_t *p = strip;
+  bool cross = look >= 8;
+  if (cross) readCrossRows(y0, rows);
   for (int y = y0; y < y0 + rows; y++) {
     int qy = y < QY ? QY - 1 - y : y - QY;
     bool low = y >= QY;
+    const int8_t *eb = cross ? edgeBuf + (y - y0) * SCR_W : NULL;
     for (int x = 0; x < SCR_W; x++) {
       int qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
       int a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
       int e = edgeT[a];
       int v;
-      if (STYLE == 7) {                                // Cartoon Sticker: ragged edge, light outline, no glow
+      if (eb) {                                        // Cross: Vortex swirl inside, glowing rim along the cross edge
+        int ce = eb[x];
+        if (ce > 0) {
+          int s  = sinT[(a * ARMS + twistT[r] + phase) & 255];
+          int s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255];
+          int d = depthT[r];
+          int band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
+          v = (d * (60 + ((band * 195) >> 8))) >> 8;
+          if (s > 100) v += ((s - 100) * 3 * d) >> 8;
+          if (coreT[r] > v) v = coreT[r];
+          if (crossRimT[ce] > v) v = crossRimT[ce];
+        } else {
+          v = max(crossRimT[-ce], crossHaloT[-ce]);
+        }
+      } else if (look == 7) {                                // Cartoon Sticker: ragged edge, light outline, no glow
         int jag = (((nz(nzB, 63, a * 4 + (phase >> 1)) - 128) * 7 + (nz(nzC, 255, a * 16 + phase) - 128) * 4) >> 7) * (100 - RIM_SMOOTH) / 100;
         int e2 = (int)(RADIUS * 1.02f + jag / 4.0f);
         v = r >= e2 ? 0 : r >= e2 - 4 ? 235 : cartoonV(a, r, phase);
       } else if (r < e) {
-        if (STYLE == 0) {                              // Vortex
+        if (look == 0) {                              // Vortex
           int s  = sinT[(a * ARMS + twistT[r] + phase) & 255];
           int s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255];
           int d = depthT[r];
@@ -773,14 +924,14 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
           v = (d * (60 + ((band * 195) >> 8))) >> 8;   // swirling bands, darker toward the throat
           if (s > 100) v += ((s - 100) * 3 * d) >> 8; // bright spiral crests
           if (coreT[r] > v) v = coreT[r];              // glowing core
-        } else if (STYLE == 1) {                       // Toon Spiral: flat-shaded wavy bands
+        } else if (look == 1) {                       // Toon Spiral: flat-shaded wavy bands
           int w  = sinT[(a * 6 + r * 4 + phase2) & 255] >> 2;
           int sp = sinT[(a * ARMS - linT[r] + phase + w) & 255];
           v = sp > 40 ? 235 : sp > -20 ? 190 : sp > -70 ? 150 : 95;
           if (coreT[r] > v) v = coreT[r];
-        } else if (STYLE == 6) {                       // Cartoon Swirl: blobby flat-shaded bands
+        } else if (look == 6) {                       // Cartoon Swirl: blobby flat-shaded bands
           v = cartoonV(a, r, phase);
-        } else if (STYLE == 3) {                       // Hyperspace: stars streak outward
+        } else if (look == 3) {                       // Hyperspace: stars streak outward
           v = 30 + ((sinT[(a * 3 + (phase >> 3)) & 255] + 127) >> 4) + (spCoreT[r] >> 2);
           for (int L = 0; L < 3; L++) {
             int i = L * 256 + a;
@@ -791,14 +942,14 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
               if (sv > v) v = sv;
             }
           }
-        } else if (STYLE == 4) {                       // Galaxy: spiral arms, glowing core, stars
+        } else if (look == 4) {                       // Galaxy: spiral arms, glowing core, stars
           int arm   = sinT[(a * 2 + twistT[r] + (phase >> 2)) & 255];
           int lumps = sinT[(a * 5 + r * 3 - (phase >> 3)) & 255];
           int armV  = ((arm + 127) * galFadeT[r]) >> 8;
           v = 18 + ((armV * 115) >> 8) + ((lumps * (arm + 127)) >> 9) + spCoreT[r];
           int st = starAt(a, r); if (st > v) v = st;
           if (v < 0) v = 0;
-        } else if (STYLE == 5) {                       // Black hole: shadow, bright ring, swirling disk
+        } else if (look == 5) {                       // Black hole: shadow, bright ring, swirling disk
           if (r < bhHole) v = 0;
           else {
             int swirl = sinT[(a * 3 + r * 6 - phase * 2) & 255] + (sinT[(a * 7 - r * 3 - phase) & 255] >> 1);
@@ -827,10 +978,10 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
     }
   }
   for (uint8_t i = 0; i < NUM_SPARKS; i++) {           // sparks in this strip
-    if (STYLE == 5 && sparks[i].r < bhHole) continue;  // they vanish into the black hole
+    if (look == 5 && sparks[i].r < bhHole) continue;  // they vanish into the black hole
     for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
       int xx = sparkX[i] + dx, yy = sparkY[i] + dy;
-      if (xx >= 0 && xx < SCR_W && yy >= y0 && yy < y0 + rows) strip[(yy - y0) * SCR_W + xx] = pal[235];
+      if (xx >= 0 && xx < SCR_W && yy >= y0 && yy < y0 + rows && !(cross && edgeBuf[(yy - y0) * SCR_W + xx] <= 0)) strip[(yy - y0) * SCR_W + xx] = pal[235];
     }
   }
 }
@@ -876,8 +1027,9 @@ bool allocBuffers() {
     stripBuf[0] = (uint16_t *)malloc(SCR_W * STRIP * 2);
     stripBuf[1] = (uint16_t *)malloc(SCR_W * STRIP * 2);
     picBuf = picturesAvailable() ? (uint16_t *)malloc(SCR_W * STRIP * 2) : NULL;   // for fades with pictures
-    if (stripBuf[0] && stripBuf[1] && (picBuf || !picturesAvailable())) return true;
-    free(stripBuf[0]); free(stripBuf[1]); free(picBuf); picBuf = NULL;
+    edgeBuf = crossAvailable() ? (int8_t *)malloc(SCR_W * STRIP) : NULL;            // for the cross styles
+    if (stripBuf[0] && stripBuf[1] && (picBuf || !picturesAvailable()) && (edgeBuf || !crossAvailable())) return true;
+    free(stripBuf[0]); free(stripBuf[1]); free(picBuf); free(edgeBuf); picBuf = NULL; edgeBuf = NULL;
   }
   return false;
 }

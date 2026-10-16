@@ -115,12 +115,16 @@ function pictureBlock() { return `
 // board unpacks it into flash. Tools -> Partition Scheme -> "No OTA (2MB APP/2MB SPIFFS)"
 // gives the most room. Commands: INFO, IMG slot bytes id, D base64..., END.
 // (HAS_PICS and the JPEG decoder are set up with the other #includes at the top)
+bool    crossReady = false;               // cross outline ready to read (styles 8-13)
+int8_t *edgeBuf = NULL;                   // one strip of the cross outline
+uint8_t crossRimT[128], crossHaloT[128];  // rim and outer glow, sized to the beam
 
 #if HAS_PICS
 struct PicHead { uint32_t magic; uint16_t w, h; uint32_t id, check; };
 const uint32_t PIC_MAGIC = 0x43495056UL;   // "VPIC"
 const esp_partition_t *picPart = NULL;
 uint32_t slotSize = 0, stageOff = 0;      // stageOff: where an arriving JPEG waits (last 64 KB)
+uint32_t crossOff = 0, crossSize = 0;     // the cross outline: distance to the edge for every pixel
 uint8_t  picSlots = 0;
 volatile uint32_t picId[MAX_PICS];        // 0 = empty slot
 volatile bool uploading = false;
@@ -135,7 +139,9 @@ void beginPictures() {
   if (!picPart || picPart->size < 0x30000) { picPart = NULL; return; }
   slotSize = (sizeof(PicHead) + (uint32_t)SCR_W * SCR_H * 2 + 4095) & ~4095UL;
   stageOff = (picPart->size - 0x10000) & ~4095UL;
-  picSlots = min((uint32_t)MAX_PICS, stageOff / slotSize);
+  crossSize = (16 + (uint32_t)SCR_W * SCR_H + 4095) & ~4095UL;   // the cross outline lives just before the staging area
+  crossOff = stageOff - crossSize;
+  picSlots = min((uint32_t)MAX_PICS, crossOff / slotSize);
   for (uint8_t i = 0; i < picSlots; i++) {
     PicHead h;
     esp_partition_read(picPart, i * slotSize, &h, sizeof(h));
@@ -219,6 +225,118 @@ const char *finishPicture() {
   return "OK";
 }
 
+// ---------- cross shapes (styles 8-13), from the Cross Portal Tuner ----------
+// Each cross is a union of simple shapes around its junction (the screen centre). The board works out
+// the distance to the cross edge for every pixel once, stores it in flash, and reads it back per strip.
+struct XShape { uint8_t t, dir; float cx, cy, hw, hh, r, w, a, b, len; };   // t: 0 box, 1 circle, 2 ring, 3 tilted box, 4 flared arm
+XShape xs[6];
+uint8_t nxs = 0;
+const uint32_t CROSS_MAGIC = 0x52435856UL;   // "VXCR"
+uint32_t crossKey = 0;
+
+void addX(uint8_t t, float cx, float cy, float hw, float hh, float r = 0, float w = 0, float a = 0, float b = 0, float len = 0, uint8_t dir = 0) {
+  XShape &o = xs[nxs++];
+  o.t = t; o.cx = cx; o.cy = cy; o.hw = hw; o.hh = hh; o.r = r; o.w = w; o.a = a; o.b = b; o.len = len; o.dir = dir;
+}
+
+void crossShapes() {
+  float R = RADIUS;
+  float bot = min(R, SCR_H / 2.0f - 2), top = min(bot * BAR / (100.0f - BAR), SCR_H / 2.0f - 2);
+  float AW = max(2.0f, R * BEAM / 100.0f), HHL = max(AW + 1, min(R * CROSS_W / 100.0f, SCR_W / 2.0f - 2));
+  nxs = 0;
+  switch (STYLE - 8) {
+    case 1:                                        // Celtic: ring around the junction
+      addX(0, 0, (bot - top) / 2, AW, (bot + top) / 2); addX(0, 0, 0, HHL, AW);
+      addX(2, 0, 0, 0, 0, max(AW * 1.9f, 0.62f * min(HHL, top)), max(2.0f, AW * 0.42f));
+      break;
+    case 2: {                                      // Budded: round ends
+      float br = AW * 1.45f;
+      addX(0, 0, (bot - top) / 2, AW, (bot - br - (-top + br)) / 2); addX(0, 0, 0, HHL - br, AW);
+      addX(1, 0, -top + br, 0, 0, br); addX(1, 0, bot - br, 0, 0, br);
+      addX(1, -(HHL - br), 0, 0, 0, br); addX(1, HHL - br, 0, 0, 0, br);
+      break;
+    }
+    case 3: case 4: {                              // Patriarchal / Orthodox: extra bars
+      float th = AW * 0.85f, gap = min(AW * 3.4f, top - th - 2);
+      addX(0, 0, (bot - top) / 2, AW, (bot + top) / 2); addX(0, 0, 0, HHL, AW);
+      addX(0, 0, -gap, HHL * 0.6f, th);
+      if (STYLE == 12) addX(3, 0, bot * 0.62f, HHL * 0.55f, th, 0, 0, -0.35f);
+      break;
+    }
+    case 5: {                                      // Pattee: flared arms
+      float a = AW * 0.55f, b = AW * 1.75f;
+      addX(0, 0, 0, a, a);
+      addX(4, 0, 0, 0, 0, 0, 0, a, b, top, 0); addX(4, 0, 0, 0, 0, 0, 0, a, b, bot, 1);
+      addX(4, 0, 0, 0, 0, 0, 0, a, b, HHL, 2); addX(4, 0, 0, 0, 0, 0, 0, a, b, HHL, 3);
+      break;
+    }
+    default:                                       // Latin
+      addX(0, 0, (bot - top) / 2, AW, (bot + top) / 2); addX(0, 0, 0, HHL, AW);
+  }
+}
+
+float sdBox(float x, float y, float cx, float cy, float hw, float hh) {
+  float dx = fabsf(x - cx) - hw, dy = fabsf(y - cy) - hh;
+  return hypotf(fmaxf(dx, 0), fmaxf(dy, 0)) + fminf(fmaxf(dx, dy), 0);
+}
+
+float crossSD(float x, float y) {               // signed distance: negative inside the cross
+  float d = 1e9f;
+  for (uint8_t i = 0; i < nxs; i++) {
+    const XShape &o = xs[i];
+    float e;
+    switch (o.t) {
+      case 0: e = sdBox(x, y, o.cx, o.cy, o.hw, o.hh); break;
+      case 1: e = hypotf(x - o.cx, y - o.cy) - o.r; break;
+      case 2: e = fabsf(hypotf(x, y) - o.r) - o.w; break;
+      case 3: { float c = cosf(o.a), s = sinf(o.a), dx = x - o.cx, dy = y - o.cy; e = sdBox(c * dx + s * dy, -s * dx + c * dy, 0, 0, o.hw, o.hh); break; }
+      default: {
+        float u = o.dir == 0 ? -y : o.dir == 1 ? y : o.dir == 2 ? -x : x, v = o.dir < 2 ? x : y, k = (o.b - o.a) / o.len;
+        float side = (fabsf(v) - (o.a + k * constrain(u, 0.0f, o.len))) / sqrtf(1 + k * k);
+        e = fmaxf(side, fmaxf(-u, u - o.len));
+      }
+    }
+    d = fminf(d, e);
+  }
+  return d;
+}
+
+bool crossAvailable() { return picPart != NULL; }
+
+void prepareCross() {                           // (re)build the outline when the cross settings change
+  uint32_t key = 2166136261UL;
+  uint32_t parts[] = { STYLE, (uint32_t)(RADIUS * 16), CROSS_W, BEAM, BAR, SCR_W, SCR_H, 1 };
+  for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
+  if (key == crossKey && crossReady) return;
+  crossReady = false;
+  float rw = max(1.5f, max(2.0f, RADIUS * BEAM / 100.0f) * 0.3f);
+  for (int k = 0; k < 128; k++) { crossRimT[k] = (uint8_t)(255 * expf(-(k / rw) * (k / rw))); crossHaloT[k] = (uint8_t)(115 * expf(-k / 12.0f)); }
+  uint32_t head[4];
+  esp_partition_read(picPart, crossOff, head, 16);
+  if (head[0] != CROSS_MAGIC || head[1] != key) {
+    crossShapes();
+    esp_partition_erase_range(picPart, crossOff, crossSize);
+    static int8_t row[SCR_W];
+    for (int y = 0; y < SCR_H; y++) {
+      float fy = y + 0.5f - SCR_H / 2.0f;
+      for (int x = 0; x < SCR_W; x++) {
+        float e = -crossSD(x + 0.5f - SCR_W / 2.0f, fy);
+        if (e > 0 && e < 1) e = 1;
+        if (e <= 0 && e > -1) e = -1;
+        row[x] = (int8_t)constrain((int)e, -127, 127);
+      }
+      esp_partition_write(picPart, crossOff + 16 + (uint32_t)y * SCR_W, row, SCR_W);
+      if ((y & 7) == 7) delay(1);
+    }
+    uint32_t h2[4] = { CROSS_MAGIC, key, 0, 0 };
+    esp_partition_write(picPart, crossOff, h2, 16);
+  }
+  crossKey = key;
+  crossReady = true;
+}
+
+void readCrossRows(int y0, int rows) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W); }
+
 const char *pictureCommand(char *line) {
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
     static char info[128];
@@ -248,6 +366,9 @@ const char *pictureCommand(char *line) {
 }
 #else
 void beginPictures() {}
+bool crossAvailable() { return false; }
+void prepareCross() {}
+void readCrossRows(int y0, int rows) {}
 int  picturesAvailable() { return 0; }
 bool isPicture(uint8_t s) { return false; }
 void readPicture(uint8_t s, int y0, int rows, uint16_t *dst) {}
@@ -335,7 +456,7 @@ const PRESETS = { Rift: ["#3b1cff", "#38f0ff"], Slime: ["#0b6b1a", "#8dff4f"], B
 const rmax = M => Math.floor(Math.min(M.w, M.h) / 2) - 1;
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -343,7 +464,10 @@ if (S.board === "s3mini") S.board = "esp32s3";
 if (!BOARDS[S.board]) S.board = DEFAULTS.board;
 if (!S.custom || typeof S.custom !== "object") S.custom = {};
 if (!(S.bright >= 10 && S.bright <= 100)) S.bright = 100;
-if (![0, 1, 2, 3, 4, 5, 6, 7].includes(S.style)) S.style = 0;
+if (!(Number.isInteger(S.style) && S.style >= 0 && S.style <= 13)) S.style = 0;
+if (!(S.crossw >= 25 && S.crossw <= 100)) S.crossw = 46;
+if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
+if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
@@ -618,6 +742,62 @@ function buildTftPalette() {           // black → core → rim → near-white,
   }
 }
 function tftRespawn(s) { s.a = rnd(0, 628) / 100; s.r = S.radius * 1.05 + rnd(0, Math.trunc(S.radius / 5) + 1); }
+// ---------------- cross shapes (styles 8-13), from the Cross Portal Tuner ----------------
+// Each cross is a union of simple shapes around its main junction, which sits at the screen centre.
+// The lower arm reaches the portal size, the crossbar and beam scale with it.
+const CROSS_NAMES = ["Latin", "Celtic", "Budded", "Patriarchal", "Orthodox", "Pattée"];
+const CROSS_SHAPE = [{ beam: 14, bar: 32 }, { beam: 11, bar: 33 }, { beam: 10, bar: 33 }, { beam: 9, bar: 38 }, { beam: 8, bar: 37 }, { beam: 12, bar: 38 }];
+function crossShapes(kind, R, W, H) {
+  const bot = Math.min(R, H / 2 - 2), top = Math.min(bot * S.bar / (100 - S.bar), H / 2 - 2);
+  const AW = Math.max(2, R * S.beam / 100), HHL = Math.max(AW + 1, Math.min(R * S.crossw / 100, W / 2 - 2));
+  const U = (t, b) => ({ t: "box", cx: 0, cy: (t + b) / 2, hw: AW, hh: (b - t) / 2 }), B = hl => ({ t: "box", cx: 0, cy: 0, hw: hl, hh: AW });
+  switch (kind) {
+    case 1: return [U(-top, bot), B(HHL), { t: "ring", r: Math.max(AW * 1.9, 0.62 * Math.min(HHL, top)), w: Math.max(2, AW * 0.42) }];
+    case 2: { const br = AW * 1.45;
+      return [U(-top + br, bot - br), B(HHL - br), { t: "circle", cx: 0, cy: -top + br, r: br }, { t: "circle", cx: 0, cy: bot - br, r: br },
+        { t: "circle", cx: -(HHL - br), cy: 0, r: br }, { t: "circle", cx: HHL - br, cy: 0, r: br }]; }
+    case 3: case 4: { const th = AW * 0.85, gap = Math.min(AW * 3.4, top - th - 2);
+      const L = [U(-top, bot), B(HHL), { t: "box", cx: 0, cy: -gap, hw: HHL * 0.6, hh: th }];
+      if (kind === 4) L.push({ t: "rbox", cx: 0, cy: bot * 0.62, hw: HHL * 0.55, hh: th, a: -0.35 });
+      return L; }
+    case 5: { const a = AW * 0.55, b = AW * 1.75;
+      return [{ t: "box", cx: 0, cy: 0, hw: a, hh: a }, { t: "arm", dir: 0, len: top, a, b }, { t: "arm", dir: 1, len: bot, a, b },
+        { t: "arm", dir: 2, len: HHL, a, b }, { t: "arm", dir: 3, len: HHL, a, b }]; }
+    default: return [U(-top, bot), B(HHL)];
+  }
+}
+const sdBoxJ = (x, y, cx, cy, hw, hh) => { const dx = Math.abs(x - cx) - hw, dy = Math.abs(y - cy) - hh; return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0); };
+function sdShapeJ(o, x, y) {
+  switch (o.t) {
+    case "box": return sdBoxJ(x, y, o.cx, o.cy, o.hw, o.hh);
+    case "circle": return Math.hypot(x - o.cx, y - o.cy) - o.r;
+    case "ring": return Math.abs(Math.hypot(x, y) - o.r) - o.w;
+    case "rbox": { const c = Math.cos(o.a), n = Math.sin(o.a), dx = x - o.cx, dy = y - o.cy; return sdBoxJ(c * dx + n * dy, -n * dx + c * dy, 0, 0, o.hw, o.hh); }
+    case "arm": {                                    // flared arm: narrow (a) at the centre, wide (b) at the tip
+      const u = [-y, y, -x, x][o.dir], v = [x, x, y, y][o.dir], k = (o.b - o.a) / o.len;
+      const side = (Math.abs(v) - (o.a + k * Math.min(Math.max(u, 0), o.len))) / Math.sqrt(1 + k * k);
+      return Math.max(side, Math.max(-u, u - o.len));
+    }
+  }
+}
+let crossKey = "", crossE = null;                  // distance to the cross edge per pixel: >0 inside, <0 outside
+const crossRimT = new Uint8Array(128), crossHaloT = new Uint8Array(128);   // rim and outer glow, sized to the beam
+function crossEdges() {
+  const key = [S.style, S.radius, S.crossw, S.beam, S.bar, TW, TH].join(",");
+  if (key === crossKey) return crossE;
+  const sh = crossShapes(S.style - 8, S.radius, TW, TH), E = new Int8Array(TW * TH);
+  for (let y = 0, i = 0; y < TH; y++) for (let x = 0; x < TW; x++, i++) {
+    const fx = x + 0.5 - TW / 2, fy = y + 0.5 - TH / 2;
+    let d = Infinity; for (const o of sh) d = Math.min(d, sdShapeJ(o, fx, fy));
+    let e = -d; if (e > 0 && e < 1) e = 1; if (e <= 0 && e > -1) e = -1;
+    E[i] = Math.max(-127, Math.min(127, Math.trunc(e)));
+  }
+  const rw = Math.max(1.5, Math.max(2, S.radius * S.beam / 100) * 0.3);
+  for (let k = 0; k < 128; k++) { crossRimT[k] = Math.trunc(255 * Math.exp(-(k / rw) * (k / rw))); crossHaloT[k] = Math.trunc(115 * Math.exp(-k / 12)); }
+  crossKey = key; crossE = E;
+  return E;
+}
+
 let tftImg = null;
 function tftFrame() {
   // sparks
@@ -659,6 +839,7 @@ function tftFrame() {
   if (!tftImg) tftImg = g.createImageData(TW, TH);
   const out = new Uint32Array(tftImg.data.buffer);
   let p = 0;
+  const CE = style >= 8 ? crossEdges() : null;
   for (let y = 0; y < TH; y++) {
     const qy = y < QY ? QY - 1 - y : y - QY, low = y >= QY;
     for (let x = 0; x < TW; x++) {
@@ -666,7 +847,19 @@ function tftFrame() {
       const a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
       const e = edgeT[a];
       let v;
-      if (style === 7) {                         // Cartoon Sticker: ragged edge, light outline, no glow
+      if (CE) {                                  // Cross: Vortex swirl inside, glowing rim along the cross edge
+        const ce = CE[p];
+        if (ce > 0) {
+          const s = sinT[(a * arms + twistT[r] + phase) & 255], s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255], d = depthT[r];
+          const band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
+          v = (d * (60 + ((band * 195) >> 8))) >> 8;
+          if (s > 100) v += ((s - 100) * 3 * d) >> 8;
+          if (coreT[r] > v) v = coreT[r];
+          if (crossRimT[ce] > v) v = crossRimT[ce];
+        } else {
+          const k = -ce; v = Math.max(crossRimT[k], crossHaloT[k]);
+        }
+      } else if (style === 7) {                         // Cartoon Sticker: ragged edge, light outline, no glow
         const jag = (((nz(nzB, a * 4 + (phase >> 1)) - 128) * 7 + (nz(nzC, a * 16 + phase) - 128) * 4) >> 7) * (100 - S.rimsmooth) / 100;
         const e2 = Math.trunc(R * 1.02 + jag / 4);
         v = r >= e2 ? 0 : r >= e2 - 4 ? 235 : cartoonV(a, r, arms, phase);
@@ -732,6 +925,7 @@ function tftFrame() {
   for (let i = 0; i < S.sparks; i++) {
     if (style === 5 && sparks[i].r < bhHole) continue;   // sparks vanish into the black hole
     const sx = Math.floor(QX + Math.cos(sparks[i].a) * sparks[i].r * S.oval), sy = Math.floor(QY + Math.sin(sparks[i].a) * sparks[i].r);
+    if (CE && !(sx >= 0 && sx < TW && sy >= 0 && sy < TH && CE[sy * TW + sx] > 0)) continue;   // sparks stay inside the cross
     for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
       const xx = sx + dx, yy = sy + dy;
       if (xx >= 0 && xx < TW && yy >= 0 && yy < TH) out[yy * TW + xx] = tftPal[235];
