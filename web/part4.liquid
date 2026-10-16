@@ -315,10 +315,12 @@ const refreshCode = () => { clearTimeout(codeTimer); codeTimer = setTimeout(() =
 for (const [key, m] of Object.entries(MODELS)) {
   const lab = document.createElement("label");
   lab.className = "model" + (m.wide ? " wide" : ""); lab.htmlFor = "vps-m-" + key;
-  const tag = m.kind === "tft" ? (m.rect ? "RGB · TFT" : "RGB · ROUND") : m.kind === "rgb" ? "RGB" : "MONO";
+  const tag = m.kind === "mono" ? "ONE COLOR" : "COLOR";
+  const [size, ...rest] = m.spec.split(" · ");            // screen size first, part number and details below
+  const title = /round|rectangle|square/.test(size) ? size : `${size} ${m.w === m.h ? "square" : "rectangle"}`;
   lab.innerHTML = `<input type="radio" name="model" id="vps-m-${key}" value="${key}">
-    <b>${m.chip} <span class="tag ${m.kind !== "mono" ? "rgb" : ""}">${tag}</span></b>
-    <small>${m.spec}</small>`;
+    <b>${title} <span class="tag ${m.kind !== "mono" ? "rgb" : ""}">${tag}</span></b>
+    <small>${[m.chip, ...rest].join(" · ")}</small>`;
   lab.querySelector("input").addEventListener("change", () => selectModel(key, true));
   $("models").appendChild(lab);
 }
