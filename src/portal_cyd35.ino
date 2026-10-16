@@ -82,10 +82,10 @@ bool     DRIFT      = true;    // not used on LCDs (they don't burn in)
 uint32_t COLOR_CORE = 0x3B1CFF;  // inner colour
 uint32_t COLOR_RIM  = 0x38F0FF;  // outer colour
 uint8_t  BRIGHTNESS = 100;     // 10-100 %: dims the portal's colours
-uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
+uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy (Hubble-style spiral), 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
                                 // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
                                 // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
-uint32_t SPACE_COLS[4] = { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF };   // Nebula, Wormhole, Meteor Shower: four colours blended together
+uint32_t SPACE_COLS[4] = { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF };   // Galaxy, Nebula, Wormhole, Meteor Shower: four colours blended together
 uint8_t  CROSS_W    = 46;      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
 uint8_t  BEAM       = 14;      // crosses: beam thickness, % of the portal size (5-30)
 uint8_t  BAR        = 32;      // crosses: crossbar height (20-50, 50 = all arms the same length)
@@ -107,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x6E249858UL;
+const uint32_t BUILD_ID = 0xC46B6ABAUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -865,10 +865,14 @@ double   spaceT = 0;                    // space clock (runs on its own so it ne
 float    spU = 1, spExt = 118;          // space units per pixel, edge of the picture in space units
 float    nbCa = 1, nbSa = 0, nbO1 = 0, nbO2 = 0, nbO3 = 0;
 int      spTw = 0, whPh = 0;
-#define SP_CELL 4                       // gas is worked out every 4 pixels and smoothed in between
-#define SP_COLS (SCR_W / SP_CELL + 2)
-#define SP_ROWS (9600 / SCR_W / SP_CELL + 3)
-uint8_t  spH[SP_COLS * SP_ROWS], spV[SP_COLS * SP_ROWS], spX[SP_COLS * SP_ROWS];
+#define SP_GRID ((SCR_W / 2 + 2) * (9600 / SCR_W / 2 + 3))   // gas worked out every 2 or 4 pixels, smoothed in between
+uint8_t  *spH = NULL, *spV = NULL, *spX = NULL;
+// Galaxy: a Hubble-style spiral (like M51, M100, NGC 4414)
+#define GAL_TILT 0.86f                   // how tilted toward you (1 = face on)
+#define GAL_PA   -0.55f                  // which way it points
+#define GAL_K    9.0f                    // how tightly the arms wind
+#define GAL_ZOOM 0.7f                    // size (smaller = bigger galaxy)
+float    gax = 1, gbx = 0, gay = 0, gby = 1;
 uint8_t  powT[256], whRingT[256], whNearT[256];
 int16_t  whOffT[256], whCoreT[256];
 int32_t  whHueT[256];
@@ -882,11 +886,17 @@ void buildNoise() {
 }
 
 bool spaceMemory() {                    // the colour table and noise only take memory once a space style is used
-  if (spaceLUT && noise8) return true;
+  if (spaceLUT && noise8 && spX) return true;
+  if (!spH) spH = (uint8_t *)malloc(SP_GRID);
+  if (!spV) spV = (uint8_t *)malloc(SP_GRID);
+  if (!spX) spX = (uint8_t *)malloc(SP_GRID);
+  if (!spH || !spV || !spX) return false;
   if (!spaceLUT) { spaceLUT = (uint16_t *)malloc(64 * 64 * 2); if (spaceLUT) buildSpaceLUT(); }
   if (!noise8) { noise8 = (uint8_t *)malloc(64 * 64); if (noise8) buildNoise(); }
   return spaceLUT && noise8;
 }
+
+inline float smf(float x) { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); }
 
 float vn(float x, float y) {            // smooth noise, 0..1, repeats every 64 units
   float xf = floorf(x), yf = floorf(y);
@@ -900,7 +910,32 @@ float vn(float x, float y) {            // smooth noise, 0..1, repeats every 64 
 
 inline uint8_t to8(float v) { return v <= 0 ? 0 : v >= 1 ? 255 : (uint8_t)(v * 255); }
 
+void galaxyNode(float xr, float yr, uint8_t &h, uint8_t &v, uint8_t &a8) {   // light, colour and "arm" at one point of the galaxy's plane
+  float gr = sqrtf(xr * xr + yr * yr), ga = atan2f(yr, xr), lr = logf(gr / 5 + 1);
+  float wob = (vn(xr / 16 + 50, yr / 16) - 0.5f) * 1.3f;              // arms wander and break up
+  float ph = 2 * ga - GAL_K * lr + wob;
+  float c = 0.5f + 0.5f * cosf(ph), c2 = c * c, c4 = c2 * c2, c8 = c4 * c4;
+  float b = 0.5f + 0.5f * cosf(2 * ga - GAL_K * 1.12f * lr + 2.3f + wob * 1.5f), b2 = b * b, b6 = b2 * b2 * b2;   // fainter branch arms
+  float e = 0.5f + 0.5f * cosf(5 * ga - GAL_K * 1.5f * lr + wob * 2.2f), e2 = e * e, e4 = e2 * e2, e10 = e4 * e4 * e2;   // feathery spurs
+  float arm = min(1.0f, 0.7f * c2 + 0.3f * c8 + 0.5f * b6 * smf((gr - 8) / 20) + 0.28f * e10 * smf((gr - 14) / 16));
+  float clump = vn(xr / 3.2f, yr / 3.2f) * 0.55f + vn(xr / 8 + 7, yr / 8) * 0.45f;   // star clouds along the arms
+  float l = 0.5f + 0.5f * cosf(ph - 0.6f), l2 = l * l, l4 = l2 * l2, l8 = l4 * l4, l16 = l8 * l8;   // dust on the inner edge of each arm
+  float lane = l16 * l8 * l4 * l2 * (0.35f + 0.9f * vn(xr / 2.6f + 20, yr / 2.6f));
+  float f = 0.5f + 0.5f * cosf(4 * ga - GAL_K * 1.05f * lr + vn(xr / 7 + 31, yr / 7) * 5), f2 = f * f, f8 = f2 * f2 * f2 * f2, f16 = f8 * f8;   // thin dust filaments
+  float wisp = f16 * f8 * f2 * 0.8f * smf((gr - 6) / 14) + max(0.0f, vn(xr / 4.5f + 3, yr / 4.5f - 9) - 0.64f) * 1.4f * c;
+  float edge = smf((104 - gr) / 44);
+  float dust = min(1.0f, lane + wisp) * smf(gr / 14) * edge;
+  float q = gr / 6.5f, bulge = expf(-q * q) + expf(-gr / 11) * 0.5f;
+  float disk = expf(-gr / 48) * edge, halo = expf(-gr / 22) * 0.32f;
+  float cl = clump * clump * 1.6f;
+  float lv = bulge + halo + disk * (0.3f + 0.12f * cl + 1.6f * arm * (0.25f + cl));
+  lv *= 1 - 0.55f * dust * (1 - min(1.0f, bulge));
+  float hue = 0.75f - 0.23f * smf((gr - 14) / 34) + 0.16f * dust;   // yellow-cream core, blue outer arms, brown dust
+  h = to8(hue / 2); v = to8(lv); a8 = to8(arm * edge * (1 - dust));
+}
+
 void spaceNode(float X, float Y, uint8_t &h, uint8_t &v, uint8_t &x8) {   // gas and dust at one point
+  if (look == 4) { galaxyNode(gax * X + gbx * Y, gay * X + gby * Y, h, v, x8); return; }
   if (look == 14) {                                                       // Nebula
     float x = (X * nbCa - Y * nbSa) / 36, y = (X * nbSa + Y * nbCa) / 36;
     float w = vn(x + nbO1, y) * 2.2f;                                     // warp so the clouds fold
@@ -933,6 +968,11 @@ void prepareSpace() {                   // once per frame
   nbCa = cosf(ang); nbSa = sinf(ang);
   nbO1 = (float)fmod(T * 0.004, 64.0); nbO2 = (float)fmod(T * 0.003, 64.0); nbO3 = (float)fmod(T * 0.002, 64.0);
   spTw = (int)(fmod(T * 0.25, TWO_PI) * 40.74f);
+  if (look == 4) {                      // Galaxy: screen -> the galaxy's own slowly turning plane
+    float rot = (float)fmod(T * 0.0025, TWO_PI), cr = cosf(rot), sr = sinf(rot), cp = cosf(GAL_PA), sp = sinf(GAL_PA);
+    gax = (cp * cr + sp * sr / GAL_TILT) * GAL_ZOOM; gbx = (-sp * cr + cp * sr / GAL_TILT) * GAL_ZOOM;
+    gay = (-cp * sr + sp * cr / GAL_TILT) * GAL_ZOOM; gby = (sp * sr + cp * cr / GAL_TILT) * GAL_ZOOM;
+  }
   if (look == 15) {                     // Wormhole: rings falling away, worked out per distance
     whPh = (int)(fmod(T * 0.06, TWO_PI) * 40.74f);
     float off = (float)fmod(T * 0.09, 100.0);
@@ -975,24 +1015,39 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
     }
     return;
   }
-  // Nebula and Meteor Shower: gas worked out on a coarse grid, smoothed in between
-  int gy0 = y0 / SP_CELL, gy1 = (y0 + rows - 1) / SP_CELL + 1;
+  // Galaxy, Nebula and Meteor Shower: gas worked out on a coarse grid, smoothed in between
+  const int C = look == 4 && min(SCR_W, SCR_H) < 300 ? 2 : 4, SH = C == 2 ? 2 : 4, GC = SCR_W / C + 2;
+  int gy0 = y0 / C, gy1 = (y0 + rows - 1) / C + 1;
   for (int gy = gy0; gy <= gy1; gy++)
-    for (int gx = 0; gx < SP_COLS; gx++) {
-      int i = (gy - gy0) * SP_COLS + gx;
-      spaceNode((gx * SP_CELL + 0.5f - QX) * spU, (gy * SP_CELL + 0.5f - QY) * spU, spH[i], spV[i], spX[i]);
+    for (int gx = 0; gx < GC; gx++) {
+      int i = (gy - gy0) * GC + gx;
+      spaceNode((gx * C + 0.5f - QX) * spU, (gy * C + 0.5f - QY) * spU, spH[i], spV[i], spX[i]);
     }
-  int dens = (look == 14 ? 7 : 10) * STARS / 3, densBand = 22 * STARS / 3;
+  int dens = (look == 14 ? 7 : look == 4 ? 4 : 10) * STARS / 3, densBand = 22 * STARS / 3;
   for (int y = y0; y < y0 + rows; y++) {
-    int gy = y / SP_CELL - gy0, fy = y % SP_CELL;
+    int gy = y / C - gy0, fy = y % C;
+    float Y = (y + 0.5f - QY) * spU;
     for (int x = 0; x < SCR_W; x++) {
-      int fx = x % SP_CELL, i = gy * SP_COLS + x / SP_CELL;
-      int w00 = (SP_CELL - fx) * (SP_CELL - fy), w01 = fx * (SP_CELL - fy), w10 = (SP_CELL - fx) * fy, w11 = fx * fy;
-      int h = (spH[i] * w00 + spH[i + 1] * w01 + spH[i + SP_COLS] * w10 + spH[i + SP_COLS + 1] * w11) >> 4;
-      int v = (spV[i] * w00 + spV[i + 1] * w01 + spV[i + SP_COLS] * w10 + spV[i + SP_COLS + 1] * w11) >> 4;
+      int fx = x % C, i = gy * GC + x / C;
+      int w00 = (C - fx) * (C - fy), w01 = fx * (C - fy), w10 = (C - fx) * fy, w11 = fx * fy;
+      int h = (spH[i] * w00 + spH[i + 1] * w01 + spH[i + GC] * w10 + spH[i + GC + 1] * w11) >> SH;
+      int v = (spV[i] * w00 + spV[i + 1] * w01 + spV[i + GC] * w10 + spV[i + GC + 1] * w11) >> SH;
       int hi = (h >> 1) & 63, vi = v >> 2, shi, svi;
       uint32_t pix = (uint32_t)(y * SCR_W + x);
-      if (look == 14) { if (spaceStar(pix, dens, shi, svi) && svi > vi) { hi = shi; vi = min(63, svi + 13); } }
+      if (look == 4) {
+        int am = (spX[i] * w00 + spX[i + 1] * w01 + spX[i + GC] * w10 + spX[i + GC + 1] * w11) >> SH;
+        if (am > 90) {                                   // knots on the arms: pink star nurseries, blue clusters
+          float X = (x + 0.5f - QX) * spU, xr = gax * X + gbx * Y, yr = gay * X + gby * Y;
+          int kx = (int)floorf(xr / 4), ky = (int)floorf(yr / 4);
+          uint32_t kh = hash32((uint32_t)(kx + 4096) * 7919u + (uint32_t)(ky + 4096) * 104729u);
+          int kind = kh & 15;
+          if (kind < 3) {
+            float dx = xr - (kx * 4 + 1 + (int)((kh >> 8) & 1) * 2), dy = yr - (ky * 4 + 1 + (int)((kh >> 9) & 1) * 2), d2 = dx * dx + dy * dy, size = kind == 0 ? 1.6f : 0.9f;
+            if (d2 < size) { int kv = (int)((0.62f + am / 700.0f) * 63 * (1 - d2 / size * 0.4f)); if (kv > vi) { hi = kind == 0 ? 17 : 33; vi = min(63, kv); } }
+          }
+        }
+        if (spaceStar(pix, dens, shi, svi) && svi > vi + 8) { hi = 42; vi = svi; }
+      } else if (look == 14) { if (spaceStar(pix, dens, shi, svi) && svi > vi) { hi = shi; vi = min(63, svi + 13); } }
       else if (spaceStar(pix, spX[i] ? densBand : dens, shi, svi)) { hi = shi; vi = svi; }
       *p++ = spaceLUT[hi * 64 + vi];
     }
@@ -1022,7 +1077,7 @@ void frameStart() {
   bool isCross = STYLE >= 8 && STYLE <= 13;
   if (isCross && crossAvailable() && edgeBuf) prepareCross();
   look = isCross && !crossReady ? 0 : STYLE;
-  if (look >= 14) { if (spaceMemory()) prepareSpace(); else look = 0; }   // no room: show the Vortex
+  if (look == 4 || look >= 14) { if (spaceMemory()) prepareSpace(); else look = 0; }   // no room: show the Vortex
   updateColourFade();
   updateSparks();
   for (int a = 0; a < 256; a++) {                     // wobbly rim edge for this frame
@@ -1079,7 +1134,7 @@ inline int cartoonV(int a, int r, int phase) {   // blobby flat-shaded swirl
 void renderStrip(int y0, int rows, uint16_t *strip) {
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);
   uint16_t *p = strip;
-  if (look >= 14) { renderSpaceStrip(y0, rows, strip); return; }   // Nebula, Wormhole, Meteor Shower
+  if (look == 4 || look >= 14) { renderSpaceStrip(y0, rows, strip); return; }   // Galaxy, Nebula, Wormhole, Meteor Shower
   bool cross = look >= 8;
   if (cross) readCrossRows(y0, rows);
   for (int y = y0; y < y0 + rows; y++) {
@@ -1146,13 +1201,6 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
               if (sv > v) v = sv;
             }
           }
-        } else if (look == 4) {                       // Galaxy: spiral arms, glowing core, stars
-          int arm   = sinT[(a * 2 + twistT[r] + (phase >> 2)) & 255];
-          int lumps = sinT[(a * 5 + r * 3 - (phase >> 3)) & 255];
-          int armV  = ((arm + 127) * galFadeT[r]) >> 8;
-          v = 18 + ((armV * 115) >> 8) + ((lumps * (arm + 127)) >> 9) + spCoreT[r];
-          int st = starAt(a, r); if (st > v) v = st;
-          if (v < 0) v = 0;
         } else if (look == 5) {                       // Black hole: shadow, bright ring, swirling disk
           if (r < bhHole) v = 0;
           else {

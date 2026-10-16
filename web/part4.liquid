@@ -371,7 +371,7 @@ const STYLES = [
   { name: "Wormhole" },
   { name: "Meteor Shower" },
 ];
-const isCrossStyle = i => i >= 8 && i <= 13, isSpaceStyle = i => (i >= 3 && i <= 5) || i >= 14, hasSpaceCols = i => i >= 14;
+const isCrossStyle = i => i >= 8 && i <= 13, isSpaceStyle = i => (i >= 3 && i <= 5) || i >= 14, hasSpaceCols = i => i === 4 || i >= 14;
 function markStyle() {
   $("style").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.i === S.style));
   root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style === 2); });
@@ -978,7 +978,7 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
 const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${S.drift ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
-function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${S.style >= 14 ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") : ""}`; }   // space colours only when needed, so older boards still accept the rest
+function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${hasSpaceCols(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") : ""}`; }   // space colours only when needed, so older boards still accept the rest
 
 async function readReply(ms) {
   const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "";

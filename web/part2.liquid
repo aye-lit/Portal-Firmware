@@ -793,6 +793,32 @@ function vn(x, y) {
 }
 const to8 = v => v <= 0 ? 0 : v >= 1 ? 255 : Math.trunc(v * 255);
 let spaceT = 0;
+// Galaxy: a Hubble-style spiral (like M51, M100, NGC 4414)
+const GAL_TILT = 0.86, GAL_PA = -0.55, GAL_K = 9, GAL_ZOOM = 0.7;   // tilt, which way it points, arm winding, size
+const smf = x => { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); };
+function galaxyNode(xr, yr) {                        // light, colour and "arm" at one point of the galaxy's plane
+  const gr = Math.hypot(xr, yr), ga = Math.atan2(yr, xr), lr = Math.log(gr / 5 + 1);
+  const wob = (vn(xr / 16 + 50, yr / 16) - 0.5) * 1.3;               // arms wander and break up
+  const ph = 2 * ga - GAL_K * lr + wob;
+  const c = 0.5 + 0.5 * Math.cos(ph), c2v = c * c, c4 = c2v * c2v, c8 = c4 * c4;
+  const b = 0.5 + 0.5 * Math.cos(2 * ga - GAL_K * 1.12 * lr + 2.3 + wob * 1.5), b2 = b * b, b6 = b2 * b2 * b2;   // fainter branch arms
+  const e = 0.5 + 0.5 * Math.cos(5 * ga - GAL_K * 1.5 * lr + wob * 2.2), e2 = e * e, e4 = e2 * e2, e10 = e4 * e4 * e2;   // feathery spurs
+  const arm = Math.min(1, 0.7 * c2v + 0.3 * c8 + 0.5 * b6 * smf((gr - 8) / 20) + 0.28 * e10 * smf((gr - 14) / 16));
+  const clump = vn(xr / 3.2, yr / 3.2) * 0.55 + vn(xr / 8 + 7, yr / 8) * 0.45;   // star clouds along the arms
+  const l = 0.5 + 0.5 * Math.cos(ph - 0.6), l2 = l * l, l4 = l2 * l2, l8 = l4 * l4, l16 = l8 * l8;   // dust on the inner edge of each arm
+  const lane = l16 * l8 * l4 * l2 * (0.35 + 0.9 * vn(xr / 2.6 + 20, yr / 2.6));
+  const f = 0.5 + 0.5 * Math.cos(4 * ga - GAL_K * 1.05 * lr + vn(xr / 7 + 31, yr / 7) * 5), f2 = f * f, f8 = f2 * f2 * f2 * f2, f16 = f8 * f8;   // thin dust filaments
+  const wisp = f16 * f8 * f2 * 0.8 * smf((gr - 6) / 14) + Math.max(0, vn(xr / 4.5 + 3, yr / 4.5 - 9) - 0.64) * 1.4 * c;
+  const edge = smf((104 - gr) / 44);
+  const dust = Math.min(1, lane + wisp) * smf(gr / 14) * edge;
+  const q = gr / 6.5, bulge = Math.exp(-q * q) + Math.exp(-gr / 11) * 0.5;
+  const disk = Math.exp(-gr / 48) * edge, halo = Math.exp(-gr / 22) * 0.32;
+  const cl = clump * clump * 1.6;
+  let v = bulge + halo + disk * (0.3 + 0.12 * cl + 1.6 * arm * (0.25 + cl));
+  v *= 1 - 0.55 * dust * (1 - Math.min(1, bulge));
+  const hue = 0.75 - 0.23 * smf((gr - 14) / 34) + 0.16 * dust;      // yellow-cream core, blue outer arms, brown dust
+  return [to8(hue / 2), to8(v), to8(arm * edge * (1 - dust))];
+}
 const whRingT = new Uint8Array(256), whNearT = new Uint8Array(256), whOffT = new Int16Array(256), whCoreT = new Int16Array(256), whHueT = new Int32Array(256);
 function spaceFrame(out) {
   buildSpaceLUT();
@@ -830,12 +856,19 @@ function spaceFrame(out) {
     }
     return;
   }
-  // Nebula and Meteor Shower: gas on a grid every 4 pixels, smoothed in between
-  const C = 4, GC = Math.trunc(TW / C) + 2, GR = Math.trunc((TH - 1) / C) + 2;
+  // Galaxy, Nebula and Meteor Shower: gas worked out on a grid, smoothed in between
+  const C = style === 4 && Math.min(TW, TH) < 300 ? 2 : 4, SH = C === 2 ? 2 : 4;
+  const GC = Math.trunc(TW / C) + 2, GR = Math.trunc((TH - 1) / C) + 2;
   const gH = new Uint8Array(GC * GR), gV = new Uint8Array(GC * GR), gX = new Uint8Array(GC * GR);
+  const rot = (T * 0.0025) % TWO_PI, gcr = Math.cos(rot), gsr = Math.sin(rot), gcp = Math.cos(GAL_PA), gsp = Math.sin(GAL_PA);
+  const gax = (gcp * gcr + gsp * gsr / GAL_TILT) * GAL_ZOOM, gbx = (-gsp * gcr + gcp * gsr / GAL_TILT) * GAL_ZOOM;   // screen -> the galaxy's own turning plane
+  const gay = (-gcp * gsr + gsp * gcr / GAL_TILT) * GAL_ZOOM, gby = (gsp * gsr + gcp * gcr / GAL_TILT) * GAL_ZOOM;
   for (let gy = 0; gy < GR; gy++) for (let gx = 0; gx < GC; gx++) {
     const X = (gx * C + 0.5 - QX) * spU, Y = (gy * C + 0.5 - QY) * spU, i = gy * GC + gx;
-    if (style === 14) {
+    if (style === 4) {
+      const g = galaxyNode(gax * X + gbx * Y, gay * X + gby * Y);
+      gH[i] = g[0]; gV[i] = g[1]; gX[i] = g[2];
+    } else if (style === 14) {
       const x = (X * nbCa - Y * nbSa) / 36, y = (X * nbSa + Y * nbCa) / 36;
       const w = vn(x + nbO1, y) * 2.2;
       let d = vn(x + w, y - w + nbO2) * 0.6 + vn(x * 2.2 - w, y * 2.2 + nbO1) * 0.28 + vn(x * 4.6, y * 4.6) * 0.12;
@@ -848,17 +881,28 @@ function spaceFrame(out) {
       gH[i] = to8((0.05 + vn(X / 40, Y / 40 + 2) * 0.8) / 2); gV[i] = to8(band * (0.12 + cloud * 0.35)); gX[i] = band > 0.3 ? 1 : 0;
     }
   }
-  const dens = Math.trunc((style === 14 ? 7 : 10) * S.stars / 3), densBand = Math.trunc(22 * S.stars / 3);
+  const dens = Math.trunc((style === 14 ? 7 : style === 4 ? 4 : 10) * S.stars / 3), densBand = Math.trunc(22 * S.stars / 3);
   let p = 0;
   for (let y = 0; y < TH; y++) {
-    const gy = Math.trunc(y / C), fy = y % C;
+    const gy = Math.trunc(y / C), fy = y % C, Y = (y + 0.5 - QY) * spU;
     for (let x = 0; x < TW; x++) {
       const fx = x % C, i = gy * GC + Math.trunc(x / C);
       const w00 = (C - fx) * (C - fy), w01 = fx * (C - fy), w10 = (C - fx) * fy, w11 = fx * fy;
-      const h = (gH[i] * w00 + gH[i + 1] * w01 + gH[i + GC] * w10 + gH[i + GC + 1] * w11) >> 4;
-      const v = (gV[i] * w00 + gV[i + 1] * w01 + gV[i + GC] * w10 + gV[i + GC + 1] * w11) >> 4;
+      const h = (gH[i] * w00 + gH[i + 1] * w01 + gH[i + GC] * w10 + gH[i + GC + 1] * w11) >> SH;
+      const v = (gV[i] * w00 + gV[i + 1] * w01 + gV[i + GC] * w10 + gV[i + GC + 1] * w11) >> SH;
       let hi = (h >> 1) & 63, vi = v >> 2;
-      if (style === 14) { const st = star(y * TW + x, dens); if (st && st[1] > vi) { hi = st[0]; vi = Math.min(63, st[1] + 13); } }
+      if (style === 4) {
+        const am = (gX[i] * w00 + gX[i + 1] * w01 + gX[i + GC] * w10 + gX[i + GC + 1] * w11) >> SH;
+        if (am > 90) {                               // knots on the arms: pink star nurseries, blue clusters
+          const X = (x + 0.5 - QX) * spU, xr = gax * X + gbx * Y, yr = gay * X + gby * Y;
+          const kx = Math.floor(xr / 4), ky = Math.floor(yr / 4), kh = hash32((Math.imul(kx + 4096, 7919) + Math.imul(ky + 4096, 104729)) >>> 0), kind = kh & 15;
+          if (kind < 3) {
+            const dx = xr - (kx * 4 + 1 + ((kh >>> 8) & 1) * 2), dy = yr - (ky * 4 + 1 + ((kh >>> 9) & 1) * 2), d2 = dx * dx + dy * dy, size = kind === 0 ? 1.6 : 0.9;
+            if (d2 < size) { const kv = Math.trunc((0.62 + am / 700) * 63 * (1 - d2 / size * 0.4)); if (kv > vi) { hi = kind === 0 ? 17 : 33; vi = Math.min(63, kv); } }
+          }
+        }
+        const st = star(y * TW + x, dens); if (st && st[1] > vi + 8) { hi = 42; vi = st[1]; }
+      } else if (style === 14) { const st = star(y * TW + x, dens); if (st && st[1] > vi) { hi = st[0]; vi = Math.min(63, st[1] + 13); } }
       else { const st = star(y * TW + x, gX[i] ? densBand : dens); if (st) { hi = st[0]; vi = st[1]; } }
       out[p++] = spaceLUT[hi * 64 + vi];
     }
@@ -977,7 +1021,7 @@ function tftFrame() {
   const out = new Uint32Array(tftImg.data.buffer);
   spaceT += S.speed * 8;
   if (spaceT > 1e7) spaceT = 0;
-  if (style >= 14) {                                 // Nebula, Wormhole, Meteor Shower
+  if (style === 4 || style >= 14) {                  // Galaxy, Nebula, Wormhole, Meteor Shower
     spaceFrame(out);
     if (typeof composePreview === "function") composePreview(out);
     g.putImageData(tftImg, 0, 0);
@@ -1041,13 +1085,6 @@ function tftFrame() {
             const rr = warpRR[i], len = warpLen[i];
             if (r <= rr && r > rr - len) { const sv = Math.trunc(110 + warpB[i] * (1 - (rr - r) / len * 0.6)); if (sv > v) v = sv; }
           }
-        } else if (style === 4) {                // Galaxy: spiral arms, core, stars
-          const arm = sinT[(a * 2 + twistT[r] + (phase >> 2)) & 255];
-          const lumps = sinT[(a * 5 + r * 3 - (phase >> 3)) & 255];
-          const armV = ((arm + 127) * galFadeT[r]) >> 8;
-          v = 18 + ((armV * 115) >> 8) + ((lumps * (arm + 127)) >> 9) + spCoreT[r];
-          const st = starAt(a, r, S.stars, tw); if (st > v) v = st;
-          if (v < 0) v = 0;
         } else if (style === 5) {                // Black hole: shadow, ring, swirling disk
           if (r < bhHole) v = 0;
           else {
