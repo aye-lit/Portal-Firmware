@@ -367,13 +367,21 @@ const STYLES = [
   { name: "Cartoon Swirl", c: PRESETS.Slime, arms: 2, twist: 1.8 },
   { name: "Cartoon Sticker", c: PRESETS.Slime, arms: 2, twist: 1.8 },
   ...CROSS_NAMES.map((name, k) => ({ name, cross: CROSS_SHAPE[k] })),
+  { name: "Nebula" },
+  { name: "Wormhole" },
+  { name: "Meteor Shower" },
 ];
+const isCrossStyle = i => i >= 8 && i <= 13, isSpaceStyle = i => (i >= 3 && i <= 5) || i >= 14, hasSpaceCols = i => i >= 14;
 function markStyle() {
   $("style").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.i === S.style));
   root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style === 2); });
-  root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style >= 3 && S.style <= 5); });
-  root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style >= 8); });
-  $("cross-row").hidden = !picturesAllowed() && S.style < 8;
+  root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(M.kind === "tft" && isSpaceStyle(S.style)); });
+  root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !(M.kind === "tft" && isCrossStyle(S.style)); });
+  $("cross-row").hidden = !picturesAllowed() && !isCrossStyle(S.style);
+  const sc = M.kind === "tft" && hasSpaceCols(S.style);     // Nebula, Wormhole, Meteor Shower use four space colours
+  $("space-colors").hidden = !sc;
+  if (M.kind === "tft") { $("rgb-colors").hidden = sc; $("fade-wrap").hidden = sc; $("rimsmooth-wrap").hidden = sc; }
+  ["radius", "oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = sc; });   // portal-only controls
 }
 STYLES.forEach((st, i) => {
   const b = document.createElement("button");
@@ -386,8 +394,31 @@ STYLES.forEach((st, i) => {
     if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; }
     bindAll(); markStyle(); changed(true);
   });
-  $(i >= 8 ? "style-cross" : i >= 3 && i <= 5 ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole are space styles
+  $(isCrossStyle(i) ? "style-cross" : isSpaceStyle(i) ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole, Nebula, Wormhole, Meteor Shower are space styles
 });
+// space colour sets (Nebula, Wormhole, Meteor Shower)
+const SPACE_ROLES = ["Deep", "Glow", "Contrast", "Highlight"], spacePicks = [];
+for (const [name, set] of Object.entries(SPACE_SETS)) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "spchip"; b.dataset.name = name;
+  b.innerHTML = `<i style="background:linear-gradient(90deg, ${set.join(", ")})"></i>${name}`;
+  b.addEventListener("click", () => { S.spaceCols = [...set]; markSpaceSets(); spaceColsChanged(); });
+  $("space-sets").appendChild(b);
+}
+SPACE_ROLES.forEach((role, k) => {
+  const l = document.createElement("label");
+  l.className = "pick";
+  l.innerHTML = `${role} <input type="color" aria-label="${role} space colour">`;
+  spacePicks[k] = l.querySelector("input");
+  spacePicks[k].addEventListener("input", e => { S.spaceCols[k] = e.target.value; markSpaceSets(); spaceColsChanged(); });
+  $("space-picks").appendChild(l);
+});
+function markSpaceSets() {
+  $("space-sets").querySelectorAll(".spchip").forEach(b => b.setAttribute("aria-pressed", SPACE_SETS[b.dataset.name].join() === S.spaceCols.join()));
+  S.spaceCols.forEach((c, k) => { const el = spacePicks[k]; if (el && document.activeElement !== el) el.value = c; });
+}
+function spaceColsChanged() { save(); refreshCode(); liveSend(); }
+markSpaceSets();
 // colour presets
 for (const [name, [a, z]] of Object.entries(PRESETS)) {
   const b = document.createElement("button");
@@ -538,7 +569,7 @@ function bindAll() {
   $("c1").value = S.c1; $("c2").value = S.c2;
   $("fade").checked = S.fade; $("fade-opts").hidden = !S.fade;
   if (typeof renderFadeSets === "function") { renderFadeSets(); showFadeTime(); }
-  markPresets(); buildPalette();
+  markPresets(); markSpaceSets(); buildPalette();
   codeEl.textContent = sketch();
 }
 function changed(restart) { save(); refreshCode(); if (restart) resetSparks(); liveSend(); }
@@ -947,7 +978,7 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
 const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${S.drift ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
-function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}`; }
+function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${S.style >= 14 ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") : ""}`; }   // space colours only when needed, so older boards still accept the rest
 
 async function readReply(ms) {
   const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "";

@@ -69,6 +69,7 @@ int      STRIP = 9600 / SCR_W;          // rows drawn per chunk (fewer if memory
 #define MAX_PICS   8                     // picture slots
 #define PORTAL     255                   // scene number for the portal itself
 #define RADIUS_MAX 159
+#define SP_EXT     288          // space styles: distance from the centre to the edge of the picture area
 
 // ---------- Settings baked in from the Studio ----------
 float    RADIUS     = 150.00;   // portal size in pixels
@@ -83,6 +84,8 @@ uint32_t COLOR_RIM  = 0x38F0FF;  // outer colour
 uint8_t  BRIGHTNESS = 100;     // 10-100 %: dims the portal's colours
 uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
                                 // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
+                                // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
+uint32_t SPACE_COLS[4] = { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF };   // Nebula, Wormhole, Meteor Shower: four colours blended together
 uint8_t  CROSS_W    = 46;      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
 uint8_t  BEAM       = 14;      // crosses: beam thickness, % of the portal size (5-30)
 uint8_t  BAR        = 32;      // crosses: crossbar height (20-50, 50 = all arms the same length)
@@ -104,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xE34F48BDUL;
+const uint32_t BUILD_ID = 0x6E249858UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -141,7 +144,8 @@ Spark sparks[MAX_SPARKS];
 int16_t sparkX[MAX_SPARKS], sparkY[MAX_SPARKS];
 float t = 0;
 
-struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; };
+struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; };
+static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // ---------- tables ----------
 // Cartoon styles: smooth looping noise tables
@@ -239,7 +243,29 @@ void buildPaletteFrom(uint32_t core, uint32_t rim) {   // black -> core -> rim -
   }
 }
 
-void buildPalette() { buildPaletteFrom(COLOR_CORE, COLOR_RIM); }
+// Space colour table: 64 hues blended around the four space colours x 64 brightness levels
+uint16_t *spaceLUT = NULL;             // allocated the first time a space style is shown
+void buildSpaceLUT() {
+  if (!spaceLUT) return;
+  for (int h = 0; h < 64; h++) {
+    float p = h / 16.0f; int i = (int)p; float f = p - i; f = f * f * (3 - 2 * f);
+    uint32_t A = SPACE_COLS[i & 3], B = SPACE_COLS[(i + 1) & 3];
+    float base[3];
+    for (int k = 0; k < 3; k++) { int ca = (A >> (16 - 8 * k)) & 0xFF, cb = (B >> (16 - 8 * k)) & 0xFF; base[k] = ca + (cb - ca) * f; }
+    for (int b = 0; b < 64; b++) {
+      float v = b / 63.0f; uint8_t c[3];
+      for (int k = 0; k < 3; k++) {
+        float x = base[k] * min(1.0f, v / 0.75f);
+        if (v > 0.75f) x += (255 - x) * (v - 0.75f) / 0.25f * 0.8f;   // the brightest parts glow toward white
+        if (x > 255) x = 255;
+        c[k] = (uint8_t)(x * BRIGHTNESS / 100.0f);
+      }
+      spaceLUT[h * 64 + b] = to565(c[0], c[1], c[2]);
+    }
+  }
+}
+
+void buildPalette() { buildPaletteFrom(COLOR_CORE, COLOR_RIM); buildSpaceLUT(); }
 
 void updateColourFade() {             // fade through the colour sets in order, FADE_SECS per fade
   if (!FADE_ON || FADE_COUNT < 1) return;
@@ -290,7 +316,7 @@ void updateSparks() {
     s.a += SPEED * 2.0 * (RADIUS / (s.r + RADIUS * 0.22));  // faster near the centre
     if (s.r < 3) respawn(s);
     sparkX[i] = (int16_t)floorf(QX + cosf(s.a) * s.r * OVAL);
-    sparkY[i] = (int16_t)floorf((STYLE >= 8 ? crossYC : QY) + sinf(s.a) * s.r);
+    sparkY[i] = (int16_t)floorf((STYLE >= 8 && STYLE <= 13 ? crossYC : QY) + sinf(s.a) * s.r);
   }
 }
 
@@ -299,6 +325,7 @@ bool validScenes(const Saved &s) {
   if (s.sceneCount > 8 || !(s.holdSecs >= 1 && s.holdSecs <= 3600) || !(s.sceneFade >= 0 && s.sceneFade <= 600)) return false;
   if (s.framePct < 10 || s.framePct > 95) return false;
   if (s.crossW < 25 || s.crossW > 100 || s.beam < 5 || s.beam > 30 || s.bar < 20 || s.bar > 50) return false;
+  for (int k = 0; k < 4; k++) if (s.spaceCols[k] > 0xFFFFFF) return false;
   for (uint8_t i = 0; i < s.sceneCount; i++) {
     uint8_t c = s.scenes[i];
     if (c != PORTAL && c >= MAX_PICS && (c < 128 || c >= 128 + MAX_PICS)) return false;
@@ -310,7 +337,7 @@ bool valid(const Saved &s) {
   return s.radius >= 6 && s.radius <= RADIUS_MAX && s.oval >= 1 && s.oval <= 2 &&
          s.arms >= 1 && s.arms <= 8 && s.twist >= 0 && s.twist <= 6 &&
          s.speed >= 0 && s.speed <= 0.4 && s.sparks <= MAX_SPARKS &&
-         s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && s.style <= 13 && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
+         s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && s.style <= 16 && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
          s.ripples <= 6 && s.ripSpeed >= 0.03f && s.ripSpeed <= 0.3f && s.glow >= 0.3f && s.glow <= 0.9f &&
          validScenes(s);
 }
@@ -325,6 +352,7 @@ void apply(const Saved &s) {
   SCENE_COUNT = s.sceneCount; HOLD_SECS = s.holdSecs; SCENE_FADE = s.sceneFade; FRAME_PCT = s.framePct;
   CROSS_W = s.crossW; BEAM = s.beam; BAR = s.bar;
   for (int k = 0; k < 8; k++) SCENES[k] = s.scenes[k];
+  for (int k = 0; k < 4; k++) SPACE_COLS[k] = s.spaceCols[k];
 }
 
 void loadSettings() {
@@ -344,6 +372,7 @@ void saveSettings() {
   s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE; s.framePct = FRAME_PCT;
   s.crossW = CROSS_W; s.beam = BEAM; s.bar = BAR;
   for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
+  for (int k = 0; k < 4; k++) s.spaceCols[k] = SPACE_COLS[k];
   EEPROM.put(0, s);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
   EEPROM.commit();
@@ -628,18 +657,18 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 
 // ---------- live tuning over USB serial (and Bluetooth below) ----------
 // Command: SET radius oval arms twist speed sparks drift core rim brightness style ripples ripspeed glow stars fade count core2 rim2 core3 rim3 core4 rim4 fadesecs rimsmooth
-//              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar]]]   (reply: OK or ERR)
+//              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar [space1..space4]]]]   (reply: OK or ERR)
 // Pictures: INFO, then IMG slot bytes id / D base64... / END   (see "pictures" above)
-char cmd[256];
-uint8_t cmdLen = 0;
+char cmd[384];
+uint16_t cmdLen = 0;
 
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strncasecmp(line, "SET ", 4) == 0) {
-    float v[40];
+    float v[44];
     uint8_t n = 0;
     char *p = strtok(line + 4, " ");
-    while (p && n < 40) { v[n++] = atof(p); p = strtok(NULL, " "); }
-    if (n == 25 || n == 36 || n == 37 || n == 40) {
+    while (p && n < 44) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44) {
       Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
       for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
       s.fadeSecs = v[23];
@@ -647,13 +676,14 @@ const char* handleCommand(char *line) {   // returns the reply to send back
       s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE; s.framePct = FRAME_PCT;
       s.crossW = CROSS_W; s.beam = BEAM; s.bar = BAR;
       for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
+      for (int k = 0; k < 4; k++) s.spaceCols[k] = n == 44 ? (uint32_t)v[40 + k] : SPACE_COLS[k];
       if (n >= 36) {
         s.sceneCount = (uint8_t)v[25];
         for (int k = 0; k < 8; k++) s.scenes[k] = (uint8_t)v[26 + k];
         s.holdSecs = v[34]; s.sceneFade = v[35];
       }
       if (n >= 37) s.framePct = (uint8_t)v[36];
-      if (n == 40) { s.crossW = (uint8_t)v[37]; s.beam = (uint8_t)v[38]; s.bar = (uint8_t)v[39]; }
+      if (n >= 40) { s.crossW = (uint8_t)v[37]; s.beam = (uint8_t)v[38]; s.bar = (uint8_t)v[39]; }
       if (valid(s)) {
         pendingSettings = s;
         havePending = true;              // the drawing loop picks it up before the next frame
@@ -701,7 +731,7 @@ void readSerial() {
 #define BLE_TX_CHAR "6e400003-b5a3-f393-e0a9-e50e24dcca9e"   // board replies here (notify)
 
 BLECharacteristic *bleTx = NULL;
-char bleBuf[256], bleLine[256];
+char bleBuf[384], bleLine[384];
 uint16_t bleLen = 0;
 volatile bool bleHave = false;
 
@@ -829,6 +859,156 @@ void composeStrip(int y0, int rows, uint16_t *dst) {
 // ---------- one frame ----------
 uint8_t look = 0;                        // the style being drawn (crosses fall back to Vortex without flash storage)
 
+// ---------- Nebula, Wormhole, Meteor Shower ----------
+uint8_t  *noise8 = NULL;                // smooth value noise for the gas clouds (allocated when first needed)
+double   spaceT = 0;                    // space clock (runs on its own so it never jumps)
+float    spU = 1, spExt = 118;          // space units per pixel, edge of the picture in space units
+float    nbCa = 1, nbSa = 0, nbO1 = 0, nbO2 = 0, nbO3 = 0;
+int      spTw = 0, whPh = 0;
+#define SP_CELL 4                       // gas is worked out every 4 pixels and smoothed in between
+#define SP_COLS (SCR_W / SP_CELL + 2)
+#define SP_ROWS (9600 / SCR_W / SP_CELL + 3)
+uint8_t  spH[SP_COLS * SP_ROWS], spV[SP_COLS * SP_ROWS], spX[SP_COLS * SP_ROWS];
+uint8_t  powT[256], whRingT[256], whNearT[256];
+int16_t  whOffT[256], whCoreT[256];
+int32_t  whHueT[256];
+struct Meteor { float x, y, len; uint8_t hue; };
+Meteor   meteors[7];
+
+void buildNoise() {
+  uint32_t sd = 11;
+  for (int i = 0; i < 64 * 64; i++) { sd = (sd * 1103515245UL + 12345UL) & 0x7fffffffUL; noise8[i] = sd >> 23; }
+  for (int i = 0; i < 256; i++) powT[i] = (uint8_t)(255 * powf(i / 255.0f, 1.6f));
+}
+
+bool spaceMemory() {                    // the colour table and noise only take memory once a space style is used
+  if (spaceLUT && noise8) return true;
+  if (!spaceLUT) { spaceLUT = (uint16_t *)malloc(64 * 64 * 2); if (spaceLUT) buildSpaceLUT(); }
+  if (!noise8) { noise8 = (uint8_t *)malloc(64 * 64); if (noise8) buildNoise(); }
+  return spaceLUT && noise8;
+}
+
+float vn(float x, float y) {            // smooth noise, 0..1, repeats every 64 units
+  float xf = floorf(x), yf = floorf(y);
+  int xi = (int)xf, yi = (int)yf;
+  float fx = x - xf, fy = y - yf;
+  fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+  int x0 = xi & 63, x1 = (xi + 1) & 63, y0 = (yi & 63) << 6, y1 = ((yi + 1) & 63) << 6;
+  float a = noise8[y0 | x0], b = noise8[y0 | x1], c = noise8[y1 | x0], d = noise8[y1 | x1];
+  return (a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy) * (1 / 255.0f);
+}
+
+inline uint8_t to8(float v) { return v <= 0 ? 0 : v >= 1 ? 255 : (uint8_t)(v * 255); }
+
+void spaceNode(float X, float Y, uint8_t &h, uint8_t &v, uint8_t &x8) {   // gas and dust at one point
+  if (look == 14) {                                                       // Nebula
+    float x = (X * nbCa - Y * nbSa) / 36, y = (X * nbSa + Y * nbCa) / 36;
+    float w = vn(x + nbO1, y) * 2.2f;                                     // warp so the clouds fold
+    float d = vn(x + w, y - w + nbO2) * 0.6f + vn(x * 2.2f - w, y * 2.2f + nbO1) * 0.28f + vn(x * 4.6f, y * 4.6f) * 0.12f;
+    float dust = max(0.0f, vn(x * 1.7f + 9, y * 1.7f - w) * 1.9f - 1.05f);   // dark dust lanes
+    d = max(0.0f, d * 1.7f - 0.5f - dust);
+    float hue = vn(x * 0.7f + 20 + nbO3, y * 0.7f) * 1.6f + w * 0.15f;    // big patches of different colour
+    float rr = sqrtf(X * X + Y * Y) / spExt;
+    h = to8(hue / 2); v = to8(d * (1 - rr * rr * rr) * 0.95f); x8 = 0;
+  } else {                                                                // Meteor Shower: faint Milky Way
+    float q = (X * 0.5f + Y * 0.87f) / 30, band = expf(-q * q);
+    float cloud = vn(X / 14 + 3, Y / 14) * vn(X / 6, Y / 6 + 8);
+    h = to8((0.05f + vn(X / 40, Y / 40 + 2) * 0.8f) / 2); v = to8(band * (0.12f + cloud * 0.35f)); x8 = band > 0.3f;
+  }
+}
+
+inline bool spaceStar(uint32_t i, int density, int &hi, int &vi) {   // a twinkling star with its own colour
+  uint32_t h = hash32(i * 2654435761UL);
+  if ((int)(h & 1023) >= density) return false;
+  vi = 47 + sinT[(spTw + (h >> 10)) & 255] / 10;
+  hi = (h >> 20) & 63;
+  return true;
+}
+
+void prepareSpace() {                   // once per frame
+  spU = look == 15 ? 118.0f / SP_EXT : 236.0f / min(SCR_W, SCR_H);   // scaled to the screen
+  spExt = SP_EXT * spU;
+  double T = spaceT;
+  float ang = (float)fmod(T * 0.004, TWO_PI);
+  nbCa = cosf(ang); nbSa = sinf(ang);
+  nbO1 = (float)fmod(T * 0.004, 64.0); nbO2 = (float)fmod(T * 0.003, 64.0); nbO3 = (float)fmod(T * 0.002, 64.0);
+  spTw = (int)(fmod(T * 0.25, TWO_PI) * 40.74f);
+  if (look == 15) {                     // Wormhole: rings falling away, worked out per distance
+    whPh = (int)(fmod(T * 0.06, TWO_PI) * 40.74f);
+    float off = (float)fmod(T * 0.09, 100.0);
+    for (int r = 0; r < 256; r++) {
+      float ru = max(r * spU, 1.0f), depth = 90 / ru, ringPos = depth * 2.6f - off, fl = floorf(ringPos);
+      whRingT[r] = (uint8_t)(255 * (0.5f + 0.5f * cosf((ringPos - fl) * TWO_PI)));
+      float near = min(1.0f, ru / 95);
+      whNearT[r] = (uint8_t)(255 * (0.25f + 0.75f * near * near));
+      whOffT[r] = (int16_t)((int)(depth * 1.6f * 40.74f) & 255);
+      whHueT[r] = (int32_t)floorf(fl * 0.27f * 256) & 255;               // each ring its own colour
+      whCoreT[r] = ru < 18 ? (int16_t)min(63.0f, expf(-(ru / 9) * (ru / 9)) * 1.05f * 63) : -1;
+    }
+  }
+  if (look == 16) {                     // Meteor Shower: where each shooting star is
+    float P = sqrtf((float)SCR_W * SCR_W + (float)SCR_H * SCR_H) / 340;
+    for (int m = 0; m < 7; m++) {
+      float ph = (float)fmod(T * 0.006 + m / 7.0 + (m % 3) * 0.13, 1.0), lane = (m * 37 % 100) / 100.0f;
+      meteors[m].x = QX + (110 - ph * 320 + lane * 110) * P;
+      meteors[m].y = QY + (-170 + ph * 240 + lane * 70) * P;
+      meteors[m].len = (38 + lane * 30) * P;
+      meteors[m].hue = m * 64 / 7;
+    }
+  }
+}
+
+void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
+  uint16_t *p = strip;
+  if (look == 15) {                     // Wormhole
+    for (int y = y0; y < y0 + rows; y++) {
+      int qy = y < QY ? QY - 1 - y : y - QY;
+      bool low = y >= QY;
+      for (int x = 0; x < SCR_W; x++) {
+        int qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
+        int a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
+        int s = sinT[(a * 6 + whOffT[r] + whPh) & 255] + 127;          // spokes, 0..254
+        int vi = (powT[(whRingT[r] * 158 + s * 97) >> 8] * whNearT[r]) >> 10;
+        if (whCoreT[r] >= 0) { if (whCoreT[r] > vi) vi = whCoreT[r]; *p++ = spaceLUT[48 * 64 + vi]; continue; }   // glowing far end
+        *p++ = spaceLUT[(((whHueT[r] + s * 20 / 254) >> 2) & 63) * 64 + vi];
+      }
+    }
+    return;
+  }
+  // Nebula and Meteor Shower: gas worked out on a coarse grid, smoothed in between
+  int gy0 = y0 / SP_CELL, gy1 = (y0 + rows - 1) / SP_CELL + 1;
+  for (int gy = gy0; gy <= gy1; gy++)
+    for (int gx = 0; gx < SP_COLS; gx++) {
+      int i = (gy - gy0) * SP_COLS + gx;
+      spaceNode((gx * SP_CELL + 0.5f - QX) * spU, (gy * SP_CELL + 0.5f - QY) * spU, spH[i], spV[i], spX[i]);
+    }
+  int dens = (look == 14 ? 7 : 10) * STARS / 3, densBand = 22 * STARS / 3;
+  for (int y = y0; y < y0 + rows; y++) {
+    int gy = y / SP_CELL - gy0, fy = y % SP_CELL;
+    for (int x = 0; x < SCR_W; x++) {
+      int fx = x % SP_CELL, i = gy * SP_COLS + x / SP_CELL;
+      int w00 = (SP_CELL - fx) * (SP_CELL - fy), w01 = fx * (SP_CELL - fy), w10 = (SP_CELL - fx) * fy, w11 = fx * fy;
+      int h = (spH[i] * w00 + spH[i + 1] * w01 + spH[i + SP_COLS] * w10 + spH[i + SP_COLS + 1] * w11) >> 4;
+      int v = (spV[i] * w00 + spV[i + 1] * w01 + spV[i + SP_COLS] * w10 + spV[i + SP_COLS + 1] * w11) >> 4;
+      int hi = (h >> 1) & 63, vi = v >> 2, shi, svi;
+      uint32_t pix = (uint32_t)(y * SCR_W + x);
+      if (look == 14) { if (spaceStar(pix, dens, shi, svi) && svi > vi) { hi = shi; vi = min(63, svi + 13); } }
+      else if (spaceStar(pix, spX[i] ? densBand : dens, shi, svi)) { hi = shi; vi = svi; }
+      *p++ = spaceLUT[hi * 64 + vi];
+    }
+  }
+  if (look == 16) for (int m = 0; m < 7; m++) {           // shooting stars with coloured tails
+    const Meteor &M = meteors[m];
+    for (int k = 0; k < M.len; k++) {
+      float f = 1 - k / M.len;
+      int x = (int)floorf(M.x + 0.8f * k + 0.5f), y = (int)floorf(M.y - 0.6f * k + 0.5f);
+      int vi = k < 3 ? 63 : (int)((0.9f * f * f + 0.05f) * 63);
+      for (int yy = y; yy < y + 2; yy++)
+        if (x >= 0 && x < SCR_W && yy >= y0 && yy < y0 + rows) strip[(yy - y0) * SCR_W + x] = spaceLUT[M.hue * 64 + vi];
+    }
+  }
+}
+
 void frameStart() {
   updateScene();
   if (havePending) {
@@ -839,8 +1019,10 @@ void frameStart() {
     resetSparks();
     havePending = false;
   }
-  if (STYLE >= 8 && crossAvailable() && edgeBuf) prepareCross();
-  look = STYLE >= 8 && !crossReady ? 0 : STYLE;
+  bool isCross = STYLE >= 8 && STYLE <= 13;
+  if (isCross && crossAvailable() && edgeBuf) prepareCross();
+  look = isCross && !crossReady ? 0 : STYLE;
+  if (look >= 14) { if (spaceMemory()) prepareSpace(); else look = 0; }   // no room: show the Vortex
   updateColourFade();
   updateSparks();
   for (int a = 0; a < 256; a++) {                     // wobbly rim edge for this frame
@@ -883,6 +1065,8 @@ void frameStart() {
 
 void frameEnd() {
   t += SPEED;
+  spaceT += SPEED * 8;
+  if (spaceT > 1e7) spaceT = 0;
   if (t > TWO_PI * 100) t -= TWO_PI * 100;   // wrap seamlessly so it can run forever
 }
 
@@ -895,6 +1079,7 @@ inline int cartoonV(int a, int r, int phase) {   // blobby flat-shaded swirl
 void renderStrip(int y0, int rows, uint16_t *strip) {
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);
   uint16_t *p = strip;
+  if (look >= 14) { renderSpaceStrip(y0, rows, strip); return; }   // Nebula, Wormhole, Meteor Shower
   bool cross = look >= 8;
   if (cross) readCrossRows(y0, rows);
   for (int y = y0; y < y0 + rows; y++) {

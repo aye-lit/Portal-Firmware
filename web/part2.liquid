@@ -53,7 +53,7 @@ function bleBlock() { return `
 #define BLE_TX_CHAR "${BLE_TX}"   // board replies here (notify)
 
 BLECharacteristic *bleTx = NULL;
-char bleBuf[256], bleLine[256];
+char bleBuf[384], bleLine[384];
 uint16_t bleLen = 0;
 volatile bool bleHave = false;
 
@@ -464,7 +464,7 @@ const PRESETS = { Rift: ["#3b1cff", "#38f0ff"], Slime: ["#0b6b1a", "#8dff4f"], B
 const rmax = M => Math.floor(Math.min(M.w, M.h) / 2) - 1;
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -472,7 +472,7 @@ if (S.board === "s3mini") S.board = "esp32s3";
 if (!BOARDS[S.board]) S.board = DEFAULTS.board;
 if (!S.custom || typeof S.custom !== "object") S.custom = {};
 if (!(S.bright >= 10 && S.bright <= 100)) S.bright = 100;
-if (!(Number.isInteger(S.style) && S.style >= 0 && S.style <= 13)) S.style = 0;
+if (!(Number.isInteger(S.style) && S.style >= 0 && S.style <= 16)) S.style = 0;
 if (!(S.crossw >= 25 && S.crossw <= 100)) S.crossw = 46;
 if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
 if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
@@ -480,6 +480,7 @@ if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
 const isHex = c => /^#[0-9a-f]{6}$/i.test(c || "");
+if (!(Array.isArray(S.spaceCols) && S.spaceCols.length === 4 && S.spaceCols.every(isHex))) S.spaceCols = [...DEFAULTS.spaceCols];
 if (!Array.isArray(S.fadeSets)) S.fadeSets = isHex(S.c3) && isHex(S.c4) ? [{ core: S.c3, rim: S.c4 }] : [{ core: "#ff3d00", rim: "#ffd36b" }];
 S.fadeSets = S.fadeSets.filter(x => x && isHex(x.core) && isHex(x.rim)).slice(0, 3);
 if (!S.fadeSets.length) S.fadeSets = [{ core: "#ff3d00", rim: "#ffd36b" }];
@@ -750,6 +751,131 @@ function buildTftPalette() {           // black → core → rim → near-white,
   }
 }
 function tftRespawn(s) { s.a = rnd(0, 628) / 100; s.r = S.radius * 1.05 + rnd(0, Math.trunc(S.radius / 5) + 1); }
+// ---------------- Nebula, Wormhole, Meteor Shower (styles 14-16), same maths as the board ----------------
+const SPACE_SETS = {                                 // four colours each: deep, glow, contrast, highlight
+  "Natural": ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"],
+  "Deep Space": ["#3a0e8c", "#e0287d", "#17b3c7", "#ffcf6e"],
+  "Orion": ["#8a1032", "#ff5a7e", "#4d63ff", "#ffe0b0"],
+  "Pillars": ["#0f5a62", "#3fc4a8", "#d4892a", "#fff0b8"],
+  "Aurora": ["#0d4a3a", "#2fe08a", "#3aa0ff", "#c77dff"],
+  "Ember": ["#6b1400", "#ff4d1a", "#ffb02e", "#ffe9b3"],
+};
+const spaceExt = m => m.rect ? Math.round(Math.hypot(m.w, m.h) / 2) : m.w >> 1;   // centre to the edge of the picture
+const spaceLUT = new Uint32Array(64 * 64), noise8 = new Uint8Array(64 * 64), powT = new Uint8Array(256);
+{
+  let sd = 11;
+  for (let i = 0; i < 4096; i++) { sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff; noise8[i] = sd >>> 23; }
+  for (let i = 0; i < 256; i++) powT[i] = Math.trunc(255 * Math.pow(i / 255, 1.6));
+}
+let spaceKey = "";
+function buildSpaceLUT() {
+  const key = S.spaceCols.join() + S.bright;
+  if (key === spaceKey) return;
+  spaceKey = key;
+  const cs = S.spaceCols.map(hexRGB);
+  for (let h = 0; h < 64; h++) {
+    const p = h / 16, i = Math.floor(p); let f = p - i; f = f * f * (3 - 2 * f);
+    const A = cs[i & 3], B = cs[(i + 1) & 3], base = [0, 1, 2].map(k => A[k] + (B[k] - A[k]) * f);
+    for (let b = 0; b < 64; b++) {
+      const v = b / 63;
+      const c = base.map(x0 => { let x = x0 * Math.min(1, v / 0.75); if (v > 0.75) x += (255 - x) * (v - 0.75) / 0.25 * 0.8; return Math.trunc(Math.min(255, x) * S.bright / 100); });
+      const r5 = c[0] & 0xF8, g6 = c[1] & 0xFC, b5 = c[2] & 0xF8;
+      spaceLUT[h * 64 + b] = (255 << 24) | ((b5 | b5 >> 5) << 16) | ((g6 | g6 >> 6) << 8) | (r5 | r5 >> 5);
+    }
+  }
+}
+function vn(x, y) {
+  const xf = Math.floor(x), yf = Math.floor(y);
+  let fx = x - xf, fy = y - yf; fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+  const x0 = xf & 63, x1 = (xf + 1) & 63, y0 = (yf & 63) << 6, y1 = ((yf + 1) & 63) << 6;
+  const a = noise8[y0 | x0], b = noise8[y0 | x1], c = noise8[y1 | x0], d = noise8[y1 | x1];
+  return (a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy) / 255;
+}
+const to8 = v => v <= 0 ? 0 : v >= 1 ? 255 : Math.trunc(v * 255);
+let spaceT = 0;
+const whRingT = new Uint8Array(256), whNearT = new Uint8Array(256), whOffT = new Int16Array(256), whCoreT = new Int16Array(256), whHueT = new Int32Array(256);
+function spaceFrame(out) {
+  buildSpaceLUT();
+  const style = S.style, spU = style === 15 ? 118 / spaceExt(M) : 236 / Math.min(TW, TH), spExt = spaceExt(M) * spU, T = spaceT;
+  const ang = (T * 0.004) % TWO_PI, nbCa = Math.cos(ang), nbSa = Math.sin(ang);
+  const nbO1 = (T * 0.004) % 64, nbO2 = (T * 0.003) % 64, nbO3 = (T * 0.002) % 64;
+  const spTw = Math.trunc((T * 0.25) % TWO_PI * 40.74);
+  const star = (i, density) => {
+    const h = hash32(Math.imul(i, -1640531535) >>> 0);
+    if ((h & 1023) >= density) return null;
+    return [(h >>> 20) & 63, 47 + Math.trunc(sinT[(spTw + (h >>> 10)) & 255] / 10)];
+  };
+  if (style === 15) {                                // Wormhole
+    const whPh = Math.trunc((T * 0.06) % TWO_PI * 40.74), off = (T * 0.09) % 100;
+    for (let r = 0; r < 256; r++) {
+      const ru = Math.max(r * spU, 1), depth = 90 / ru, ringPos = depth * 2.6 - off, fl = Math.floor(ringPos);
+      whRingT[r] = Math.trunc(255 * (0.5 + 0.5 * Math.cos((ringPos - fl) * TWO_PI)));
+      const near = Math.min(1, ru / 95);
+      whNearT[r] = Math.trunc(255 * (0.25 + 0.75 * near * near));
+      whOffT[r] = Math.trunc(depth * 1.6 * 40.74) & 255;
+      whHueT[r] = Math.floor(fl * 0.27 * 256) & 255;
+      whCoreT[r] = ru < 18 ? Math.trunc(Math.min(63, Math.exp(-(ru / 9) * (ru / 9)) * 1.05 * 63)) : -1;
+    }
+    let p = 0;
+    for (let y = 0; y < TH; y++) {
+      const qy = y < QY ? QY - 1 - y : y - QY, low = y >= QY;
+      for (let x = 0; x < TW; x++) {
+        const qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
+        const a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
+        const sp = sinT[(a * 6 + whOffT[r] + whPh) & 255] + 127;
+        let vi = (powT[(whRingT[r] * 158 + sp * 97) >> 8] * whNearT[r]) >> 10;
+        if (whCoreT[r] >= 0) { if (whCoreT[r] > vi) vi = whCoreT[r]; out[p++] = spaceLUT[48 * 64 + vi]; continue; }
+        out[p++] = spaceLUT[(((whHueT[r] + Math.trunc(sp * 20 / 254)) >> 2) & 63) * 64 + vi];
+      }
+    }
+    return;
+  }
+  // Nebula and Meteor Shower: gas on a grid every 4 pixels, smoothed in between
+  const C = 4, GC = Math.trunc(TW / C) + 2, GR = Math.trunc((TH - 1) / C) + 2;
+  const gH = new Uint8Array(GC * GR), gV = new Uint8Array(GC * GR), gX = new Uint8Array(GC * GR);
+  for (let gy = 0; gy < GR; gy++) for (let gx = 0; gx < GC; gx++) {
+    const X = (gx * C + 0.5 - QX) * spU, Y = (gy * C + 0.5 - QY) * spU, i = gy * GC + gx;
+    if (style === 14) {
+      const x = (X * nbCa - Y * nbSa) / 36, y = (X * nbSa + Y * nbCa) / 36;
+      const w = vn(x + nbO1, y) * 2.2;
+      let d = vn(x + w, y - w + nbO2) * 0.6 + vn(x * 2.2 - w, y * 2.2 + nbO1) * 0.28 + vn(x * 4.6, y * 4.6) * 0.12;
+      const dust = Math.max(0, vn(x * 1.7 + 9, y * 1.7 - w) * 1.9 - 1.05);
+      d = Math.max(0, d * 1.7 - 0.5 - dust);
+      const hue = vn(x * 0.7 + 20 + nbO3, y * 0.7) * 1.6 + w * 0.15, rr = Math.hypot(X, Y) / spExt;
+      gH[i] = to8(hue / 2); gV[i] = to8(d * (1 - rr * rr * rr) * 0.95);
+    } else {
+      const q = (X * 0.5 + Y * 0.87) / 30, band = Math.exp(-q * q), cloud = vn(X / 14 + 3, Y / 14) * vn(X / 6, Y / 6 + 8);
+      gH[i] = to8((0.05 + vn(X / 40, Y / 40 + 2) * 0.8) / 2); gV[i] = to8(band * (0.12 + cloud * 0.35)); gX[i] = band > 0.3 ? 1 : 0;
+    }
+  }
+  const dens = Math.trunc((style === 14 ? 7 : 10) * S.stars / 3), densBand = Math.trunc(22 * S.stars / 3);
+  let p = 0;
+  for (let y = 0; y < TH; y++) {
+    const gy = Math.trunc(y / C), fy = y % C;
+    for (let x = 0; x < TW; x++) {
+      const fx = x % C, i = gy * GC + Math.trunc(x / C);
+      const w00 = (C - fx) * (C - fy), w01 = fx * (C - fy), w10 = (C - fx) * fy, w11 = fx * fy;
+      const h = (gH[i] * w00 + gH[i + 1] * w01 + gH[i + GC] * w10 + gH[i + GC + 1] * w11) >> 4;
+      const v = (gV[i] * w00 + gV[i + 1] * w01 + gV[i + GC] * w10 + gV[i + GC + 1] * w11) >> 4;
+      let hi = (h >> 1) & 63, vi = v >> 2;
+      if (style === 14) { const st = star(y * TW + x, dens); if (st && st[1] > vi) { hi = st[0]; vi = Math.min(63, st[1] + 13); } }
+      else { const st = star(y * TW + x, gX[i] ? densBand : dens); if (st) { hi = st[0]; vi = st[1]; } }
+      out[p++] = spaceLUT[hi * 64 + vi];
+    }
+  }
+  if (style === 16) {                                // shooting stars with coloured tails
+    const P = Math.hypot(TW, TH) / 340;
+    for (let m = 0; m < 7; m++) {
+      const ph = (T * 0.006 + m / 7 + (m % 3) * 0.13) % 1, lane = (m * 37 % 100) / 100;
+      const mx = QX + (110 - ph * 320 + lane * 110) * P, my = QY + (-170 + ph * 240 + lane * 70) * P, len = (38 + lane * 30) * P, hue = Math.trunc(m * 64 / 7);
+      for (let k = 0; k < len; k++) {
+        const f = 1 - k / len, x = Math.floor(mx + 0.8 * k + 0.5), y = Math.floor(my - 0.6 * k + 0.5);
+        const vi = k < 3 ? 63 : Math.trunc((0.9 * f * f + 0.05) * 63);
+        for (let yy = y; yy < y + 2; yy++) if (x >= 0 && x < TW && yy >= 0 && yy < TH) out[yy * TW + x] = spaceLUT[hue * 64 + vi];
+      }
+    }
+  }
+}
 // ---------------- cross shapes (styles 8-13), from the Cross Portal Tuner ----------------
 // Each cross is a union of simple shapes around its main junction, which sits at the screen centre.
 // The lower arm reaches the portal size, the crossbar and beam scale with it.
@@ -849,8 +975,18 @@ function tftFrame() {
   }
   if (!tftImg) tftImg = g.createImageData(TW, TH);
   const out = new Uint32Array(tftImg.data.buffer);
+  spaceT += S.speed * 8;
+  if (spaceT > 1e7) spaceT = 0;
+  if (style >= 14) {                                 // Nebula, Wormhole, Meteor Shower
+    spaceFrame(out);
+    if (typeof composePreview === "function") composePreview(out);
+    g.putImageData(tftImg, 0, 0);
+    t += S.speed;
+    if (t > TWO_PI * 100) t -= TWO_PI * 100;
+    return;
+  }
   let p = 0;
-  const CE = style >= 8 ? crossEdges() : null;
+  const CE = style >= 8 && style <= 13 ? crossEdges() : null;
   for (let y = 0; y < TH; y++) {
     const qy = y < QY ? QY - 1 - y : y - QY, low = y >= QY;
     const cy = y < crossYC ? crossYC - 1 - y : y - crossYC, clow = y >= crossYC;   // crosses: swirl around the crossing
@@ -942,7 +1078,7 @@ function tftFrame() {
   }
   for (let i = 0; i < S.sparks; i++) {
     if (style === 5 && sparks[i].r < bhHole) continue;   // sparks vanish into the black hole
-    const sx = Math.floor(QX + Math.cos(sparks[i].a) * sparks[i].r * S.oval), sy = Math.floor((style >= 8 ? crossYC : QY) + Math.sin(sparks[i].a) * sparks[i].r);
+    const sx = Math.floor(QX + Math.cos(sparks[i].a) * sparks[i].r * S.oval), sy = Math.floor((style >= 8 && style <= 13 ? crossYC : QY) + Math.sin(sparks[i].a) * sparks[i].r);
     if (CE && !(sx >= 0 && sx < TW && sy >= 0 && sy < TH && CE[sy * TW + sx] > 0)) continue;   // sparks stay inside the cross
     for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
       const xx = sx + dx, yy = sy + dy;
