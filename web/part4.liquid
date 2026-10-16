@@ -593,7 +593,7 @@ async function installFirmware() {
     const loader = new esptool.ESPLoader({ transport, baudrate: viaUsb ? 460800 : 921600, terminal: { clean() {}, writeLine() {}, write() {} } });
     await loader.main();
     const chip = loader.chip.CHIP_NAME;
-    if (chip !== fw.chip) throw new Error(`this board is an ${chip}, but the board picked above needs an ${fw.chip}. Check "Your board".`);
+    if (chip !== fw.chip) throw new Error(`this board is an ${chip}, but the board picked above needs an ${fw.chip}. Check "Select your board".`);
     bar.step(3, 4, "Downloading the firmware");
     const data = await fetchWithProgress(FW_FILES + fw.file + "?v=" + Date.now(), f => bar.set(f));
     bar.step(4, 4, "Installing on the board. Keep it plugged in.");
