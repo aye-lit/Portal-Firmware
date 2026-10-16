@@ -96,12 +96,172 @@ void readBluetooth() {                    // handle a received line in the main 
   if (!bleHave) return;
   const char *reply = handleCommand(bleLine);
   bleHave = false;
-  if (reply && bleTx) {
-    bleTx->setValue((uint8_t *)reply, strlen(reply));
-    bleTx->notify();
+  if (reply && bleTx) {                   // sent in 20-byte pieces (the smallest Bluetooth packet), ending with a newline
+    char out[136];
+    int len = snprintf(out, sizeof(out), "%s\\n", reply);
+    for (int i = 0; i < len; i += 20) {
+      bleTx->setValue((uint8_t *)out + i, min(20, len - i));
+      bleTx->notify();
+      delay(3);
+    }
   }
 }
 #endif`; }
+
+// Pictures for colour screens on ESP32 boards: stored in the flash "spiffs" partition
+function pictureBlock() { return `
+// ---------- pictures (ESP32 boards: kept in the flash "spiffs" partition) ----------
+// The Studio crops each picture to this screen, sends it as a small JPEG and the
+// board unpacks it into flash. Tools -> Partition Scheme -> "No OTA (2MB APP/2MB SPIFFS)"
+// gives the most room. Commands: INFO, IMG slot bytes id, D base64..., END.
+// (HAS_PICS and the JPEG decoder are set up with the other #includes at the top)
+
+#if HAS_PICS
+struct PicHead { uint32_t magic; uint16_t w, h; uint32_t id, check; };
+const uint32_t PIC_MAGIC = 0x43495056UL;   // "VPIC"
+const esp_partition_t *picPart = NULL;
+uint32_t slotSize = 0, stageOff = 0;      // stageOff: where an arriving JPEG waits (last 64 KB)
+uint8_t  picSlots = 0;
+volatile uint32_t picId[MAX_PICS];        // 0 = empty slot
+volatile bool uploading = false;
+uint32_t upLen = 0, upPos = 0, upId = 0, upLast = 0, jpgPos = 0;
+uint8_t  upSlot = 0;
+uint16_t *band = NULL;
+int      bandTop = 0;
+
+void beginPictures() {
+  picPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+  if (!picPart) picPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, NULL);
+  if (!picPart || picPart->size < 0x30000) { picPart = NULL; return; }
+  slotSize = (sizeof(PicHead) + (uint32_t)SCR_W * SCR_H * 2 + 4095) & ~4095UL;
+  stageOff = (picPart->size - 0x10000) & ~4095UL;
+  picSlots = min((uint32_t)MAX_PICS, stageOff / slotSize);
+  for (uint8_t i = 0; i < picSlots; i++) {
+    PicHead h;
+    esp_partition_read(picPart, i * slotSize, &h, sizeof(h));
+    bool ok = h.magic == PIC_MAGIC && h.w == SCR_W && h.h == SCR_H && h.id && h.check == (h.id ^ 0xA5A5A5A5UL);
+    picId[i] = ok ? h.id : 0;
+  }
+}
+
+int  picturesAvailable() { return picSlots; }
+bool isPicture(uint8_t s) { return s < picSlots && picId[s] != 0; }
+
+void readPicture(uint8_t s, int y0, int rows, uint16_t *dst) {
+  esp_partition_read(picPart, s * slotSize + sizeof(PicHead) + (uint32_t)y0 * SCR_W * 2, dst, (uint32_t)rows * SCR_W * 2);
+}
+
+bool pausedForUpload() {
+  if (uploading && millis() - upLast > 10000) uploading = false;   // the Studio went away mid-picture
+  if (uploading) delay(1);
+  return uploading;
+}
+
+int b64(char c) {
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == '+') return 62;
+  if (c == '/') return 63;
+  return -1;
+}
+
+int unbase64(const char *in, uint8_t *out) {   // returns bytes written, -1 on bad data
+  int n = 0, bits = 0;
+  uint32_t acc = 0;
+  for (; *in && *in != '='; in++) {
+    int v = b64(*in);
+    if (v < 0) return -1;
+    acc = (acc << 6) | v; bits += 6;
+    if (bits >= 8) { bits -= 8; out[n++] = (acc >> bits) & 0xFF; }
+  }
+  return n;
+}
+
+UINT jpgIn(JDEC *jd, BYTE *buf, UINT n) {        // JPEG bytes come from the staging area
+  if (n > upLen - jpgPos) n = upLen - jpgPos;
+  if (buf) esp_partition_read(picPart, stageOff + jpgPos, buf, n);
+  jpgPos += n;
+  return n;
+}
+
+UINT jpgOut(JDEC *jd, void *bmp, JRECT *r) {     // one block of pixels: collect a band, then store it
+  BYTE *c = (BYTE *)bmp;
+  for (int y = r->top; y <= r->bottom; y++)
+    for (int x = r->left; x <= r->right; x++, c += 3)
+      band[(y - bandTop) * SCR_W + x] = to565(c[0], c[1], c[2]);
+  if (r->right == SCR_W - 1) {
+    esp_partition_write(picPart, upSlot * slotSize + sizeof(PicHead) + (uint32_t)bandTop * SCR_W * 2,
+                        band, (uint32_t)(r->bottom - bandTop + 1) * SCR_W * 2);
+    bandTop = r->bottom + 1;
+  }
+  return 1;
+}
+
+const char *finishPicture() {
+  uploading = false;
+  if (upPos != upLen) return "ERR incomplete";
+  static uint8_t pool[3100];               // the JPEG decoder's work area
+  JDEC jd;
+  jpgPos = 0;
+  if (jd_prepare(&jd, jpgIn, pool, sizeof(pool), NULL) != JDR_OK) return "ERR jpeg";
+  if (jd.width != SCR_W || jd.height != SCR_H) return "ERR size";
+  band = (uint16_t *)malloc(SCR_W * 16 * 2);
+  if (!band) return "ERR memory";
+  esp_partition_erase_range(picPart, upSlot * slotSize, slotSize);
+  bandTop = 0;
+  JRESULT r = jd_decomp(&jd, jpgOut, 0);
+  free(band); band = NULL;
+  if (r != JDR_OK) return "ERR jpeg";
+  PicHead h = { PIC_MAGIC, SCR_W, SCR_H, upId, upId ^ 0xA5A5A5A5UL };
+  esp_partition_write(picPart, upSlot * slotSize, &h, sizeof(h));
+  picId[upSlot] = upId;
+  return "OK";
+}
+
+const char *pictureCommand(char *line) {
+  if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
+    static char info[128];
+    int n = snprintf(info, sizeof(info), "PICS %u %u %u", picSlots, SCR_W, SCR_H);
+    for (uint8_t i = 0; i < picSlots; i++) n += snprintf(info + n, sizeof(info) - n, " %lx", (unsigned long)picId[i]);
+    return info;
+  }
+  if (strncasecmp(line, "IMG ", 4) == 0) {       // start a picture: slot, JPEG size, picture id
+    unsigned slot; unsigned long len, id;
+    if (!picPart || sscanf(line + 4, "%u %lu %lx", &slot, &len, &id) != 3 || slot >= picSlots || !len || len > 0x10000 || !id) return "ERR";
+    picId[slot] = 0;                             // stop showing the old picture
+    upSlot = slot; upLen = len; upId = id; upPos = 0;
+    esp_partition_erase_range(picPart, stageOff, 0x10000);
+    uploading = true; upLast = millis();
+    return "READY";
+  }
+  if (line[0] == 'D' && line[1] == ' ' && uploading) {   // a piece of the JPEG, in base64
+    uint8_t data[200];
+    int n = strlen(line + 2) <= 264 ? unbase64(line + 2, data) : -1;
+    if (n < 0 || upPos + n > upLen) { uploading = false; return "ERR data"; }
+    esp_partition_write(picPart, stageOff + upPos, data, n);
+    upPos += n; upLast = millis();
+    return "K";
+  }
+  if (strcasecmp(line, "END") == 0 && uploading) return finishPicture();
+  return NULL;
+}
+#else
+void beginPictures() {}
+int  picturesAvailable() { return 0; }
+bool isPicture(uint8_t s) { return false; }
+void readPicture(uint8_t s, int y0, int rows, uint16_t *dst) {}
+bool pausedForUpload() { return false; }
+const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? "PICS 0" : NULL; }
+#endif
+`; }
+
+// Scenes for the sketch and the SET command: 255 = the portal, 0-7 = picture slots
+function picturesAllowed() { const B = boardOf(); return M.kind === "tft" && (/^ESP32/.test(B.family) || !!B.custom); }
+function sceneList() {
+  if (!picturesAllowed()) return [];
+  return S.scenes.filter(x => x === -1 || (x >= 0 && x < S.pics.length)).slice(0, 8).map(x => x === -1 ? 255 : x);
+}
 
 function pinBlock(B, bus) {
   if (bus === "i2c") return `// ---------- Board: ${B.name} ----------
@@ -175,7 +335,7 @@ const PRESETS = { Rift: ["#3b1cff", "#38f0ff"], Slime: ["#0b6b1a", "#8dff4f"], B
 const rmax = M => Math.floor(Math.min(M.w, M.h) / 2) - 1;
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -199,8 +359,14 @@ const MAX_FADE_SETS = 3;   // extra sets, so 4 in total with the main colours
 if (!(S.ripples >= 0 && S.ripples <= 6)) S.ripples = 2;
 if (!(S.rspeed >= 0.03 && S.rspeed <= 0.3)) S.rspeed = 0.09;
 if (!(S.glow >= 0.3 && S.glow <= 0.9)) S.glow = 0.55;
+S.pics = [];                                               // pictures live in their own storage key (they're big)
+try { const P = JSON.parse(localStorage.getItem("portal-studio-pics") || "[]"); if (Array.isArray(P)) S.pics = P.filter(x => x && typeof x.src === "string" && x.src.startsWith("data:image/")).slice(0, 8).map(x => ({ src: x.src, fit: x.fit === "fit" ? "fit" : "fill" })); } catch (e) {}
+if (!Array.isArray(S.scenes)) S.scenes = [];
+S.scenes = S.scenes.filter(x => x === -1 || (Number.isInteger(x) && x >= 0 && x < S.pics.length)).slice(0, 8);
+if (!(S.holdsec >= 1 && S.holdsec <= 3600)) S.holdsec = 10;
+if (!(S.scenefade >= 0 && S.scenefade <= 60)) S.scenefade = 2;
 let port = null, busy = false, pending = false;            // USB link (Web Serial)
-let bleRx = null, bleWait = null, bleText = "";           // Bluetooth link (Web Bluetooth)
+let bleRx = null, bleWait = null, bleWaitRe = null, bleText = "";   // Bluetooth link (Web Bluetooth)
 let plugged = 0, installing = false;                      // USB boards this page may use that are plugged in
 
 // ---------- connection badge ----------
@@ -254,7 +420,8 @@ async function fetchWithProgress(url, onProgress) {      // download, reporting 
   for (const c of parts) { out.set(c, o); o += c.length; }
   return out;
 }
-const save = () => { try { localStorage.setItem("portal-studio", JSON.stringify(S)); } catch (e) {} };
+const save = () => { try { localStorage.setItem("portal-studio", JSON.stringify({ ...S, pics: undefined })); } catch (e) {} };
+const savePics = () => { try { localStorage.setItem("portal-studio-pics", JSON.stringify(S.pics.map(p => ({ src: p.src, fit: p.fit })))); } catch (e) {} };
 const BUILD_ID = (Math.random() * 0xffffffff >>> 0).toString(16).toUpperCase().padStart(8, "0");
 let M = MODELS[S.model];
 
@@ -569,6 +736,7 @@ function tftFrame() {
       if (xx >= 0 && xx < TW && yy >= 0 && yy < TH) out[yy * TW + xx] = tftPal[235];
     }
   }
+  if (typeof composePreview === "function") composePreview(out);
   g.putImageData(tftImg, 0, 0);
   t += S.speed;
   if (t > TWO_PI * 100) t -= TWO_PI * 100;

@@ -497,10 +497,11 @@ function selectModel(key, userChose) {
   $("custom-pins").hidden = !B.custom;
   $("custom-spi").hidden = !rgb; $("custom-i2c").hidden = rgb;
   if (B.custom) fillCustom();
-  $("lib-note").textContent = "Board support: " + B.ide;
+  $("lib-note").textContent = "Board support: " + B.ide + (M.kind === "tft" && (/^ESP32/.test(B.family) || B.custom) ? " For pictures, also set Tools → Partition Scheme → “No OTA (2MB APP/2MB SPIFFS)”." : "");
   const hasBle = /^ESP32/.test(B.family) || !!B.custom;   // boards with Bluetooth in the sketch
   $("ble").hidden = !hasBle; $("ble-note").hidden = !hasBle;
   if (typeof showFirmware === "function") showFirmware();
+  if (typeof showPictures === "function") showPictures();
   const fpsTft = B.screen ? B.fpsTft : B.fpsTft ? B.fpsTft.replace(/\d+/g, n => Math.min(60, Math.max(1, Math.round(n * 57600 / (M.w * M.h))))).replace(/(\d+)–\1/, "$1") : "";   // scaled by screen area
   $("fps").textContent = "Real board speed: " + (tft ? (fpsTft ? `${fpsTft} on the ${B.name}` : "depends on your board") : M.fps) + ".";
   if (!rgb) buildTints();
@@ -541,9 +542,263 @@ for (const k of Object.keys(fmt)) {
 $("drift").addEventListener("change", e => { S.drift = e.target.checked; changed(); });
 $("addr").addEventListener("change", e => { S.addr = e.target.value; save(); refreshCode(); });
 $("reset").addEventListener("click", () => {
-  S = { ...DEFAULTS, model: S.model, tint: S.tint, addr: S.addr };
+  S = { ...DEFAULTS, model: S.model, tint: S.tint, addr: S.addr, board: S.board, custom: S.custom, pics: S.pics, scenes: S.scenes.slice(), fadeSets: DEFAULTS.fadeSets.map(x => ({ ...x })) };
   selectModel(S.model, true); changed(true);
 });
+
+// ---------------- pictures & scenes ----------------
+const PIC_PART = 0x1E0000;                          // quick-install firmware: "No OTA (2MB APP/2MB SPIFFS)"
+let boardPics = null;                               // what the connected board reported: { slots, w, h, ids }
+function picLimit() {
+  if (boardPics && boardPics.w === M.w && boardPics.h === M.h && boardPics.slots) return boardPics.slots;
+  const slot = Math.ceil((16 + M.w * M.h * 2) / 4096) * 4096;
+  return Math.max(1, Math.min(8, Math.floor((PIC_PART - 0x10000) / slot)));
+}
+function loadPicImage(pic) {
+  if (pic._img) return pic._img;
+  const img = new Image();
+  img.onload = () => { pic._ready = true; renderPics(); };
+  img.src = pic.src;
+  return (pic._img = img);
+}
+function cropCanvas(pic) {                          // the picture cropped (or fitted) to this screen
+  const c = document.createElement("canvas"); c.width = M.w; c.height = M.h;
+  const x = c.getContext("2d"); x.fillStyle = "#000"; x.fillRect(0, 0, M.w, M.h);
+  const img = loadPicImage(pic);
+  if (!pic._ready) return null;
+  const k = (pic.fit === "fit" ? Math.min : Math.max)(M.w / img.naturalWidth, M.h / img.naturalHeight);
+  const w = img.naturalWidth * k, h = img.naturalHeight * k;
+  x.imageSmoothingQuality = "high";
+  x.drawImage(img, (M.w - w) / 2, (M.h - h) / 2, w, h);
+  return c;
+}
+const picPixCache = new Map();
+function picPixels(i) {                             // preview pixels, rounded to the screen's 16-bit colours
+  const pic = S.pics[i]; if (!pic) return null;
+  const key = `${M.w}x${M.h}|${pic.fit}`;
+  if (pic._pixKey === key) return pic._pix;
+  const c = cropCanvas(pic); if (!c) return null;
+  const d = new Uint32Array(c.getContext("2d").getImageData(0, 0, M.w, M.h).data.buffer.slice(0));
+  for (let k = 0; k < d.length; k++) {
+    const v = d[k], r = v & 0xF8, g = (v >> 8) & 0xFC, b = (v >> 16) & 0xF8;
+    d[k] = (255 << 24) | ((b | b >> 5) << 16) | ((g | g >> 6) << 8) | (r | r >> 5);
+  }
+  pic._pixKey = key; pic._pix = d;
+  return d;
+}
+function sceneNow() {                               // same timing as the board
+  const L = sceneList().map(x => x === 255 ? -1 : x), n = L.length;
+  if (!n) return null;
+  if (n === 1) return { a: L[0], b: L[0], mix: 0 };
+  const per = S.holdsec + S.scenefade, pos = (performance.now() / 1000) % (per * n);
+  const i = Math.min(Math.floor(pos / per), n - 1), w = pos - i * per;
+  let mix = 0;
+  if (w >= S.holdsec && S.scenefade > 0) { let f = (w - S.holdsec) / S.scenefade; f = f * f * (3 - 2 * f); mix = Math.trunc(f * 256); }
+  return { a: L[i], b: L[(i + 1) % n], mix };
+}
+function composePreview(out) {
+  const sc = sceneNow(); if (!sc) return;
+  const pa = sc.a >= 0 ? picPixels(sc.a) : null, pb = sc.b >= 0 ? picPixels(sc.b) : null;
+  if (!(sc.mix > 0 && (pa || pb))) { const p = sc.mix >= 128 ? pb : pa; if (p) out.set(p); else if (sc.mix >= 128 ? sc.b >= 0 : sc.a >= 0) out.fill(0xFF000000); return; }
+  const m = sc.mix, n = 256 - m;
+  for (let k = 0; k < out.length; k++) {
+    const x = pa ? pa[k] : out[k], y = pb ? pb[k] : out[k];
+    const r = ((x & 255) * n + (y & 255) * m) >> 8, g = (((x >> 8) & 255) * n + ((y >> 8) & 255) * m) >> 8, b = (((x >> 16) & 255) * n + ((y >> 16) & 255) * m) >> 8;
+    out[k] = (255 << 24) | (b << 16) | (g << 8) | r;
+  }
+}
+function thumb(c, pic, size) {                      // small picture of a scene
+  const k = size / Math.max(M.w, M.h);
+  c.width = Math.round(M.w * k); c.height = Math.round(M.h * k);
+  const x = c.getContext("2d");
+  if (!pic) {                                       // the portal
+    const gr = x.createRadialGradient(c.width / 2, c.height / 2, 1, c.width / 2, c.height / 2, Math.min(c.width, c.height) / 2);
+    gr.addColorStop(0, "#fff"); gr.addColorStop(0.25, S.c1); gr.addColorStop(0.8, S.c2); gr.addColorStop(1, "#000");
+    x.fillStyle = "#000"; x.fillRect(0, 0, c.width, c.height); x.fillStyle = gr; x.fillRect(0, 0, c.width, c.height);
+    return;
+  }
+  const src = cropCanvas(pic);
+  x.fillStyle = "#000"; x.fillRect(0, 0, c.width, c.height);
+  if (src) { x.imageSmoothingQuality = "high"; x.drawImage(src, 0, 0, c.width, c.height); }
+}
+function renderPics() {
+  const round = M.kind === "tft" && !M.rect;
+  const box = $("pics"); box.innerHTML = "";
+  S.pics.forEach((pic, i) => {
+    const el = document.createElement("div"); el.className = "pic" + (round ? " round" : "");
+    el.innerHTML = `<canvas aria-label="Picture ${i + 1}"></canvas><span class="pname">Picture ${i + 1}</span>
+      <div class="pbtns"><button type="button" data-fit>${pic.fit === "fit" ? "Fill screen" : "Show all"}</button><button type="button" data-del aria-label="Remove picture ${i + 1}">Remove</button></div>`;
+    thumb(el.querySelector("canvas"), pic, 120);
+    el.querySelector("[data-fit]").title = pic.fit === "fit" ? "Crop the picture to fill the whole screen" : "Shrink the picture so all of it shows, with black edges";
+    el.querySelector("[data-fit]").addEventListener("click", () => { pic.fit = pic.fit === "fit" ? "fill" : "fit"; savePics(); renderPics(); });
+    el.querySelector("[data-del]").addEventListener("click", () => removePic(i));
+    box.appendChild(el);
+  });
+  const lim = picLimit();
+  $("pic-count").textContent = S.pics.length ? `${S.pics.length} of ${lim} pictures` : `Up to ${lim} pictures on this screen`;
+  $("send-pics-box").hidden = !picturesAllowed() || !S.pics.length;
+  $("pic-file").disabled = S.pics.length >= lim;
+  $("pic-file").parentElement.style.opacity = S.pics.length >= lim ? .5 : 1;
+  renderScenes();
+}
+function renderScenes() {
+  const round = M.kind === "tft" && !M.rect;
+  $("scene-box").hidden = !S.pics.length && !S.scenes.length;
+  const box = $("scenes"); box.innerHTML = "";
+  S.scenes.forEach((sc, i) => {
+    const row = document.createElement("div"); row.className = "scene" + (round ? " round" : "");
+    const opts = [`<option value="-1"${sc === -1 ? " selected" : ""}>Portal</option>`]
+      .concat(S.pics.map((_, k) => `<option value="${k}"${sc === k ? " selected" : ""}>Picture ${k + 1}</option>`)).join("");
+    row.innerHTML = `<span class="snum">${i + 1}</span><canvas></canvas>
+      <select aria-label="Scene ${i + 1}">${opts}</select>
+      <span class="sgap"><button type="button" data-up aria-label="Move scene ${i + 1} earlier">▲</button><button type="button" data-down aria-label="Move scene ${i + 1} later">▼</button><button type="button" data-del aria-label="Remove scene ${i + 1}">Remove</button></span>`;
+    thumb(row.querySelector("canvas"), sc >= 0 ? S.pics[sc] : null, 34);
+    row.querySelector("select").addEventListener("change", e => { S.scenes[i] = +e.target.value; renderScenes(); changed(); });
+    const move = d => { const j = i + d; if (j < 0 || j >= S.scenes.length) return; [S.scenes[i], S.scenes[j]] = [S.scenes[j], S.scenes[i]]; renderScenes(); changed(); };
+    row.querySelector("[data-up]").addEventListener("click", () => move(-1));
+    row.querySelector("[data-down]").addEventListener("click", () => move(1));
+    row.querySelector("[data-del]").addEventListener("click", () => { S.scenes.splice(i, 1); renderScenes(); changed(); });
+    box.appendChild(row);
+  });
+  $("scene-add").hidden = S.scenes.length >= 8;
+  $("hold-min").value = Math.floor(S.holdsec / 60); $("hold-sec").value = S.holdsec % 60;
+  $("scene-fade").value = S.scenefade;
+}
+function removePic(i) {
+  S.pics.splice(i, 1);
+  S.scenes = S.scenes.filter(x => x !== i).map(x => x > i ? x - 1 : x);
+  savePics(); renderPics(); changed();
+}
+async function addPictures(files) {
+  for (const file of files) {
+    if (S.pics.length >= picLimit()) { $("pic-count").textContent = `This screen holds ${picLimit()} pictures. Remove one to add another.`; break; }
+    try {
+      const bmp = await createImageBitmap(file);
+      const k = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));      // keep a reasonably sized copy
+      const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+      c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+      S.pics.push({ src: c.toDataURL("image/jpeg", 0.88), fit: "fill" });
+      const idx = S.pics.length - 1;
+      if (!S.scenes.length) S.scenes = [-1, idx];                          // first picture: portal, then the picture
+      else if (S.scenes.length < 8) S.scenes.push(idx);
+    } catch (e) {
+      $("pic-count").textContent = `Couldn't open ${file.name}. Try a JPEG or PNG.`;
+    }
+  }
+  savePics(); renderPics(); changed();
+}
+$("pic-file").addEventListener("change", e => { addPictures([...e.target.files]); e.target.value = ""; });
+$("scene-add").addEventListener("click", () => {
+  if (S.scenes.length >= 8) return;
+  const used = new Set(S.scenes), next = S.pics.findIndex((_, k) => !used.has(k));
+  S.scenes.push(next >= 0 ? next : -1); renderScenes(); changed();
+});
+function readHold() {
+  let m = parseInt($("hold-min").value, 10), sec = parseInt($("hold-sec").value, 10);
+  m = Number.isFinite(m) ? Math.min(60, Math.max(0, m)) : 0; sec = Number.isFinite(sec) ? Math.min(59, Math.max(0, sec)) : 0;
+  S.holdsec = Math.min(3600, Math.max(1, m * 60 + sec)); changed();
+}
+$("hold-min").addEventListener("input", readHold); $("hold-sec").addEventListener("input", readHold);
+$("hold-min").addEventListener("change", renderScenes); $("hold-sec").addEventListener("change", renderScenes);
+$("scene-fade").addEventListener("input", e => { const v = parseInt(e.target.value, 10); S.scenefade = Number.isFinite(v) ? Math.min(60, Math.max(0, v)) : 0; changed(); });
+$("scene-fade").addEventListener("change", renderScenes);
+function showPictures() {
+  const ok = picturesAllowed();
+  $("pics-wrap").hidden = !ok; $("send-pics-box").hidden = !ok || !S.pics.length;
+  if (ok) renderPics();
+}
+
+// ---------- sending pictures to the board ----------
+async function picJpeg(pic) {                       // the screen-sized JPEG the board unpacks (64 KB max)
+  const c = cropCanvas(pic); if (!c) throw new Error("a picture is still loading");
+  for (let q = 0.9; q >= 0.3; q -= 0.1) {
+    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", q));
+    if (blob && blob.size <= 0xFF00) return new Uint8Array(await blob.arrayBuffer());
+  }
+  throw new Error("a picture is too detailed to fit");
+}
+function picHash(bytes) {                            // FNV-1a, never 0
+  let h = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i++) { h ^= bytes[i]; h = Math.imul(h, 0x01000193); }
+  return ((h >>> 0) || 1).toString(16);
+}
+function b64(bytes) { let s = ""; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); }
+let bleChunk = 180;
+async function bleWrite(data) {                     // bigger pieces when the link allows, 20 bytes otherwise
+  for (let i = 0; i < data.length;) {
+    const part = data.slice(i, i + bleChunk);
+    try { if (bleRx.writeValueWithResponse) await bleRx.writeValueWithResponse(part); else await bleRx.writeValue(part); i += part.length; }
+    catch (e) { if (bleChunk > 20) bleChunk = 20; else throw e; }
+  }
+}
+async function usbReadUntil(re, ms) {
+  const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "";
+  const timer = setTimeout(() => reader.cancel().catch(() => {}), ms);
+  try {
+    while (true) { const { value, done } = await reader.read(); if (done) break; text += dec.decode(value); if (re.test(text)) break; }
+  } catch (e) {} finally { clearTimeout(timer); reader.releaseLock(); }
+  return text;
+}
+async function boardRequest(line, re, ms) {          // send one command line, wait for a reply that matches
+  const data = new TextEncoder().encode(line + "\n");
+  if (bleRx) {
+    bleText = "";
+    const reply = new Promise(res => { bleWaitRe = re; bleWait = res; setTimeout(() => res(bleText), ms); });
+    try { await bleWrite(data); return await reply; } finally { bleWait = null; bleWaitRe = null; }
+  }
+  const w = port.writable.getWriter();
+  try { await w.write(data); } finally { w.releaseLock(); }
+  return usbReadUntil(re, ms);
+}
+async function sendPictures() {
+  const st = $("pic-status"), bar = progressBar("pic");
+  const sayP = (m, c = "") => { st.className = "status " + c; st.textContent = m; };
+  if (!port && !bleRx) { sayP("Connect over Bluetooth or USB first (buttons above), then send the pictures.", "warn"); return; }
+  if (busy) { sayP("Wait a moment, the board is busy. Then try again."); return; }
+  busy = true; $("send-pics").disabled = true; sayP("");
+  try {
+    bar.step(1, 1, "Checking the board"); bar.set(null);
+    const info = (await boardRequest("INFO", /PICS[^\n]*\n/, 4000)).match(/PICS ([^\r\n]*)/);
+    if (!info) throw new Error("the board didn't answer. Install the latest firmware (Quick install) or upload the new sketch, then try again");
+    const [slots, w, h, ...ids] = info[1].trim().split(/\s+/);
+    boardPics = { slots: +slots, w: +w, h: +h, ids };
+    if (!boardPics.slots) throw new Error("the program on the board can't store pictures. Install the latest firmware (Quick install) or upload the new sketch with an ESP32 board");
+    if (boardPics.w !== M.w || boardPics.h !== M.h) throw new Error(`the board's screen is ${boardPics.w} × ${boardPics.h}, but the Studio is set to ${M.w} × ${M.h}. Pick the matching display${M.rect ? " and orientation" : ""} above`);
+    const count = Math.min(S.pics.length, boardPics.slots);
+    let sent = 0;
+    for (let i = 0; i < count; i++) {
+      bar.step(i + 1, count, `Preparing picture ${i + 1}`); bar.set(0);
+      const jpg = await picJpeg(S.pics[i]), id = picHash(jpg);
+      if (boardPics.ids[i] === id) { bar.set(1); continue; }   // already on the board
+      bar.step(i + 1, count, `Sending picture ${i + 1}`);
+      const r = await boardRequest(`IMG ${i} ${jpg.length} ${id}`, /READY|ERR/, 8000);
+      if (!/READY/.test(r)) throw new Error("the board couldn't make room for the picture");
+      const text = b64(jpg);
+      for (let k = 0; k < text.length; k += 240) {
+        const a = await boardRequest("D " + text.slice(k, k + 240), /(^|\n)(K|ERR[^\n]*)\r?\n/, 4000);
+        if (!/(^|\n)K\r?\n/.test(a)) throw new Error("the picture data didn't arrive. Try again");
+        bar.set(Math.min(0.95, (k + 240) / text.length));
+      }
+      bar.step(i + 1, count, `Saving picture ${i + 1} on the board`); bar.set(null);
+      const e = await boardRequest("END", /(^|\n)(OK|ERR[^\n]*)\r?\n/, 25000);
+      if (!/(^|\n)OK\r?\n/.test(e)) throw new Error(/ERR size/.test(e) ? "the picture size didn't match the screen" : "the board couldn't unpack the picture");
+      boardPics.ids[i] = id; sent++;
+    }
+    bar.done(sent ? `${sent} picture${sent > 1 ? "s" : ""} sent` : "The board already has these pictures");
+    busy = false;
+    await new Promise(r => setTimeout(r, 50));
+    send();                                         // and the play order
+    sayP(S.pics.length > count ? `Sent the first ${count} pictures. This board has room for ${count}.` : "Pictures saved on the board.", S.pics.length > count ? "warn" : "ok");
+  } catch (e) {
+    bar.fail();
+    sayP("Couldn't send the pictures: " + ((e && e.message) || "the connection dropped") + ".", "warn");
+  } finally {
+    busy = false; $("send-pics").disabled = false;
+    renderPics();
+    if (pending) { pending = false; send(); }
+  }
+}
+$("send-pics").addEventListener("click", sendPictures);
 
 // ---------------- quick install: prebuilt firmware flashed from the browser (esptool-js) ----------------
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
@@ -643,7 +898,8 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   for (let i = 0; i < 3; i++) { const st = S.fadeSets[i]; cols.push(st ? parseInt(hex6(st.core), 16) : 0, st ? parseInt(hex6(st.rim), 16) : 0); }
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
-const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${S.drift ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth}` : ""}\n`;
+const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${S.drift ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
+function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade}`; }
 
 async function readReply(ms) {
   const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "";
@@ -736,7 +992,7 @@ $("ble").addEventListener("click", async () => {
     const tx = await svc.getCharacteristic(BLE_TX);
     tx.addEventListener("characteristicvaluechanged", e => {
       bleText += new TextDecoder().decode(e.target.value);
-      if (bleWait && /\b(OK|ERR)\b/.test(bleText)) bleWait(bleText);
+      if (bleWait && (bleWaitRe || /\b(OK|ERR)\b/).test(bleText)) bleWait(bleText);
     });
     await tx.startNotifications();
     bleRx = await svc.getCharacteristic(BLE_RX);
