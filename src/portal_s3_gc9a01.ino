@@ -104,7 +104,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x99FAECA2UL;
+const uint32_t BUILD_ID = 0x7EA21402UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -124,6 +124,7 @@ int16_t  linT[256];
 uint16_t pal[256];
 uint16_t *stripBuf[2];                 // two strips: one is drawn while the other is sent (allocated in setup)
 uint16_t *picBuf = NULL;               // a third strip, for fading between scenes
+int      crossYC = QY;                 // crosses: row of the crossing (the cross is centred, so this sits above the middle)
 
 // Dual-core chips (ESP32, ESP32-S3) draw on core 0 while core 1 feeds the screen.
 #if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
@@ -289,7 +290,7 @@ void updateSparks() {
     s.a += SPEED * 2.0 * (RADIUS / (s.r + RADIUS * 0.22));  // faster near the centre
     if (s.r < 3) respawn(s);
     sparkX[i] = (int16_t)floorf(QX + cosf(s.a) * s.r * OVAL);
-    sparkY[i] = (int16_t)floorf(QY + sinf(s.a) * s.r);
+    sparkY[i] = (int16_t)floorf((STYLE >= 8 ? crossYC : QY) + sinf(s.a) * s.r);
   }
 }
 
@@ -544,9 +545,16 @@ float crossSD(float x, float y) {               // signed distance: negative ins
 
 bool crossAvailable() { return picPart != NULL; }
 
+int crossShift() {                              // move the crossing up so the whole cross is centred on the screen
+  float bot = min(RADIUS, SCR_H / 2.0f - 2), top = min(bot * BAR / (100.0f - BAR), SCR_H / 2.0f - 2);
+  return (int)lroundf((bot - top) / 2);
+}
+
 void prepareCross() {                           // (re)build the outline when the cross settings change
+  int shift = crossShift();
+  crossYC = QY - shift;
   uint32_t key = 2166136261UL;
-  uint32_t parts[] = { STYLE, (uint32_t)(RADIUS * 16), CROSS_W, BEAM, BAR, SCR_W, SCR_H, 1 };
+  uint32_t parts[] = { STYLE, (uint32_t)(RADIUS * 16), CROSS_W, BEAM, BAR, SCR_W, SCR_H, 2 };
   for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
   if (key == crossKey && crossReady) return;
   crossReady = false;
@@ -559,7 +567,7 @@ void prepareCross() {                           // (re)build the outline when th
     esp_partition_erase_range(picPart, crossOff, crossSize);
     static int8_t row[SCR_W];
     for (int y = 0; y < SCR_H; y++) {
-      float fy = y + 0.5f - SCR_H / 2.0f;
+      float fy = y + 0.5f - crossYC;            // relative to the crossing
       for (int x = 0; x < SCR_W; x++) {
         float e = -crossSD(x + 0.5f - SCR_W / 2.0f, fy);
         if (e > 0 && e < 1) e = 1;
@@ -892,6 +900,8 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
     int qy = y < QY ? QY - 1 - y : y - QY;
     bool low = y >= QY;
     const int8_t *eb = cross ? edgeBuf + (y - y0) * SCR_W : NULL;
+    int cy = y < crossYC ? crossYC - 1 - y : y - crossYC;   // crosses: swirl around the crossing
+    bool clow = y >= crossYC;
     for (int x = 0; x < SCR_W; x++) {
       int qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
       int a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
@@ -900,6 +910,14 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
       if (eb) {                                        // Cross: Vortex swirl inside, glowing rim along the cross edge
         int ce = eb[x];
         if (ce > 0) {
+          int ca0;
+          if (cy < TQY) { int ci = cy * TQX + colMap[x]; r = rT[ci]; ca0 = aT[ci]; }
+          else {                                       // below the tables: work it out (only the lower arm)
+            float fx = colMap[x] + 0.5f, fy = cy + 0.5f;
+            r = min(255, (int)lroundf(sqrtf(fx * fx + fy * fy)));
+            ca0 = (int)lroundf(atan2f(fy, fx) / (PI / 2) * 64);
+          }
+          a = (x >= QX ? (clow ? ca0 : 256 - ca0) : (clow ? 128 - ca0 : 128 + ca0)) & 255;
           int s  = sinT[(a * ARMS + twistT[r] + phase) & 255];
           int s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255];
           int d = depthT[r];

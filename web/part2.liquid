@@ -303,9 +303,16 @@ float crossSD(float x, float y) {               // signed distance: negative ins
 
 bool crossAvailable() { return picPart != NULL; }
 
+int crossShift() {                              // move the crossing up so the whole cross is centred on the screen
+  float bot = min(RADIUS, SCR_H / 2.0f - 2), top = min(bot * BAR / (100.0f - BAR), SCR_H / 2.0f - 2);
+  return (int)lroundf((bot - top) / 2);
+}
+
 void prepareCross() {                           // (re)build the outline when the cross settings change
+  int shift = crossShift();
+  crossYC = QY - shift;
   uint32_t key = 2166136261UL;
-  uint32_t parts[] = { STYLE, (uint32_t)(RADIUS * 16), CROSS_W, BEAM, BAR, SCR_W, SCR_H, 1 };
+  uint32_t parts[] = { STYLE, (uint32_t)(RADIUS * 16), CROSS_W, BEAM, BAR, SCR_W, SCR_H, 2 };
   for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
   if (key == crossKey && crossReady) return;
   crossReady = false;
@@ -318,7 +325,7 @@ void prepareCross() {                           // (re)build the outline when th
     esp_partition_erase_range(picPart, crossOff, crossSize);
     static int8_t row[SCR_W];
     for (int y = 0; y < SCR_H; y++) {
-      float fy = y + 0.5f - SCR_H / 2.0f;
+      float fy = y + 0.5f - crossYC;            // relative to the crossing
       for (int x = 0; x < SCR_W; x++) {
         float e = -crossSD(x + 0.5f - SCR_W / 2.0f, fy);
         if (e > 0 && e < 1) e = 1;
@@ -782,12 +789,15 @@ function sdShapeJ(o, x, y) {
 }
 let crossKey = "", crossE = null;                  // distance to the cross edge per pixel: >0 inside, <0 outside
 const crossRimT = new Uint8Array(128), crossHaloT = new Uint8Array(128);   // rim and outer glow, sized to the beam
+let crossYC = 0;                                   // row of the crossing: moved up so the whole cross is centred
+function crossShift(R, H) { const bot = Math.min(R, H / 2 - 2), top = Math.min(bot * S.bar / (100 - S.bar), H / 2 - 2); return Math.round((bot - top) / 2); }
 function crossEdges() {
+  crossYC = QY - crossShift(S.radius, TH);
   const key = [S.style, S.radius, S.crossw, S.beam, S.bar, TW, TH].join(",");
   if (key === crossKey) return crossE;
   const sh = crossShapes(S.style - 8, S.radius, TW, TH), E = new Int8Array(TW * TH);
   for (let y = 0, i = 0; y < TH; y++) for (let x = 0; x < TW; x++, i++) {
-    const fx = x + 0.5 - TW / 2, fy = y + 0.5 - TH / 2;
+    const fx = x + 0.5 - TW / 2, fy = y + 0.5 - crossYC;
     let d = Infinity; for (const o of sh) d = Math.min(d, sdShapeJ(o, fx, fy));
     let e = -d; if (e > 0 && e < 1) e = 1; if (e <= 0 && e > -1) e = -1;
     E[i] = Math.max(-127, Math.min(127, Math.trunc(e)));
@@ -842,9 +852,16 @@ function tftFrame() {
   const CE = style >= 8 ? crossEdges() : null;
   for (let y = 0; y < TH; y++) {
     const qy = y < QY ? QY - 1 - y : y - QY, low = y >= QY;
+    const cy = y < crossYC ? crossYC - 1 - y : y - crossYC, clow = y >= crossYC;   // crosses: swirl around the crossing
     for (let x = 0; x < TW; x++) {
-      const qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
-      const a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
+      const qi = qy * TQX + colMap[x];
+      let r = rT[qi], a0 = aT[qi], lo = low;
+      if (CE && CE[p] > 0) {
+        lo = clow;
+        if (cy < TQY) { const ci = cy * TQX + colMap[x]; r = rT[ci]; a0 = aT[ci]; }
+        else { const fx = colMap[x] + 0.5, fy = cy + 0.5; r = Math.min(255, Math.round(Math.hypot(fx, fy))); a0 = Math.round(Math.atan2(fy, fx) / (Math.PI / 2) * 64); }
+      }
+      const a = (x >= QX ? (lo ? a0 : 256 - a0) : (lo ? 128 - a0 : 128 + a0)) & 255;
       const e = edgeT[a];
       let v;
       if (CE) {                                  // Cross: Vortex swirl inside, glowing rim along the cross edge
@@ -924,7 +941,7 @@ function tftFrame() {
   }
   for (let i = 0; i < S.sparks; i++) {
     if (style === 5 && sparks[i].r < bhHole) continue;   // sparks vanish into the black hole
-    const sx = Math.floor(QX + Math.cos(sparks[i].a) * sparks[i].r * S.oval), sy = Math.floor(QY + Math.sin(sparks[i].a) * sparks[i].r);
+    const sx = Math.floor(QX + Math.cos(sparks[i].a) * sparks[i].r * S.oval), sy = Math.floor((style >= 8 ? crossYC : QY) + Math.sin(sparks[i].a) * sparks[i].r);
     if (CE && !(sx >= 0 && sx < TW && sy >= 0 && sy < TH && CE[sy * TW + sx] > 0)) continue;   // sparks stay inside the cross
     for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
       const xx = sx + dx, yy = sy + dy;

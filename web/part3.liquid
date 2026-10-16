@@ -143,6 +143,7 @@ int16_t  linT[256];
 uint16_t pal[256];
 uint16_t *stripBuf[2];                 // two strips: one is drawn while the other is sent (allocated in setup)
 uint16_t *picBuf = NULL;               // a third strip, for fading between scenes
+int      crossYC = QY;                 // crosses: row of the crossing (the cross is centred, so this sits above the middle)
 
 // Dual-core chips (ESP32, ESP32-S3) draw on core 0 while core 1 feeds the screen.
 #if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
@@ -308,7 +309,7 @@ void updateSparks() {
     s.a += SPEED * 2.0 * (RADIUS / (s.r + RADIUS * 0.22));  // faster near the centre
     if (s.r < 3) respawn(s);
     sparkX[i] = (int16_t)floorf(QX + cosf(s.a) * s.r * OVAL);
-    sparkY[i] = (int16_t)floorf(QY + sinf(s.a) * s.r);
+    sparkY[i] = (int16_t)floorf((STYLE >= 8 ? crossYC : QY) + sinf(s.a) * s.r);
   }
 }
 
@@ -572,6 +573,8 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
     int qy = y < QY ? QY - 1 - y : y - QY;
     bool low = y >= QY;
     const int8_t *eb = cross ? edgeBuf + (y - y0) * SCR_W : NULL;
+    int cy = y < crossYC ? crossYC - 1 - y : y - crossYC;   // crosses: swirl around the crossing
+    bool clow = y >= crossYC;
     for (int x = 0; x < SCR_W; x++) {
       int qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
       int a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
@@ -580,6 +583,14 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
       if (eb) {                                        // Cross: Vortex swirl inside, glowing rim along the cross edge
         int ce = eb[x];
         if (ce > 0) {
+          int ca0;
+          if (cy < TQY) { int ci = cy * TQX + colMap[x]; r = rT[ci]; ca0 = aT[ci]; }
+          else {                                       // below the tables: work it out (only the lower arm)
+            float fx = colMap[x] + 0.5f, fy = cy + 0.5f;
+            r = min(255, (int)lroundf(sqrtf(fx * fx + fy * fy)));
+            ca0 = (int)lroundf(atan2f(fy, fx) / (PI / 2) * 64);
+          }
+          a = (x >= QX ? (clow ? ca0 : 256 - ca0) : (clow ? 128 - ca0 : 128 + ca0)) & 255;
           int s  = sinT[(a * ARMS + twistT[r] + phase) & 255];
           int s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255];
           int d = depthT[r];
