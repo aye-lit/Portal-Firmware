@@ -1,0 +1,588 @@
+{% raw %}  mega: { name: "Arduino Mega 2560", family: "AVR", ram: 8, volt: 5, hz: 8, fixedSpi: true, fixedI2c: true,
+    spi: { sck: 52, mosi: 51, cs: 10, dc: 8, rst: 9 }, i2c: { sda: 20, scl: 21 },
+    ide: "Built in. Pick Tools → Board → Arduino AVR Boards → Arduino Mega or Mega 2560." },
+  custom: { name: "Other board (type your own pins)", family: "Custom", ram: 9999, volt: 3.3, hz: 20, custom: true,
+    spi: { sck: 18, mosi: 23, cs: 5, dc: 16, rst: 17 }, i2c: { sda: 21, scl: 22 },
+    ide: "Install your board's support package in Boards Manager and pick it under Tools → Board. The sketch adapts to ESP32, ESP8266, RP2040 (Earle Philhower core), Teensy and AVR boards." },
+};
+const TFT_MIN_RAM = 100;
+function boardOf() {
+  const base = BOARDS[S.board] || BOARDS.esp32s3;
+  const B = JSON.parse(JSON.stringify(base));
+  if (B.custom) {
+    const c = S.custom || {};
+    for (const k of ["sck", "mosi", "cs", "dc", "rst"]) if (Number.isInteger(c[k])) B.spi[k] = c[k];
+    for (const k of ["sda", "scl"]) if (Number.isInteger(c[k])) B.i2c[k] = c[k];
+    if (c.hz >= 1 && c.hz <= 80) B.hz = c.hz;
+  }
+  const lab = B.lab || {};
+  B.lab = {};
+  for (const k of ["sck", "mosi", "cs", "dc", "rst"]) B.lab[k] = lab[k] || (B.family === "AVR" || B.family === "Teensy" ? String(B.spi[k]) : "GPIO " + B.spi[k]);
+  for (const k of ["sda", "scl"]) B.lab[k] = lab[k] || (B.family === "AVR" || B.family === "Teensy" ? String(B.i2c[k]) : "GPIO " + B.i2c[k]);
+  return B;
+}
+const boardFits = (B, model) => (!B.screen || S.model === B.screen) && (model.kind !== "tft" || B.ram >= TFT_MIN_RAM);   // boards with a built-in screen only fit that screen
+function wiringRows(B) {
+  if (B.builtin) return [["Screen", "Built into the board"], ["Power and upload", "USB-C cable"]];
+  const v = B.volt === 5 ? "5V" : "3V3";
+  if (M.kind === "tft") return [["VCC", "3V3"], ["GND", "GND"], ["SCL", B.lab.sck], ["SDA", B.lab.mosi], ["DC", B.lab.dc], ["CS", B.lab.cs], ["RST", B.lab.rst], ["BLK (if present)", "3V3"]];
+  if (M.kind === "rgb") return [["VCC", v], ["GND", "GND"], ["SCL (CLK)", B.lab.sck], ["SDA (DIN)", B.lab.mosi], ["RES", B.lab.rst], ["DC", B.lab.dc], ["CS", B.lab.cs]];
+  return [["VCC", v], ["GND", "GND"], ["SCL", B.lab.scl], ["SDA", B.lab.sda]];
+}
+// C code that starts the right bus on whatever board the sketch is compiled for
+// Bluetooth tuning (ESP32 boards): the board advertises as "Vortex Portal" and accepts the same
+// text commands as USB on a Nordic-UART-style service. The Studio connects with Web Bluetooth.
+const BLE_SVC = "6e400001-b5a3-f393-e0a9-e50e24dcca9e", BLE_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e", BLE_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+function bleBlock() { return `
+// ---------- Bluetooth tuning (ESP32 boards with Bluetooth) ----------
+// The board shows up as "Vortex Portal". In the Studio (Chrome on Android or a
+// computer), tap "Connect over Bluetooth". Same commands as USB.
+#if defined(ESP32) && defined(CONFIG_BT_ENABLED)
+  #define HAS_BLE 1
+#else
+  #define HAS_BLE 0
+#endif
+
+#if HAS_BLE
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLE2902.h>
+
+#define BLE_SERVICE "${BLE_SVC}"
+#define BLE_RX_CHAR "${BLE_RX}"   // phone writes commands here
+#define BLE_TX_CHAR "${BLE_TX}"   // board replies here (notify)
+
+BLECharacteristic *bleTx = NULL;
+char bleBuf[256], bleLine[256];
+uint16_t bleLen = 0;
+volatile bool bleHave = false;
+
+class PortalRx : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *c) {     // runs in the Bluetooth task: just collect the line
+    String v = c->getValue().c_str();
+    for (unsigned i = 0; i < v.length(); i++) {
+      char ch = v[i];
+      if (ch == '\\n' || ch == '\\r') {
+        if (bleLen && !bleHave) { bleBuf[bleLen] = 0; memcpy(bleLine, bleBuf, bleLen + 1); bleHave = true; }
+        bleLen = 0;
+      } else if (bleLen < sizeof(bleBuf) - 1) {
+        bleBuf[bleLen++] = ch;
+      }
+    }
+  }
+};
+
+class PortalServer : public BLEServerCallbacks {
+  void onDisconnect(BLEServer *s) { BLEDevice::startAdvertising(); }   // let the phone reconnect
+};
+
+void beginBluetooth() {
+  BLEDevice::init("Vortex Portal");
+  BLEServer *srv = BLEDevice::createServer();
+  srv->setCallbacks(new PortalServer());
+  BLEService *svc = srv->createService(BLE_SERVICE);
+  bleTx = svc->createCharacteristic(BLE_TX_CHAR, BLECharacteristic::PROPERTY_NOTIFY);
+  bleTx->addDescriptor(new BLE2902());
+  BLECharacteristic *rx = svc->createCharacteristic(BLE_RX_CHAR, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  rx->setCallbacks(new PortalRx());
+  svc->start();
+  BLEAdvertising *adv = BLEDevice::getAdvertising();
+  adv->addServiceUUID(BLE_SERVICE);
+  adv->setScanResponse(true);
+  BLEDevice::startAdvertising();
+}
+
+void readBluetooth() {                    // handle a received line in the main loop
+  if (!bleHave) return;
+  const char *reply = handleCommand(bleLine);
+  bleHave = false;
+  if (reply && bleTx) {
+    bleTx->setValue((uint8_t *)reply, strlen(reply));
+    bleTx->notify();
+  }
+}
+#endif`; }
+
+function pinBlock(B, bus) {
+  if (bus === "i2c") return `// ---------- Board: ${B.name} ----------
+// I2C pins (GPIO numbers). Boards with fixed I2C pins (Uno, Nano, Mega) ignore these.
+#define PIN_SDA   ${B.i2c.sda}
+#define PIN_SCL   ${B.i2c.scl}
+
+// Declared early so the Arduino IDE's automatic function prototypes compile
+struct Spark;
+struct Saved;
+
+void beginBus() {
+#if defined(ESP32) || defined(ESP8266)
+  Wire.begin(PIN_SDA, PIN_SCL);
+#elif defined(ARDUINO_ARCH_RP2040)
+  Wire.setSDA(PIN_SDA);
+  Wire.setSCL(PIN_SCL);
+  Wire.begin();
+#else
+  Wire.begin();                    // fixed hardware I2C pins
+#endif
+}`;
+  return `// ---------- Board: ${B.name} ----------
+// SPI pins (GPIO numbers). On boards with fixed SPI pins (Uno, Nano, Mega,
+// ESP8266, Teensy) CLK and DIN must go to the hardware SPI pins shown in the
+// Studio; CS, DC and RST can be any free pins.
+#define PIN_SCK   ${B.spi.sck}
+#define PIN_MOSI  ${B.spi.mosi}
+#define PIN_CS    ${B.spi.cs}
+#define PIN_DC    ${B.spi.dc}
+#define PIN_RST   ${B.spi.rst}
+
+// Declared early so the Arduino IDE's automatic function prototypes compile
+struct Spark;
+struct Saved;
+
+void beginBus() {
+#if defined(ESP32)
+  SPI.begin(PIN_SCK, -1, PIN_MOSI, PIN_CS);
+#elif defined(ARDUINO_ARCH_RP2040)
+  SPI.setSCK(PIN_SCK);
+  SPI.setTX(PIN_MOSI);
+  SPI.begin();
+#else
+  SPI.begin();                     // fixed hardware SPI pins
+#endif
+}`;
+}
+const EEPROM_BEGIN_GUARD = "#if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)";
+
+const MODELS = {
+  gc9a01:     { chip: "GC9A01", spec: "1.28″ round · 240×240 · SPI · ESP32, Pico, Teensy", w: 240, h: 240, kind: "tft", driver: "gc9a01", lib: "Adafruit GC9A01A", r: 92, wide: true,
+                fps: "", note: "" },
+  st7789_320: { chip: "ST7789", spec: "2.0–2.4″ rectangle · 320×240 · SPI", w: 320, h: 240, nw: 240, nh: 320, kind: "tft", rect: true, driver: "st7789", lib: "Adafruit ST7735 and ST7789 Library", r: 100 },
+  ili9341:    { chip: "ILI9341", spec: "2.4–2.8″ rectangle · 320×240 · SPI", w: 320, h: 240, nw: 240, nh: 320, kind: "tft", rect: true, driver: "ili9341", lib: "Adafruit ILI9341", r: 100 },
+  st7796:     { chip: "ST7796", spec: "3.5–4.0″ rectangle · 480×320 · SPI", w: 480, h: 320, nw: 320, nh: 480, kind: "tft", rect: true, driver: "st7796", lib: "Adafruit ST7735 and ST7789 Library", r: 150 },
+  st7789_170: { chip: "ST7789", spec: "1.9″ rectangle · 320×170 · SPI", w: 320, h: 170, nw: 170, nh: 320, kind: "tft", rect: true, driver: "st7789", lib: "Adafruit ST7735 and ST7789 Library", r: 72 },
+  st7789_240: { chip: "ST7789", spec: "1.3–1.54″ square · 240×240 · SPI", w: 240, h: 240, nw: 240, nh: 240, kind: "tft", rect: true, driver: "st7789", lib: "Adafruit ST7735 and ST7789 Library", r: 92 },
+  st7789_135: { chip: "ST7789", spec: "1.14″ rectangle · 240×135 · SPI", w: 240, h: 135, nw: 135, nh: 240, kind: "tft", rect: true, driver: "st7789", lib: "Adafruit ST7735 and ST7789 Library", r: 56 },
+  st7735:     { chip: "ST7735", spec: "1.8″ rectangle · 160×128 · SPI", w: 160, h: 128, nw: 128, nh: 160, kind: "tft", rect: true, driver: "st7735", lib: "Adafruit ST7735 and ST7789 Library", r: 52 },
+  ssd1306_64: { chip: "SSD1306", spec: "0.96″ · 128×64 · I2C", w: 128, h: 64, kind: "mono", driver: "ssd1306", lib: "Adafruit SSD1306", tints: ["white", "blue", "duo"], r: 27, fps: "about 25 fps on an Uno" },
+  ssd1306_32: { chip: "SSD1306", spec: "0.91″ · 128×32 · I2C", w: 128, h: 32, kind: "mono", driver: "ssd1306", lib: "Adafruit SSD1306", tints: ["white", "blue"], r: 12, fps: "about 35 fps on an Uno" },
+  sh1106:     { chip: "SH1106",  spec: "1.3″ · 128×64 · I2C",  w: 128, h: 64, kind: "mono", driver: "sh1106", lib: "Adafruit SH110X", tints: ["white", "blue"], r: 27, fps: "about 25 fps on an Uno" },
+  ssd1309:    { chip: "SSD1309", spec: "2.42″ · 128×64 · I2C", w: 128, h: 64, kind: "mono", driver: "ssd1306", lib: "Adafruit SSD1306", tints: ["white", "blue", "yellow", "green"], r: 27, fps: "about 25 fps on an Uno",
+                note: "Many 2.42″ boards ship wired for SPI. Check the back: the I2C setting usually needs a resistor moved and DC tied to GND." },
+  ssd1331:    { chip: "SSD1331", spec: "0.96″ · 96×64 · SPI",  w: 96, h: 64, kind: "rgb", driver: "ssd1331", lib: "Adafruit SSD1331 OLED Driver Library", band: 64, r: 27, fps: "about 12–15 fps on an Uno, smooth on an ESP32" },
+  ssd1351:    { chip: "SSD1351", spec: "1.5″ · 128×128 · SPI", w: 128, h: 128, kind: "rgb", driver: "ssd1351", lib: "Adafruit SSD1351 library", band: 32, r: 54, fps: "about 6–8 fps on an Uno (it renders in 4 strips to fit in memory), smooth on an ESP32" },
+};
+const TINTS = { white: ["White", "#f2f7ff", "#f2f7ff"], blue: ["Blue", "#5fd0ff", "#5fd0ff"], duo: ["Yellow + blue", "#ffd94d", "#5fd0ff"], yellow: ["Yellow", "#ffd94d", "#ffd94d"], green: ["Green", "#6dff8c", "#6dff8c"] };
+const PRESETS = { Rift: ["#3b1cff", "#38f0ff"], Slime: ["#0b6b1a", "#8dff4f"], Bloom: ["#c02ad0", "#f9c8ff"], Warp: ["#1b2a8a", "#9fe8ff"], Nebula: ["#4b1a9a", "#ff7ad9"], Event: ["#b3360a", "#ffd27a"], Ember: ["#ff3d00", "#ffd36b"], Toxic: ["#13c94a", "#d8ff5a"], Glacier: ["#0a3fa8", "#e8fbff"], Crimson: ["#9e0030", "#ff7ab0"], Void: ["#5a1ccc", "#e3a6ff"] };
+const rmax = M => Math.floor(Math.min(M.w, M.h) / 2) - 1;
+
+// ---------------- settings ----------------
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+let S = { ...DEFAULTS };
+try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
+if (!MODELS[S.model]) S.model = DEFAULTS.model;
+if (S.board === "s3mini") S.board = "esp32s3";
+if (!BOARDS[S.board]) S.board = DEFAULTS.board;
+if (!S.custom || typeof S.custom !== "object") S.custom = {};
+if (!(S.bright >= 10 && S.bright <= 100)) S.bright = 100;
+if (![0, 1, 2, 3, 4, 5, 6, 7].includes(S.style)) S.style = 0;
+if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
+if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
+if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
+const isHex = c => /^#[0-9a-f]{6}$/i.test(c || "");
+if (!Array.isArray(S.fadeSets)) S.fadeSets = isHex(S.c3) && isHex(S.c4) ? [{ core: S.c3, rim: S.c4 }] : [{ core: "#ff3d00", rim: "#ffd36b" }];
+S.fadeSets = S.fadeSets.filter(x => x && isHex(x.core) && isHex(x.rim)).slice(0, 3);
+if (!S.fadeSets.length) S.fadeSets = [{ core: "#ff3d00", rim: "#ffd36b" }];
+if (!(S.fadeSel >= -1 && S.fadeSel < S.fadeSets.length)) S.fadeSel = 0;
+delete S.c3; delete S.c4;
+S.fade = !!S.fade;
+S.portrait = !!S.portrait;
+const MAX_FADE_SETS = 3;   // extra sets, so 4 in total with the main colours
+if (!(S.ripples >= 0 && S.ripples <= 6)) S.ripples = 2;
+if (!(S.rspeed >= 0.03 && S.rspeed <= 0.3)) S.rspeed = 0.09;
+if (!(S.glow >= 0.3 && S.glow <= 0.9)) S.glow = 0.55;
+let port = null, busy = false, pending = false;            // USB link (Web Serial)
+let bleRx = null, bleWait = null, bleText = "";           // Bluetooth link (Web Bluetooth)
+let plugged = 0, installing = false;                      // USB boards this page may use that are plugged in
+
+// ---------- connection badge ----------
+function setConn(state, text) { const c = $("conn"); if (!c) return; c.dataset.state = state; $("conn-text").textContent = text; }
+function refreshConn() {
+  if (installing) setConn("busy", "Installing on the board…");
+  else if (bleRx) setConn("on", "Connected over Bluetooth");
+  else if (port) setConn("on", "Connected over USB");
+  else if (plugged) setConn("plugged", "Board plugged in, not connected");
+  else setConn("off", "Board not connected");
+}
+async function countPlugged() {
+  try { plugged = "serial" in navigator ? (await navigator.serial.getPorts()).length : 0; } catch (_) { plugged = 0; }
+  refreshConn();
+}
+if ("serial" in navigator) {
+  navigator.serial.addEventListener("connect", countPlugged);
+  navigator.serial.addEventListener("disconnect", e => {
+    if (port && e.target === port) { port = null; say("The USB cable was unplugged. Plug it back in and tap Connect over USB."); }
+    countPlugged();
+  });
+}
+
+// ---------- progress bar ----------
+function progressBar(id) {
+  const el = $(id + "-bar"), fill = $(id + "-fill"), stage = $(id + "-stage"), pct = $(id + "-pct"), track = $(id + "-track");
+  const bar = {
+    step(n, total, label) { el.hidden = false; el.classList.remove("done"); stage.innerHTML = `<b>Step ${n} of ${total}</b> ${label}`; bar.set(null); },
+    set(f) {
+      if (f == null) { el.classList.add("busy"); pct.textContent = ""; track.removeAttribute("aria-valuenow"); return; }
+      el.classList.remove("busy");
+      const p = Math.round(Math.min(1, Math.max(0, f)) * 100);
+      fill.style.width = p + "%"; pct.textContent = p + "%"; track.setAttribute("aria-valuenow", p);
+    },
+    done(label) { el.classList.remove("busy"); el.classList.add("done"); bar.set(1); stage.innerHTML = `<b>Done</b> ${label}`; },
+    fail() { el.classList.remove("busy"); el.hidden = true; },
+  };
+  return bar;
+}
+async function fetchWithProgress(url, onProgress) {      // download, reporting 0..1 (or null if the size is unknown)
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`couldn't download ${url.split("/").pop().split("?")[0]} (${res.status})`);
+  const total = +res.headers.get("content-length") || 0;
+  if (!res.body || !total) { onProgress(null); return new Uint8Array(await res.arrayBuffer()); }
+  const reader = res.body.getReader(), parts = []; let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read(); if (done) break;
+    parts.push(value); got += value.length; onProgress(got / total);
+  }
+  const out = new Uint8Array(got); let o = 0;
+  for (const c of parts) { out.set(c, o); o += c.length; }
+  return out;
+}
+const save = () => { try { localStorage.setItem("portal-studio", JSON.stringify(S)); } catch (e) {} };
+const BUILD_ID = (Math.random() * 0xffffffff >>> 0).toString(16).toUpperCase().padStart(8, "0");
+let M = MODELS[S.model];
+
+// ---------------- tiny display + Adafruit GFX simulator ----------------
+const MAX_SPARKS = 30, TWO_PI = Math.PI * 2;
+let W = M.w, H = M.h, buf = new Uint8Array(W * H);
+const pix = (x, y, c = 1) => { if (x >= 0 && x < W && y >= 0 && y < H) buf[y * W + x] = c; };
+function line(x0, y0, x1, y1) {           // Bresenham, as in Adafruit_GFX::writeLine
+  const steep = Math.abs(y1 - y0) > Math.abs(x1 - x0);
+  if (steep) { [x0, y0] = [y0, x0]; [x1, y1] = [y1, x1]; }
+  if (x0 > x1) { [x0, x1] = [x1, x0]; [y0, y1] = [y1, y0]; }
+  const dx = x1 - x0, dy = Math.abs(y1 - y0), ys = y0 < y1 ? 1 : -1;
+  let err = dx >> 1;
+  for (; x0 <= x1; x0++) { steep ? pix(y0, x0) : pix(x0, y0); err -= dy; if (err < 0) { y0 += ys; err += dx; } }
+}
+function circle(x0, y0, r) {              // Adafruit_GFX::drawCircle
+  let f = 1 - r, ddx = 1, ddy = -2 * r, x = 0, y = r;
+  pix(x0, y0 + r); pix(x0, y0 - r); pix(x0 + r, y0); pix(x0 - r, y0);
+  while (x < y) {
+    if (f >= 0) { y--; ddy += 2; f += ddy; }
+    x++; ddx += 2; f += ddx;
+    pix(x0 + x, y0 + y); pix(x0 - x, y0 + y); pix(x0 + x, y0 - y); pix(x0 - x, y0 - y);
+    pix(x0 + y, y0 + x); pix(x0 - y, y0 + x); pix(x0 + y, y0 - x); pix(x0 - y, y0 - x);
+  }
+}
+function fillCircle0(x0, y0, r) { for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx*dx + dy*dy <= r*r + r) pix(x0 + dx, y0 + dy, 0); }
+const rnd = (a, b) => a + Math.floor(Math.random() * (b - a));   // Arduino random(min, max)
+
+// ---------------- the portal (mirrors the sketch line for line) ----------------
+let t = 0, cx = W / 2, cy = H / 2;
+const sparks = Array.from({ length: MAX_SPARKS }, () => ({ a: 0, r: 0 }));
+const px = (a, r) => Math.floor(cx + Math.cos(a) * r * S.oval);
+const py = (a, r) => Math.floor(cy + Math.sin(a) * r);
+function respawn(s) { s.a = rnd(0, 628) / 100; s.r = S.radius + rnd(2, 10); }
+function resetSparks() { for (let i = 0; i < S.sparks; i++) { respawn(sparks[i]); sparks[i].r = rnd(4, Math.trunc(S.radius) + 10); } }
+
+function drawArms() {
+  for (let i = 0; i < S.arms; i++) {
+    const base = t + i * (TWO_PI / S.arms);
+    let lx = 0, ly = 0, first = true;
+    for (let r = 3; r <= S.radius; r *= 1.12) {
+      const a = base + S.twist * Math.log(r / S.radius);
+      const x = px(a, r), y = py(a, r);
+      if (!first) line(lx, ly, x, y);
+      if (r > S.radius * 0.55) pix(px(a + 0.12, r), py(a + 0.12, r));
+      lx = x; ly = y; first = false;
+    }
+  }
+}
+function drawRim() {
+  const N = 72; let lx = 0, ly = 0;
+  for (let k = 0; k <= N; k++) {
+    const a = k * TWO_PI / N;
+    const wob = Math.sin(a * 5 + t * 2) * 1.2 + Math.sin(a * 3 - t * 3) * 0.8;
+    const r = S.radius + 1.5 + wob;
+    const x = px(a, r), y = py(a, r);
+    if (k > 0) line(lx, ly, x, y);
+    lx = x; ly = y;
+    if (k % 3 === 0) { const ha = a + t * 0.5, hr = S.radius + 4.5 + wob * 1.5; pix(px(ha, hr), py(ha, hr)); }
+  }
+}
+function updateSparks() {
+  for (let i = 0; i < S.sparks; i++) {
+    const s = sparks[i];
+    s.r *= 0.95;
+    s.a += S.speed * 2 * (S.radius / (s.r + 6));
+    if (s.r < 3) respawn(s);
+  }
+}
+function drawSparks() { for (let i = 0; i < S.sparks; i++) pix(px(sparks[i].a, sparks[i].r), py(sparks[i].a, sparks[i].r)); }
+function drawCore() {
+  fillCircle0(Math.floor(cx), Math.floor(cy), 3);
+  const pulse = 1 + Math.trunc((Math.sin(t * 4) + 1) * 1);
+  circle(Math.floor(cx), Math.floor(cy), pulse);
+}
+function step() {
+  if (S.drift) { cx = W / 2 + Math.sin(t * 0.01) * 4; cy = H / 2 + Math.cos(t * 0.02) * 2; }
+  else { cx = W / 2; cy = H / 2; }
+  updateSparks();
+  buf.fill(0);
+  drawArms(); drawRim(); drawSparks(); drawCore();
+  t += S.speed;
+  if (t > TWO_PI * 100) t -= TWO_PI * 100;
+}
+
+// colour OLEDs: shade each lit pixel by its distance from the centre (core → rim), in RGB565 like the real panel
+const hexRGB = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+let pal = [];
+function buildPalette() {
+  buildTftPalette();
+  const a = hexRGB(S.c1), b = hexRGB(S.c2);
+  pal = Array.from({ length: 8 }, (_, k) => {
+    const c = a.map((v, i) => Math.trunc(v + (b[i] - v) * k / 7));
+    const r5 = c[0] & 0xF8, g6 = c[1] & 0xFC, b5 = c[2] & 0xF8;          // quantise like to565()
+    return `rgb(${r5 | r5 >> 5},${g6 | g6 >> 6},${b5 | b5 >> 5})`;
+  });
+}
+function shadeIdx(x, y) {
+  const dx = (x - cx) / S.oval, dy = y - cy;
+  const d = Math.sqrt(dx * dx + dy * dy) / (S.radius + 5) * 7;
+  return d > 7 ? 7 : Math.trunc(d);
+}
+
+// ---------------- full-colour TFT (round or rectangular): per-pixel portal, mirrors the sketch ----------------
+// The portal is always centred on the screen; distance/angle tables cover one quarter and are mirrored.
+let TW = 240, TH = 240, QX = 120, QY = 120, TQX = 120, TQY = 120, rT, aT, colMap;
+function buildGeo(w, h) {
+  TW = w; TH = h; QX = w >> 1; QY = h >> 1; TQX = w - QX; TQY = h - QY;
+  rT = new Uint8Array(TQX * TQY); aT = new Uint8Array(TQX * TQY); colMap = new Uint8Array(TW);
+  for (let qy = 0; qy < TQY; qy++) for (let qx = 0; qx < TQX; qx++) {
+    const fx = qx + .5, fy = qy + .5, i = qy * TQX + qx;
+    rT[i] = Math.min(255, Math.round(Math.hypot(fx, fy)));
+    aT[i] = Math.round(Math.atan2(fy, fx) / (Math.PI / 2) * 64);
+  }
+}
+buildGeo(240, 240);
+const sinT = new Int8Array(256).map((_, i) => Math.round(127 * Math.sin(i * TWO_PI / 256)));
+const twistT = new Int16Array(256), twist2T = new Int16Array(256), edgeT = new Int16Array(256);
+const depthT = new Uint8Array(256), coreT = new Uint8Array(256), haloT = new Uint8Array(256), rimT = new Uint8Array(64);
+const linT = new Int16Array(256), centerT = new Uint8Array(256);
+// Space styles
+const spCoreT = new Uint8Array(256), galFadeT = new Uint16Array(256), bhRingT = new Uint8Array(256), bhDiskT = new Uint8Array(256), bhStarT = new Uint8Array(256);
+const warpOn = new Uint8Array(768), warpRR = new Float32Array(768), warpLen = new Float32Array(768), warpB = new Float32Array(768);
+let bhHole = 20;
+// Cartoon styles: smooth looping noise tables (same numbers as the sketch)
+let nzSeed = 12345;
+const nzRnd = () => { nzSeed = (Math.imul(nzSeed, 1103515245) + 12345) & 0x7fffffff; return (nzSeed >> 16) & 255; };
+function nzTable(passes, len) {
+  let n = Array.from({ length: len }, nzRnd);
+  for (let p = 0; p < passes; p++) n = n.map((_, i) => (n[(i + len - 1) % len] + 2 * n[i] + n[(i + 1) % len]) >> 2);
+  const lo = Math.min(...n), hi = Math.max(...n);
+  return Uint8Array.from(n, v => Math.round((v - lo) * 255 / (hi - lo)));
+}
+const nzA = nzTable(1, 32), nzB = nzTable(1, 64), nzC = nzTable(2, 256);
+const nz = (t, x) => { const m = t.length - 1, i = x >> 4, f = x & 15; return (t[i & m] * (16 - f) + t[(i + 1) & m] * f) >> 4; };
+function cartoonV(a, r, arms, phase) {   // blobby flat-shaded swirl
+  const warp = (((nz(nzA, a * 2 + r * 3 + (phase >> 1)) - 128) * 7) >> 3) + ((nz(nzB, a * 4 + r * 6 - phase) - 128) >> 2);
+  const sp = sinT[(a * arms - linT[r] + phase + warp) & 255];
+  return r < 7 ? 232 : sp > 25 ? 232 : sp > -45 ? 182 : 120;
+}
+const hash32 = n => { n = Math.imul(n ^ 61 ^ (n >>> 16), 9); n ^= n >>> 4; n = Math.imul(n, 0x27d4eb2d); return (n ^ (n >>> 15)) >>> 0; };
+function starAt(a, r, density, tw) {   // one twinkling star per small patch of sky
+  const h = hash32((a >> 1) * 977 + (r >> 2) * 131);
+  if ((h & 63) >= density * 2) return 0;
+  if ((a & 1) !== ((h >>> 8) & 1) || (r & 3) !== ((h >>> 10) & 3)) return 0;
+  return 120 + ((sinT[((h >>> 12) + tw) & 255] + 127) >> 1);
+}
+const sbGlowT = new Uint8Array(256), sbRingT = new Uint8Array(256), sbOuterT = new Uint8Array(256), ripCrestT = new Uint8Array(256), ripTroughT = new Uint8Array(256);
+let tftPal = new Uint32Array(256);
+function buildTftParams() {
+  const R = S.radius;
+  for (let r = 0; r < 256; r++) {
+    const rn = Math.max(r, 0.5) / R, lr = Math.log(rn), x = Math.min(rn, 1);
+    twistT[r] = Math.trunc(S.twist * 3 * lr * 40.74);
+    twist2T[r] = Math.trunc(S.twist * 1.6 * lr * 40.74);
+    depthT[r] = Math.trunc(255 * x * x * (3 - 2 * x));
+    coreT[r] = Math.trunc(210 * Math.exp(-rn * rn * 18));
+    haloT[r] = Math.trunc(115 * Math.exp(-r / R * 3.2));
+    linT[r] = Math.trunc(r * S.twist * 1.2 * 256 / R);
+    centerT[r] = Math.trunc(55 * Math.exp(-Math.pow(rn * 2.2, 2)));
+    // Starburst: glowing centre, soft rings near the centre, rays toward the rim
+    const sr = r / R, f1 = Math.min(1, sr / S.glow), inner = Math.trunc(256 * (1 - f1 * f1 * (3 - 2 * f1)));
+    const f2v = Math.min(1, Math.max(0, (sr - 0.15) / 0.55));
+    sbOuterT[r] = Math.min(255, Math.trunc(256 * f2v * f2v * (3 - 2 * f2v)));
+    sbRingT[r] = Math.min(255, (inner * inner * inner) >> 16);
+    sbGlowT[r] = Math.trunc(105 * Math.exp(-Math.pow(sr / S.glow * 1.4, 2)));
+    // Space: bright core, galaxy arm fade, black hole ring and disk
+    spCoreT[r] = Math.trunc(230 * Math.exp(-Math.pow(rn / 0.16, 2)));
+    galFadeT[r] = Math.max(0, Math.trunc(256 * (1 - sr * 0.7)));
+    const hr = 0.22 * R, dn = (sr - 0.22) / 0.45;
+    bhRingT[r] = Math.trunc(255 * Math.exp(-Math.pow((r - hr - 1.5) / 1.8, 2)));
+    bhDiskT[r] = (dn >= 0 && dn < 1) ? Math.trunc(235 - dn * 200) : 0;
+    bhStarT[r] = dn > 0.85 ? 1 : 0;
+  }
+  for (let d = 0; d < 64; d++) rimT[d] = Math.trunc(255 * Math.exp(-Math.pow(d * 9 / R, 2)));
+  for (let x = 0; x < TW; x++) { const dx = x < QX ? QX - 1 - x : x - QX; colMap[x] = Math.min(TQX - 1, Math.round(dx / S.oval)); }
+}
+function buildTftPalette() {           // black → core → rim → near-white, quantised to RGB565
+  const lerp = (p, q, f) => p.map((v, i) => Math.trunc(v + (q[i] - v) * f));
+  let a = hexRGB(S.c1), b = hexRGB(S.c2);
+  if (S.fade && S.fadeSets.length) {   // fade through the colour sets in order, FADE_SECS per fade
+    const sets = [[S.c1, S.c2], ...S.fadeSets.map(x => [x.core, x.rim])], N = sets.length;
+    const pos = (performance.now() / 1000 / S.fadesec) % N, i = Math.floor(pos);
+    let f = pos - i; f = f * f * (3 - 2 * f);
+    const A = sets[i], B = sets[(i + 1) % N];
+    a = lerp(hexRGB(A[0]), hexRGB(B[0]), f); b = lerp(hexRGB(A[1]), hexRGB(B[1]), f);
+  }
+  for (let i = 0; i < 256; i++) {
+    const c = i < 110 ? lerp([0, 0, 0], a, i / 110) : i < 200 ? lerp(a, b, (i - 110) / 90) : lerp(b, [255, 255, 255], (i - 200) / 55 * 0.6);
+    for (let k = 0; k < 3; k++) c[k] = Math.trunc(c[k] * S.bright / 100);
+    const r5 = c[0] & 0xF8, g6 = c[1] & 0xFC, b5 = c[2] & 0xF8;
+    tftPal[i] = (255 << 24) | ((b5 | b5 >> 5) << 16) | ((g6 | g6 >> 6) << 8) | (r5 | r5 >> 5);   // ABGR for ImageData
+  }
+}
+function tftRespawn(s) { s.a = rnd(0, 628) / 100; s.r = S.radius * 1.05 + rnd(0, Math.trunc(S.radius / 5) + 1); }
+let tftImg = null;
+function tftFrame() {
+  // sparks
+  for (let i = 0; i < S.sparks; i++) {
+    const s = sparks[i];
+    s.r *= 0.95;
+    s.a += S.speed * 2 * (S.radius / (s.r + S.radius * 0.22));
+    if (s.r < 3) tftRespawn(s);
+  }
+  buildTftParams();
+  buildTftPalette();
+  const R = S.radius, arms = S.arms, style = S.style;
+  const phase = Math.trunc(t * 1.5 * 40.74), phase2 = Math.trunc(-t * 40.74);
+  for (let a = 0; a < 256; a++) {
+    const ang = a * TWO_PI / 256;
+    const wob = Math.sin(ang * 5 + t * 2) * 1.2 + Math.sin(ang * 3 - t * 3) * 0.8;
+    edgeT[a] = Math.trunc(R * (1 + wob * 0.025 * (1 - S.rimsmooth / 100)));
+  }
+  // Starburst ripples: rings expanding outward, precomputed per distance for this frame
+  ripCrestT.fill(0); ripTroughT.fill(0);
+  if (style === 2) for (let i = 0; i < S.ripples; i++) {
+    const pr = (t * S.rspeed + i / S.ripples) % 1, rr = 0.16 + pr * 0.62, w = 0.04 + pr * 0.04, fade = Math.pow(1 - pr, 1.1);
+    for (let r = 0; r < 256; r++) {
+      const d = (r / R - rr) / w;
+      ripCrestT[r] = Math.min(255, ripCrestT[r] + Math.trunc(fade * 110 * Math.exp(-d * d)));
+      ripTroughT[r] = Math.min(255, ripTroughT[r] + Math.trunc(fade * 35 * Math.exp(-(d + 1.6) * (d + 1.6))));
+    }
+  }
+  // Hyperspace: where each streaking star is this frame (3 layers × 256 directions)
+  bhHole = Math.trunc(0.22 * R);
+  const tw = Math.trunc(t * 25);
+  if (style === 3) for (let L = 0; L < 3; L++) for (let a = 0; a < 256; a++) {
+    const h = hash32(a * 3 + L * 7919), i = L * 256 + a;
+    warpOn[i] = (h & 15) < S.stars + 1 ? 1 : 0;
+    const pos = ((((h >>> 8) & 1023) + t * (60 + L * 25)) % 1024) / 1024;
+    const rr = pos * pos * 1.15 * R;
+    warpRR[i] = rr; warpLen[i] = 1.5 + rr * 0.22; warpB[i] = 145 * Math.min(1, rr / (0.8 * R));
+  }
+  if (!tftImg) tftImg = g.createImageData(TW, TH);
+  const out = new Uint32Array(tftImg.data.buffer);
+  let p = 0;
+  for (let y = 0; y < TH; y++) {
+    const qy = y < QY ? QY - 1 - y : y - QY, low = y >= QY;
+    for (let x = 0; x < TW; x++) {
+      const qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
+      const a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
+      const e = edgeT[a];
+      let v;
+      if (style === 7) {                         // Cartoon Sticker: ragged edge, light outline, no glow
+        const jag = (((nz(nzB, a * 4 + (phase >> 1)) - 128) * 7 + (nz(nzC, a * 16 + phase) - 128) * 4) >> 7) * (100 - S.rimsmooth) / 100;
+        const e2 = Math.trunc(R * 1.02 + jag / 4);
+        v = r >= e2 ? 0 : r >= e2 - 4 ? 235 : cartoonV(a, r, arms, phase);
+      } else if (r < e) {
+        if (style === 0) {                       // Vortex
+          const s = sinT[(a * arms + twistT[r] + phase) & 255];
+          const s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255];
+          const d = depthT[r];
+          const band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
+          v = (d * (60 + ((band * 195) >> 8))) >> 8;
+          if (s > 100) v += ((s - 100) * 3 * d) >> 8;
+          if (coreT[r] > v) v = coreT[r];
+        } else if (style === 1) {                // Toon Spiral
+          const w = sinT[(a * 6 + r * 4 + phase2) & 255] >> 2;
+          const sp = sinT[(a * arms - linT[r] + phase + w) & 255];
+          v = sp > 40 ? 235 : sp > -20 ? 190 : sp > -70 ? 150 : 95;
+          if (coreT[r] > v) v = coreT[r];
+        } else if (style === 6) {                // Cartoon Swirl
+          v = cartoonV(a, r, arms, phase);
+        } else if (style === 3) {                // Hyperspace: stars streak outward
+          v = 30 + ((sinT[(a * 3 + (phase >> 3)) & 255] + 127) >> 4) + (spCoreT[r] >> 2);
+          for (let L = 0; L < 3; L++) {
+            const i = L * 256 + a;
+            if (!warpOn[i]) continue;
+            const rr = warpRR[i], len = warpLen[i];
+            if (r <= rr && r > rr - len) { const sv = Math.trunc(110 + warpB[i] * (1 - (rr - r) / len * 0.6)); if (sv > v) v = sv; }
+          }
+        } else if (style === 4) {                // Galaxy: spiral arms, core, stars
+          const arm = sinT[(a * 2 + twistT[r] + (phase >> 2)) & 255];
+          const lumps = sinT[(a * 5 + r * 3 - (phase >> 3)) & 255];
+          const armV = ((arm + 127) * galFadeT[r]) >> 8;
+          v = 18 + ((armV * 115) >> 8) + ((lumps * (arm + 127)) >> 9) + spCoreT[r];
+          const st = starAt(a, r, S.stars, tw); if (st > v) v = st;
+          if (v < 0) v = 0;
+        } else if (style === 5) {                // Black hole: shadow, ring, swirling disk
+          if (r < bhHole) v = 0;
+          else {
+            const swirl = sinT[(a * 3 + r * 6 - phase * 2) & 255] + (sinT[(a * 7 - r * 3 - phase) & 255] >> 1);
+            const disk = Math.trunc(bhDiskT[r] * (310 + swirl) / 500);
+            v = bhRingT[r] > disk ? bhRingT[r] : disk;
+            if (bhStarT[r]) { const st = starAt(a, r, S.stars, tw); if (st > v) v = st; }
+          }
+        } else {                                 // Starburst: glowing centre, soft rings, rays, ripples
+          const ray = sinT[(a * 11 + (phase >> 2)) & 255] + (sinT[(a * 19 - (phase >> 1)) & 255] >> 1) + (sinT[(a * 37 + phase) & 255] >> 1);
+          const wave = sinT[(r * 4 - phase * 2 + (sinT[(a * 9 + (phase >> 2)) & 255] >> 4)) & 255];
+          const tex = sinT[(r * 9 - phase * 3 + (sinT[(a * 7 + (phase >> 1)) & 255] >> 3)) & 255];
+          const sd = sinT[(a * 22 + (phase >> 3)) & 255], sdp = sd > 0 ? sd : 0;
+          v = 150 + sbGlowT[r]
+            + ((((wave + 127) * 85 >> 8) * sbRingT[r]) >> 8)
+            + ((((tex * 26) >> 7) * sbRingT[r]) >> 8)
+            + ((((ray * 32) >> 7) * sbOuterT[r]) >> 8)
+            + ((ripCrestT[r] * (141 + ((sdp * 115) >> 7))) >> 8) - ripTroughT[r];
+          if (v < 0) v = 0;
+        }
+        const k = e - r; if (k < 64 && rimT[k] > v) v = rimT[k];
+      } else {
+        const k = r - e; v = k < 64 ? rimT[k] : 0;
+        const h = haloT[k > 255 ? 255 : k]; if (h > v) v = h;
+      }
+      out[p++] = tftPal[v > 255 ? 255 : v];
+    }
+  }
+  for (let i = 0; i < S.sparks; i++) {
+    if (style === 5 && sparks[i].r < bhHole) continue;   // sparks vanish into the black hole
+    const sx = Math.floor(QX + Math.cos(sparks[i].a) * sparks[i].r * S.oval), sy = Math.floor(QY + Math.sin(sparks[i].a) * sparks[i].r);
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+      const xx = sx + dx, yy = sy + dy;
+      if (xx >= 0 && xx < TW && yy >= 0 && yy < TH) out[yy * TW + xx] = tftPal[235];
+    }
+  }
+  g.putImageData(tftImg, 0, 0);
+  t += S.speed;
+  if (t > TWO_PI * 100) t -= TWO_PI * 100;
+}
+
+// ---------------- render the simulated panel ----------------
+const cv = $("oled"), g = cv.getContext("2d");
+let K = 4;
+function sizeCanvas() {
+  W = M.w; H = M.h; buf = new Uint8Array(W * H);
+  K = M.kind === "tft" ? 1 : Math.max(3, Math.round(512 / W));
+  tftImg = null;
+  if (M.kind === "tft") buildGeo(W, H);
+  cv.width = W * K; cv.height = H * K;
+  cv.style.aspectRatio = `${W} / ${H}`;
+  $("module").style.maxWidth = M.kind === "tft" ? (M.rect ? (W > H ? "460px" : W === H ? "340px" : "290px") : "340px") : H > W * 0.75 ? "380px" : W < 128 ? "440px" : "560px";
+{% endraw %}
