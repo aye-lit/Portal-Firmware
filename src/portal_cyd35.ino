@@ -23,6 +23,13 @@
   #include <freertos/FreeRTOS.h>
   #include <freertos/semphr.h>
 #endif
+#if defined(ESP32) && __has_include("rom/tjpgd.h")
+  #define HAS_PICS 1                      // pictures: stored in flash, unpacked by the chip's built-in JPEG decoder
+  #include <esp_partition.h>
+  #include "rom/tjpgd.h"
+#else
+  #define HAS_PICS 0
+#endif
 
 // ---------- Board: 3.5″ ESP32 display board (Hosyond / LCDwiki E32R35T, screen built in) ----------
 // SPI pins (GPIO numbers). On boards with fixed SPI pins (Uno, Nano, Mega,
@@ -59,6 +66,8 @@ void beginBus() {
 #define TQY        (SCR_H - QY)
 int      STRIP = 9600 / SCR_W;          // rows drawn per chunk (fewer if memory is tight)
 #define MAX_SPARKS 30
+#define MAX_PICS   8                     // picture slots
+#define PORTAL     255                   // scene number for the portal itself
 #define RADIUS_MAX 159
 
 // ---------- Settings baked in from the Studio ----------
@@ -82,11 +91,15 @@ float    FADE_SECS  = 8;       // seconds for each fade (0 min 8 sec)
 uint8_t  RIPPLES    = 2;       // Starburst: rings expanding at once (0-6)
 float    RIP_SPEED  = 0.09;    // Starburst: ripple speed (0.03-0.30)
 float    GLOW_SIZE  = 0.55;    // Starburst: centre glow size (0.30-0.90)
+uint8_t  SCENE_COUNT = 0;      // scenes shown in turn (0 = just the portal)
+uint8_t  SCENES[8]  = { 255, 255, 255, 255, 255, 255, 255, 255 };   // 255 = the portal, 0-7 = pictures sent from the Studio
+float    HOLD_SECS  = 10;       // seconds each scene stays on screen
+float    SCENE_FADE = 2;       // seconds to fade into the next scene (0 = instant)
 // --------------------------------------------------------
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xDA2BE605UL;
+const uint32_t BUILD_ID = 0x7B2EA5D6UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -105,6 +118,7 @@ int      bhHole = 20, twinkle = 0;
 int16_t  linT[256];
 uint16_t pal[256];
 uint16_t *stripBuf[2];                 // two strips: one is drawn while the other is sent (allocated in setup)
+uint16_t *picBuf = NULL;               // a third strip, for fading between scenes
 
 // Dual-core chips (ESP32, ESP32-S3) draw on core 0 while core 1 feeds the screen.
 #if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
@@ -121,7 +135,7 @@ Spark sparks[MAX_SPARKS];
 int16_t sparkX[MAX_SPARKS], sparkY[MAX_SPARKS];
 float t = 0;
 
-struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; };
+struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; };
 
 // ---------- tables ----------
 // Cartoon styles: smooth looping noise tables
@@ -275,12 +289,19 @@ void updateSparks() {
 }
 
 // ---------- saved settings (EEPROM) ----------
+bool validScenes(const Saved &s) {
+  if (s.sceneCount > 8 || !(s.holdSecs >= 1 && s.holdSecs <= 3600) || !(s.sceneFade >= 0 && s.sceneFade <= 600)) return false;
+  for (uint8_t i = 0; i < s.sceneCount; i++) if (s.scenes[i] != PORTAL && s.scenes[i] >= MAX_PICS) return false;
+  return true;
+}
+
 bool valid(const Saved &s) {
   return s.radius >= 6 && s.radius <= RADIUS_MAX && s.oval >= 1 && s.oval <= 2 &&
          s.arms >= 1 && s.arms <= 8 && s.twist >= 0 && s.twist <= 6 &&
          s.speed >= 0 && s.speed <= 0.4 && s.sparks <= MAX_SPARKS &&
          s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && s.style <= 7 && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
-         s.ripples <= 6 && s.ripSpeed >= 0.03f && s.ripSpeed <= 0.3f && s.glow >= 0.3f && s.glow <= 0.9f;
+         s.ripples <= 6 && s.ripSpeed >= 0.03f && s.ripSpeed <= 0.3f && s.glow >= 0.3f && s.glow <= 0.9f &&
+         validScenes(s);
 }
 
 void apply(const Saved &s) {
@@ -290,6 +311,8 @@ void apply(const Saved &s) {
   RIPPLES = s.ripples; RIP_SPEED = s.ripSpeed; GLOW_SIZE = s.glow; STARS = s.stars;
   FADE_ON = s.fadeOn; FADE_COUNT = s.fadeCount; FADE_SECS = s.fadeSecs; RIM_SMOOTH = s.rimSmooth;
   for (int k = 0; k < 6; k++) FADE_COLS[k] = s.fadeCols[k] & 0xFFFFFF;
+  SCENE_COUNT = s.sceneCount; HOLD_SECS = s.holdSecs; SCENE_FADE = s.sceneFade;
+  for (int k = 0; k < 8; k++) SCENES[k] = s.scenes[k];
 }
 
 void loadSettings() {
@@ -306,6 +329,8 @@ void saveSettings() {
   for (int k = 0; k < 6; k++) s.fadeCols[k] = FADE_COLS[k];
   s.fadeSecs = FADE_SECS;
   s.rimSmooth = RIM_SMOOTH;
+  s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE;
+  for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
   EEPROM.put(0, s);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
   EEPROM.commit();
@@ -314,22 +339,176 @@ void saveSettings() {
 
 Saved pendingSettings;
 
+// ---------- pictures (ESP32 boards: kept in the flash "spiffs" partition) ----------
+// The Studio crops each picture to this screen, sends it as a small JPEG and the
+// board unpacks it into flash. Tools -> Partition Scheme -> "No OTA (2MB APP/2MB SPIFFS)"
+// gives the most room. Commands: INFO, IMG slot bytes id, D base64..., END.
+// (HAS_PICS and the JPEG decoder are set up with the other #includes at the top)
+
+#if HAS_PICS
+struct PicHead { uint32_t magic; uint16_t w, h; uint32_t id, check; };
+const uint32_t PIC_MAGIC = 0x43495056UL;   // "VPIC"
+const esp_partition_t *picPart = NULL;
+uint32_t slotSize = 0, stageOff = 0;      // stageOff: where an arriving JPEG waits (last 64 KB)
+uint8_t  picSlots = 0;
+volatile uint32_t picId[MAX_PICS];        // 0 = empty slot
+volatile bool uploading = false;
+uint32_t upLen = 0, upPos = 0, upId = 0, upLast = 0, jpgPos = 0;
+uint8_t  upSlot = 0;
+uint16_t *band = NULL;
+int      bandTop = 0;
+
+void beginPictures() {
+  picPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+  if (!picPart) picPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, NULL);
+  if (!picPart || picPart->size < 0x30000) { picPart = NULL; return; }
+  slotSize = (sizeof(PicHead) + (uint32_t)SCR_W * SCR_H * 2 + 4095) & ~4095UL;
+  stageOff = (picPart->size - 0x10000) & ~4095UL;
+  picSlots = min((uint32_t)MAX_PICS, stageOff / slotSize);
+  for (uint8_t i = 0; i < picSlots; i++) {
+    PicHead h;
+    esp_partition_read(picPart, i * slotSize, &h, sizeof(h));
+    bool ok = h.magic == PIC_MAGIC && h.w == SCR_W && h.h == SCR_H && h.id && h.check == (h.id ^ 0xA5A5A5A5UL);
+    picId[i] = ok ? h.id : 0;
+  }
+}
+
+int  picturesAvailable() { return picSlots; }
+bool isPicture(uint8_t s) { return s < picSlots && picId[s] != 0; }
+
+void readPicture(uint8_t s, int y0, int rows, uint16_t *dst) {
+  esp_partition_read(picPart, s * slotSize + sizeof(PicHead) + (uint32_t)y0 * SCR_W * 2, dst, (uint32_t)rows * SCR_W * 2);
+}
+
+bool pausedForUpload() {
+  if (uploading && millis() - upLast > 10000) uploading = false;   // the Studio went away mid-picture
+  if (uploading) delay(1);
+  return uploading;
+}
+
+int b64(char c) {
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == '+') return 62;
+  if (c == '/') return 63;
+  return -1;
+}
+
+int unbase64(const char *in, uint8_t *out) {   // returns bytes written, -1 on bad data
+  int n = 0, bits = 0;
+  uint32_t acc = 0;
+  for (; *in && *in != '='; in++) {
+    int v = b64(*in);
+    if (v < 0) return -1;
+    acc = (acc << 6) | v; bits += 6;
+    if (bits >= 8) { bits -= 8; out[n++] = (acc >> bits) & 0xFF; }
+  }
+  return n;
+}
+
+UINT jpgIn(JDEC *jd, BYTE *buf, UINT n) {        // JPEG bytes come from the staging area
+  if (n > upLen - jpgPos) n = upLen - jpgPos;
+  if (buf) esp_partition_read(picPart, stageOff + jpgPos, buf, n);
+  jpgPos += n;
+  return n;
+}
+
+UINT jpgOut(JDEC *jd, void *bmp, JRECT *r) {     // one block of pixels: collect a band, then store it
+  BYTE *c = (BYTE *)bmp;
+  for (int y = r->top; y <= r->bottom; y++)
+    for (int x = r->left; x <= r->right; x++, c += 3)
+      band[(y - bandTop) * SCR_W + x] = to565(c[0], c[1], c[2]);
+  if (r->right == SCR_W - 1) {
+    esp_partition_write(picPart, upSlot * slotSize + sizeof(PicHead) + (uint32_t)bandTop * SCR_W * 2,
+                        band, (uint32_t)(r->bottom - bandTop + 1) * SCR_W * 2);
+    bandTop = r->bottom + 1;
+  }
+  return 1;
+}
+
+const char *finishPicture() {
+  uploading = false;
+  if (upPos != upLen) return "ERR incomplete";
+  static uint8_t pool[3100];               // the JPEG decoder's work area
+  JDEC jd;
+  jpgPos = 0;
+  if (jd_prepare(&jd, jpgIn, pool, sizeof(pool), NULL) != JDR_OK) return "ERR jpeg";
+  if (jd.width != SCR_W || jd.height != SCR_H) return "ERR size";
+  band = (uint16_t *)malloc(SCR_W * 16 * 2);
+  if (!band) return "ERR memory";
+  esp_partition_erase_range(picPart, upSlot * slotSize, slotSize);
+  bandTop = 0;
+  JRESULT r = jd_decomp(&jd, jpgOut, 0);
+  free(band); band = NULL;
+  if (r != JDR_OK) return "ERR jpeg";
+  PicHead h = { PIC_MAGIC, SCR_W, SCR_H, upId, upId ^ 0xA5A5A5A5UL };
+  esp_partition_write(picPart, upSlot * slotSize, &h, sizeof(h));
+  picId[upSlot] = upId;
+  return "OK";
+}
+
+const char *pictureCommand(char *line) {
+  if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
+    static char info[128];
+    int n = snprintf(info, sizeof(info), "PICS %u %u %u", picSlots, SCR_W, SCR_H);
+    for (uint8_t i = 0; i < picSlots; i++) n += snprintf(info + n, sizeof(info) - n, " %lx", (unsigned long)picId[i]);
+    return info;
+  }
+  if (strncasecmp(line, "IMG ", 4) == 0) {       // start a picture: slot, JPEG size, picture id
+    unsigned slot; unsigned long len, id;
+    if (!picPart || sscanf(line + 4, "%u %lu %lx", &slot, &len, &id) != 3 || slot >= picSlots || !len || len > 0x10000 || !id) return "ERR";
+    picId[slot] = 0;                             // stop showing the old picture
+    upSlot = slot; upLen = len; upId = id; upPos = 0;
+    esp_partition_erase_range(picPart, stageOff, 0x10000);
+    uploading = true; upLast = millis();
+    return "READY";
+  }
+  if (line[0] == 'D' && line[1] == ' ' && uploading) {   // a piece of the JPEG, in base64
+    uint8_t data[200];
+    int n = strlen(line + 2) <= 264 ? unbase64(line + 2, data) : -1;
+    if (n < 0 || upPos + n > upLen) { uploading = false; return "ERR data"; }
+    esp_partition_write(picPart, stageOff + upPos, data, n);
+    upPos += n; upLast = millis();
+    return "K";
+  }
+  if (strcasecmp(line, "END") == 0 && uploading) return finishPicture();
+  return NULL;
+}
+#else
+void beginPictures() {}
+int  picturesAvailable() { return 0; }
+bool isPicture(uint8_t s) { return false; }
+void readPicture(uint8_t s, int y0, int rows, uint16_t *dst) {}
+bool pausedForUpload() { return false; }
+const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? "PICS 0" : NULL; }
+#endif
+
 // ---------- live tuning over USB serial (and Bluetooth below) ----------
-// Command: SET radius oval arms twist speed sparks drift core rim brightness style ripples ripspeed glow stars fade count core2 rim2 core3 rim3 core4 rim4 fadesecs rimsmooth   (reply: OK or ERR)
+// Command: SET radius oval arms twist speed sparks drift core rim brightness style ripples ripspeed glow stars fade count core2 rim2 core3 rim3 core4 rim4 fadesecs rimsmooth
+//              [scenecount scene1..scene8 holdsecs scenefade]   (reply: OK or ERR)
+// Pictures: INFO, then IMG slot bytes id / D base64... / END   (see "pictures" above)
 char cmd[256];
 uint8_t cmdLen = 0;
 
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strncasecmp(line, "SET ", 4) == 0) {
-    float v[25];
+    float v[36];
     uint8_t n = 0;
     char *p = strtok(line + 4, " ");
-    while (p && n < 25) { v[n++] = atof(p); p = strtok(NULL, " "); }
-    if (n == 25) {
+    while (p && n < 36) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36) {
       Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
       for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
       s.fadeSecs = v[23];
       s.rimSmooth = (uint8_t)v[24];
+      s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE;
+      for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
+      if (n == 36) {
+        s.sceneCount = (uint8_t)v[25];
+        for (int k = 0; k < 8; k++) s.scenes[k] = (uint8_t)v[26 + k];
+        s.holdSecs = v[34]; s.sceneFade = v[35];
+      }
       if (valid(s)) {
         pendingSettings = s;
         havePending = true;              // the drawing loop picks it up before the next frame
@@ -339,7 +518,7 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     return "ERR";
   }
   if (strcasecmp(line, "PING") == 0) return "PORTAL";
-  return NULL;
+  return pictureCommand(line);
 }
 
 void readSerial() {
@@ -420,15 +599,63 @@ void readBluetooth() {                    // handle a received line in the main 
   if (!bleHave) return;
   const char *reply = handleCommand(bleLine);
   bleHave = false;
-  if (reply && bleTx) {
-    bleTx->setValue((uint8_t *)reply, strlen(reply));
-    bleTx->notify();
+  if (reply && bleTx) {                   // sent in 20-byte pieces (the smallest Bluetooth packet), ending with a newline
+    char out[136];
+    int len = snprintf(out, sizeof(out), "%s\n", reply);
+    for (int i = 0; i < len; i += 20) {
+      bleTx->setValue((uint8_t *)out + i, min(20, len - i));
+      bleTx->notify();
+      delay(3);
+    }
   }
 }
 #endif
 
+// ---------- scenes: the portal and pictures shown in turn, with fades ----------
+uint8_t sceneA = PORTAL, sceneB = PORTAL;
+int     sceneMix = 0;                    // 0 = all scene A, 256 = all scene B
+
+void updateScene() {
+  if (SCENE_COUNT == 0) { sceneA = sceneB = PORTAL; sceneMix = 0; return; }
+  if (SCENE_COUNT == 1) { sceneA = sceneB = SCENES[0]; sceneMix = 0; return; }
+  float per = HOLD_SECS + SCENE_FADE;
+  float pos = fmodf(millis() / 1000.0f, per * SCENE_COUNT);
+  int i = min((int)(pos / per), SCENE_COUNT - 1);
+  float w = pos - i * per;
+  sceneA = SCENES[i];
+  sceneB = SCENES[(i + 1) % SCENE_COUNT];
+  if (w < HOLD_SECS || SCENE_FADE <= 0) sceneMix = 0;
+  else { float f = (w - HOLD_SECS) / SCENE_FADE; f = f * f * (3 - 2 * f); sceneMix = (int)(f * 256); }
+}
+
+void blendStrip(uint16_t *a, const uint16_t *b, int n, int m) {   // a = a + (b - a) * m / 256
+  for (int i = 0; i < n; i++) {
+    uint16_t x = a[i], y = b[i];
+    int r  = ((x >> 11) * (256 - m) + (y >> 11) * m) >> 8;
+    int g  = (((x >> 5) & 63) * (256 - m) + ((y >> 5) & 63) * m) >> 8;
+    int bl = ((x & 31) * (256 - m) + (y & 31) * m) >> 8;
+    a[i] = (r << 11) | (g << 5) | bl;
+  }
+}
+
+void renderStrip(int y0, int rows, uint16_t *strip);
+
+void drawScene(uint8_t s, int y0, int rows, uint16_t *dst) {
+  if (isPicture(s)) readPicture(s, y0, rows, dst);
+  else renderStrip(y0, rows, dst);
+}
+
+void composeStrip(int y0, int rows, uint16_t *dst) {
+  bool fading = sceneMix > 0 && (isPicture(sceneA) || isPicture(sceneB));
+  if (!fading || !picBuf) { drawScene(sceneMix >= 128 ? sceneB : sceneA, y0, rows, dst); return; }
+  drawScene(sceneA, y0, rows, dst);
+  drawScene(sceneB, y0, rows, picBuf);
+  blendStrip(dst, picBuf, rows * SCR_W, sceneMix);
+}
+
 // ---------- one frame ----------
 void frameStart() {
+  updateScene();
   if (havePending) {
     apply(pendingSettings);
     saveSettings();
@@ -596,7 +823,7 @@ void renderTask(void *) {         // runs on core 0
     frameStart();
     for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
       xSemaphoreTake(freeSem[b], portMAX_DELAY);
-      renderStrip(y0, min(STRIP, SCR_H - y0), stripBuf[b]);
+      composeStrip(y0, min(STRIP, SCR_H - y0), stripBuf[b]);
       xSemaphoreGive(readySem[b]);
       b ^= 1;
     }
@@ -614,13 +841,17 @@ bool allocBuffers() {
   for (; STRIP >= 2; STRIP /= 2) {           // smaller strips if memory is tight
     stripBuf[0] = (uint16_t *)malloc(SCR_W * STRIP * 2);
     stripBuf[1] = (uint16_t *)malloc(SCR_W * STRIP * 2);
-    if (stripBuf[0] && stripBuf[1]) return true;
-    free(stripBuf[0]); free(stripBuf[1]);
+    picBuf = picturesAvailable() ? (uint16_t *)malloc(SCR_W * STRIP * 2) : NULL;   // for fades with pictures
+    if (stripBuf[0] && stripBuf[1] && (picBuf || !picturesAvailable())) return true;
+    free(stripBuf[0]); free(stripBuf[1]); free(picBuf); picBuf = NULL;
   }
   return false;
 }
 
 void setup() {
+#if defined(ESP32)
+  Serial.setRxBufferSize(1024);          // room for picture data
+#endif
   Serial.begin(115200);
   delay(300);
   Serial.println(F("[portal] starting"));
@@ -642,11 +873,12 @@ void setup() {
   beginBluetooth();                      // Bluetooth first: it needs one big block of memory
   Serial.println(F("[portal] bluetooth ready"));
 #endif
+  beginPictures();
   if (!allocBuffers()) {
     for (;;) { Serial.println(F("[portal] not enough memory for this screen")); delay(2000); }
   }
 #if defined(ESP32)
-  Serial.printf("[portal] memory ok, %u bytes free, %d rows per strip\n", (unsigned)ESP.getFreeHeap(), STRIP);
+  Serial.printf("[portal] memory ok, %u bytes free, %d rows per strip, room for %d pictures\n", (unsigned)ESP.getFreeHeap(), STRIP, picturesAvailable());
 #endif
   loadSettings();
   randomSeed(micros());
@@ -670,6 +902,7 @@ void loop() {
 #if HAS_BLE
   readBluetooth();
 #endif
+  if (pausedForUpload()) return;         // the screen holds still while a picture arrives
   tft.startWrite();
   tft.setAddrWindow(0, 0, SCR_W, SCR_H);
 #if DUAL_CORE
@@ -684,7 +917,7 @@ void loop() {
   frameStart();
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
     int rows = min(STRIP, SCR_H - y0);
-    renderStrip(y0, rows, stripBuf[0]);
+    composeStrip(y0, rows, stripBuf[0]);
     tft.writePixels(stripBuf[0], SCR_W * rows);
   }
   frameEnd();
