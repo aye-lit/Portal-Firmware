@@ -57,7 +57,7 @@ void beginBus() {
 #define QY         120
 #define TQX        (SCR_W - QX)
 #define TQY        (SCR_H - QY)
-#define STRIP      (9600 / SCR_W)   // rows drawn per chunk (keeps memory use small)
+int      STRIP = 9600 / SCR_W;          // rows drawn per chunk (fewer if memory is tight)
 #define MAX_SPARKS 30
 #define RADIUS_MAX 119
 
@@ -86,7 +86,7 @@ float    GLOW_SIZE  = 0.55;    // Starburst: centre glow size (0.30-0.90)
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xD65D5578UL;
+const uint32_t BUILD_ID = 0xDA2BE605UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -610,9 +610,14 @@ void renderTask(void *) {         // runs on core 0
 bool allocBuffers() {
   rT = (uint8_t *)malloc(TQX * TQY);
   aT = (uint8_t *)malloc(TQX * TQY);
-  stripBuf[0] = (uint16_t *)malloc(SCR_W * STRIP * 2);
-  stripBuf[1] = (uint16_t *)malloc(SCR_W * STRIP * 2);
-  return rT && aT && stripBuf[0] && stripBuf[1];
+  if (!rT || !aT) return false;
+  for (; STRIP >= 2; STRIP /= 2) {           // smaller strips if memory is tight
+    stripBuf[0] = (uint16_t *)malloc(SCR_W * STRIP * 2);
+    stripBuf[1] = (uint16_t *)malloc(SCR_W * STRIP * 2);
+    if (stripBuf[0] && stripBuf[1]) return true;
+    free(stripBuf[0]); free(stripBuf[1]);
+  }
+  return false;
 }
 
 void setup() {
@@ -623,19 +628,22 @@ void setup() {
   tft.begin(SPI_HZ);
   tft.fillScreen(0);
   Serial.println(F("[portal] screen ready"));
+#if HAS_BLE
+  beginBluetooth();                      // Bluetooth first: it needs one big block of memory
+  Serial.println(F("[portal] bluetooth ready"));
+#endif
   if (!allocBuffers()) {
     for (;;) { Serial.println(F("[portal] not enough memory for this screen")); delay(2000); }
   }
+#if defined(ESP32)
+  Serial.printf("[portal] memory ok, %u bytes free, %d rows per strip\n", (unsigned)ESP.getFreeHeap(), STRIP);
+#endif
   loadSettings();
   randomSeed(micros());
   buildGeometry();
   buildParams();
   buildPalette();
   resetSparks();
-#if HAS_BLE
-  beginBluetooth();
-  Serial.println(F("[portal] bluetooth ready"));
-#endif
 #if DUAL_CORE
   for (int i = 0; i < 2; i++) {
     readySem[i] = xSemaphoreCreateBinary();
