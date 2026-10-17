@@ -107,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x7184E95FUL;
+const uint32_t BUILD_ID = 0x5DD7B671UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -897,6 +897,13 @@ uint8_t  *spH = NULL, *spV = NULL, *spX = NULL;
 #define GAL_PA   -0.55f                  // which way it points
 #define GAL_ZOOM 0.7f                    // size (smaller = bigger galaxy)
 float    gax = 1, gbx = 0, gay = 0, gby = 1, galK = 9;   // galK: how tightly the arms wind (the Spiral setting)
+// The galaxy is one picture turning in its own plane: worked out once on a polar grid (per Spiral setting), then looked up
+#define  GT_R  64
+#define  GT_DR 1.65f
+uint8_t  *gtH = NULL, *gtV = NULL, *gtX = NULL;
+int      gtA = 0;
+float    gtK = -1, gpx = 1, gqx = 0, gpy = 0, gqy = 1, gRot = 0;
+bool     gtReady = false;
 uint8_t  powT[256], whRingT[256], whNearT[256];
 int16_t  whOffT[256], whCoreT[256];
 int32_t  whHueT[256];
@@ -959,8 +966,50 @@ void galaxyNode(float xr, float yr, uint8_t &h, uint8_t &v, uint8_t &a8) {   // 
   h = to8(hue / 2); v = to8(lv); a8 = to8(arm * edge * (1 - dust));
 }
 
+float fastAtan2(float y, float x) {     // quick angle, good to about 0.1 degree
+  float ax = fabsf(x), ay = fabsf(y), mx = max(ax, ay), mn = min(ax, ay);
+  if (mx == 0) return 0;
+  float a = mn / mx, q = a * a;
+  float r = ((-0.0464964749f * q + 0.15931422f) * q - 0.327622764f) * q * a + a;
+  if (ay > ax) r = 1.57079637f - r;
+  if (x < 0) r = 3.14159274f - r;
+  return y < 0 ? -r : r;
+}
+
+bool galaxyTex() {                      // build the galaxy picture once per Spiral setting
+  if (!gtH) {
+    for (int a = 256; a >= 128 && !gtH; a /= 2) {
+      gtH = (uint8_t *)malloc(GT_R * a); gtV = (uint8_t *)malloc(GT_R * a); gtX = (uint8_t *)malloc(GT_R * a);
+      if (gtH && gtV && gtX) gtA = a;
+      else { free(gtH); free(gtV); free(gtX); gtH = gtV = gtX = NULL; }
+    }
+    if (!gtH) return false;             // no room: the galaxy is worked out every frame instead
+    gtK = -1;
+  }
+  if (gtK == galK) return true;
+  gtK = galK;
+  for (int ri = 0; ri < GT_R; ri++)
+    for (int ai = 0; ai < gtA; ai++) {
+      float gr = ri * GT_DR, an = ai * TWO_PI / gtA;
+      int i = ri * gtA + ai;
+      galaxyNode(gr * cosf(an), gr * sinf(an), gtH[i], gtV[i], gtX[i]);
+    }
+  return true;
+}
+
 void spaceNode(float X, float Y, uint8_t &h, uint8_t &v, uint8_t &x8) {   // gas and dust at one point
-  if (look == 4) { galaxyNode(gax * X + gbx * Y, gay * X + gby * Y, h, v, x8); return; }
+  if (look == 4) {
+    if (!gtReady) { galaxyNode(gax * X + gbx * Y, gay * X + gby * Y, h, v, x8); return; }
+    float px = gpx * X + gqx * Y, py = gpy * X + gqy * Y;                 // look the galaxy up, turned
+    float fr = sqrtf(px * px + py * py) / GT_DR; if (fr > GT_R - 1.001f) fr = GT_R - 1.001f;
+    float fa = (fastAtan2(py, px) - gRot) * (gtA / TWO_PI); fa -= floorf(fa / gtA) * gtA;
+    int ri = (int)fr; float wr = fr - ri; int ai = (int)fa; float wa = fa - ai; if (ai >= gtA) ai -= gtA;
+    int a1 = ai + 1 == gtA ? 0 : ai + 1, i00 = ri * gtA + ai, i01 = ri * gtA + a1, i10 = i00 + gtA, i11 = i01 + gtA;
+    h  = (uint8_t)((gtH[i00] * (1 - wa) + gtH[i01] * wa) * (1 - wr) + (gtH[i10] * (1 - wa) + gtH[i11] * wa) * wr);
+    v  = (uint8_t)((gtV[i00] * (1 - wa) + gtV[i01] * wa) * (1 - wr) + (gtV[i10] * (1 - wa) + gtV[i11] * wa) * wr);
+    x8 = (uint8_t)((gtX[i00] * (1 - wa) + gtX[i01] * wa) * (1 - wr) + (gtX[i10] * (1 - wa) + gtX[i11] * wa) * wr);
+    return;
+  }
   if (look == 14) {                                                       // Nebula
     float x = (X * nbCa - Y * nbSa) / 36, y = (X * nbSa + Y * nbCa) / 36;
     float w = vn(x + nbO1, y) * 2.2f;                                     // warp so the clouds fold
@@ -998,6 +1047,9 @@ void prepareSpace() {                   // once per frame
     gax = (cp * cr + sp * sr / GAL_TILT) * GAL_ZOOM; gbx = (-sp * cr + cp * sr / GAL_TILT) * GAL_ZOOM;
     gay = (-cp * sr + sp * cr / GAL_TILT) * GAL_ZOOM; gby = (sp * sr + cp * cr / GAL_TILT) * GAL_ZOOM;
     galK = 3 + TWIST * 2.5f;            // Spiral setting (TWIST 0-6)
+    gpx = cp * GAL_ZOOM; gqx = -sp * GAL_ZOOM; gpy = sp / GAL_TILT * GAL_ZOOM; gqy = cp / GAL_TILT * GAL_ZOOM;   // before turning
+    gRot = rot;
+    gtReady = galaxyTex();
   }
   if (look == 15) {                     // Wormhole: rings falling away, worked out per distance
     float rev = DRIFT ? -1 : 1;          // Reverse: rings fly out toward you
