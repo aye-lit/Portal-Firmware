@@ -107,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xC7768255UL;
+const uint32_t BUILD_ID = 0x99DD49C9UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -679,6 +679,8 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 char cmd[384];
 uint16_t cmdLen = 0;
 
+uint32_t rebootAt = 0;                   // set by the REBOOT command
+
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strncasecmp(line, "SET ", 4) == 0) {
     float v[44];
@@ -711,6 +713,9 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     return "ERR";
   }
   if (strcasecmp(line, "PING") == 0) return "PORTAL";
+#if defined(ESP32)
+  if (strcasecmp(line, "REBOOT") == 0) { rebootAt = millis() + 300; return "OK"; }   // restart shortly, after the reply goes out
+#endif
   return pictureCommand(line);
 }
 
@@ -1428,6 +1433,9 @@ void setup() {
 
 void loop() {
   readSerial();
+#if defined(ESP32)
+  if (rebootAt && (int32_t)(millis() - rebootAt) >= 0) ESP.restart();   // Restart board button in the Studio
+#endif
 #if HAS_BLE
   readBluetooth();
 #endif

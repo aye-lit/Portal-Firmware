@@ -956,7 +956,16 @@ async function installFirmware() {
       fileArray: [{ data, address: 0 }], flashMode: "keep", flashFreq: "keep", flashSize: "keep", eraseAll: false, compress: true,
       reportProgress: (i, done, total) => bar.set(done / total),
     });
-    await loader.after("hard_reset");
+    if (fw.chip === "ESP32-S3") {               // boards on their own USB: the reset line doesn't always get through, so restart from inside the chip
+      try {
+        const RTC = 0x60008000, KEY = 0x50D83AA1;  // ESP32-S3 RTC watchdog (same as Espressif's esptool)
+        await loader.writeReg(RTC + 0xB0, KEY);                                  // unlock
+        await loader.writeReg(RTC + 0x9C, 2000);                                 // short timeout
+        await loader.writeReg(RTC + 0x98, ((1 << 31) | (5 << 28) | (1 << 8) | 2) >>> 0);   // enable: reset the whole chip
+        loader.writeReg(RTC + 0xB0, 0).catch(() => {});                          // lock (the chip may already be restarting)
+        await sleep(600);
+      } catch (_) { await loader.after("hard_reset"); }
+    } else await loader.after("hard_reset");
     await transport.disconnect(); transport = null;
     bar.done("Installed");
     sayF("Installed! The portal starts in a few seconds. Now send your style and colours with step 3.", "ok");
@@ -1078,6 +1087,20 @@ async function sendBle() {
     if (pending) { pending = false; send(); }
   }
 }
+$("reboot").addEventListener("click", async () => {
+  if (busy) return;
+  if (!port && !bleRx) { say("Connect over USB or Bluetooth first. Or just unplug the board and plug it back in.", "warn"); return; }
+  busy = true;
+  try {
+    const data = new TextEncoder().encode("REBOOT\n");
+    if (bleRx) { if (bleRx.writeValueWithResponse) await bleRx.writeValueWithResponse(data); else await bleRx.writeValue(data); }
+    else { const w = port.writable.getWriter(); await w.write(data); w.releaseLock(); }
+    say("Restarting the board. It's back in a few seconds" + (bleRx ? "; tap Connect over Bluetooth again." : ". If changes stop sending, tap Connect over USB again."), "ok");
+    if (bleRx) { bleRx = null; refreshConn(); }
+  } catch (e) {
+    say("Couldn't reach the board. Unplug it and plug it back in instead.", "warn");
+  } finally { busy = false; }
+});
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 if (IS_IOS && !navigator.bluetooth) $("ble-note").innerHTML = "<b>Bluetooth on iPhone/iPad:</b> Safari and Chrome on iPhone can't use Bluetooth. Install the free “Bluefy – Web BLE Browser” app from the App Store, open this page in it, then tap Connect over Bluetooth.";
 $("ble").addEventListener("click", async () => {
