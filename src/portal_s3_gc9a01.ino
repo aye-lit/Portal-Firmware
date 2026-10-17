@@ -107,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x07EB809FUL;
+const uint32_t BUILD_ID = 0x95434CE5UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -336,7 +336,7 @@ bool validScenes(const Saved &s) {
 bool valid(const Saved &s) {
   return s.radius >= 6 && s.radius <= RADIUS_MAX && s.oval >= 1 && s.oval <= 2 &&
          s.arms >= 1 && s.arms <= 8 && s.twist >= 0 && s.twist <= 6 &&
-         s.speed >= 0 && s.speed <= 0.4 && s.sparks <= MAX_SPARKS &&
+         s.speed >= 0 && s.speed <= 0.4f && s.sparks <= MAX_SPARKS &&
          s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && s.style <= 16 && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
          s.ripples <= 6 && s.ripSpeed >= 0.03f && s.ripSpeed <= 0.3f && s.glow >= 0.3f && s.glow <= 0.9f &&
          validScenes(s);
@@ -380,6 +380,23 @@ void saveSettings() {
 }
 
 Saved pendingSettings;
+
+float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
+uint8_t clampb(uint8_t v, uint8_t lo, uint8_t hi) { return v < lo ? lo : v > hi ? hi : v; }
+void clampSettings(Saved &s) {
+  s.radius = clampf(s.radius, 6, RADIUS_MAX); s.oval = clampf(s.oval, 1, 2); s.arms = clampb(s.arms, 1, 8);
+  s.twist = clampf(s.twist, 0, 6); s.speed = clampf(s.speed, 0, 0.4f); if (s.sparks > MAX_SPARKS) s.sparks = MAX_SPARKS;
+  s.core &= 0xFFFFFF; s.rim &= 0xFFFFFF; s.bright = clampb(s.bright, 10, 100); if (s.style > 16) s.style = 0;
+  s.stars = clampb(s.stars, 1, 6); s.fadeCount = clampb(s.fadeCount, 1, 3); s.fadeSecs = clampf(s.fadeSecs, 1, 3600);
+  if (s.rimSmooth > 100) s.rimSmooth = 100; if (s.ripples > 6) s.ripples = 6;
+  s.ripSpeed = clampf(s.ripSpeed, 0.03f, 0.3f); s.glow = clampf(s.glow, 0.3f, 0.9f);
+  for (int k = 0; k < 6; k++) s.fadeCols[k] &= 0xFFFFFF;
+  for (int k = 0; k < 4; k++) s.spaceCols[k] &= 0xFFFFFF;
+  if (s.sceneCount > 8) s.sceneCount = 8;
+  s.holdSecs = clampf(s.holdSecs, 1, 3600); s.sceneFade = clampf(s.sceneFade, 0, 600); s.framePct = clampb(s.framePct, 10, 95);
+  s.crossW = clampb(s.crossW, 25, 100); s.beam = clampb(s.beam, 5, 30); s.bar = clampb(s.bar, 20, 50);
+  for (int k = 0; k < 8; k++) { uint8_t c = s.scenes[k]; if (c != PORTAL && c >= MAX_PICS && (c < 128 || c >= 128 + MAX_PICS)) s.scenes[k] = PORTAL; }
+}
 
 // ---------- pictures (ESP32 boards: kept in the flash "spiffs" partition) ----------
 // The Studio crops each picture to this screen, sends it as a small JPEG and the
@@ -684,6 +701,7 @@ const char* handleCommand(char *line) {   // returns the reply to send back
       }
       if (n >= 37) s.framePct = (uint8_t)v[36];
       if (n >= 40) { s.crossW = (uint8_t)v[37]; s.beam = (uint8_t)v[38]; s.bar = (uint8_t)v[39]; }
+      clampSettings(s);                  // anything out of range is brought back inside instead of refusing the update
       if (valid(s)) {
         pendingSettings = s;
         havePending = true;              // the drawing loop picks it up before the next frame
