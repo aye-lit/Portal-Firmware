@@ -915,9 +915,10 @@ function spaceFrame(out) {
   }
   if (style === 16) {                                // shooting stars with coloured tails
     const P = Math.hypot(TW, TH) / 340;
-    for (let m = 0; m < 7; m++) {
-      const ph = (T * 0.006 + m / 7 + (m % 3) * 0.13) % 1, lane = (m * 37 % 100) / 100;
-      const mx = QX + (110 - ph * 320 + lane * 110) * P, my = QY + (-170 + ph * 240 + lane * 70) * P, len = (38 + lane * 30) * P, hue = Math.trunc(m * 64 / 7);
+    const N = Math.min(30, Math.max(2, S.sparks));   // Meteors setting
+    for (let m = 0; m < N; m++) {
+      const ph = (T * 0.006 * (1 + (m % 4) * 0.12) + m / N + (m % 3) * 0.13) % 1, lane = (m * 37 % 100) / 100, side = ((m * 61 % 100) / 100 - 0.5) * 160;
+      const mx = QX + (110 - ph * 320 + lane * 110 + side * 0.6) * P, my = QY + (-170 + ph * 240 + lane * 70 + side * 0.8) * P, len = (38 + lane * 30) * P, hue = Math.trunc(m * 64 / N);
       for (let k = 0; k < len; k++) {
         const f = 1 - k / len, x = Math.floor(mx + 0.8 * k + 0.5), y = Math.floor(my - 0.6 * k + 0.5);
         const vi = k < 3 ? 63 : Math.trunc((0.9 * f * f + 0.05) * 63);

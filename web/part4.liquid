@@ -369,7 +369,7 @@ const STYLES = [
   ...CROSS_NAMES.map((name, k) => ({ name, cross: CROSS_SHAPE[k] })),
   { name: "Nebula" },
   { name: "Wormhole" },
-  { name: "Meteor Shower" },
+  { name: "Meteor Shower", sparks: 14 },
 ];
 const isCrossStyle = i => i >= 8 && i <= 13, isSpaceStyle = i => (i >= 3 && i <= 5) || i >= 14, hasSpaceCols = i => i === 4 || i >= 14;
 function markStyle() {
@@ -394,6 +394,9 @@ function markStyle() {
     $("twist-hint").textContent = gal ? "How tightly the arms wind: low is open and loose, high wraps them around the core" : "How much the tunnel walls spiral: 0 is straight, high is a tight corkscrew";
   }
   $("reverse-wrap").hidden = !wh;
+  const met = M.kind === "tft" && S.style === 16;            // Meteor Shower: the Sparks setting is the number of meteors
+  const sl = $("sparks").closest("label");
+  if (sl) { if (met) sl.hidden = false; sl.querySelector("span").firstChild.nodeValue = met ? "Meteors " : "Sparks "; $("sparks-hint").hidden = !met; }
 }
 STYLES.forEach((st, i) => {
   const b = document.createElement("button");
@@ -406,6 +409,7 @@ STYLES.forEach((st, i) => {
     if (st.c) { S.c1 = st.c[0]; S.c2 = st.c[1]; }
     if (st.arms) S.arms = st.arms;
     if (st.twist) S.twist = st.twist;
+    if (st.sparks) S.sparks = st.sparks;
     if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.radius = crossMax(M); }   // crosses fill the screen
     bindAll(); markStyle(); changed(true);
   });

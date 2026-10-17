@@ -573,7 +573,8 @@ uint8_t  powT[256], whRingT[256], whNearT[256];
 int16_t  whOffT[256], whCoreT[256];
 int32_t  whHueT[256];
 struct Meteor { float x, y, len; uint8_t hue; };
-Meteor   meteors[7];
+Meteor   meteors[30];
+int      meteorCount = 7;
 
 void buildNoise() {
   uint32_t sd = 11;
@@ -686,12 +687,15 @@ void prepareSpace() {                   // once per frame
   }
   if (look == 16) {                     // Meteor Shower: where each shooting star is
     float P = sqrtf((float)SCR_W * SCR_W + (float)SCR_H * SCR_H) / 340;
-    for (int m = 0; m < 7; m++) {
-      float ph = (float)fmod(T * 0.006 + m / 7.0 + (m % 3) * 0.13, 1.0), lane = (m * 37 % 100) / 100.0f;
-      meteors[m].x = QX + (110 - ph * 320 + lane * 110) * P;
-      meteors[m].y = QY + (-170 + ph * 240 + lane * 70) * P;
+    int N = NUM_SPARKS < 2 ? 2 : NUM_SPARKS > 30 ? 30 : NUM_SPARKS;   // Meteors setting
+    meteorCount = N;
+    for (int m = 0; m < N; m++) {
+      float ph = (float)fmod(T * 0.006 * (1 + (m % 4) * 0.12) + (double)m / N + (m % 3) * 0.13, 1.0), lane = (m * 37 % 100) / 100.0f;
+      float side = ((m * 61 % 100) / 100.0f - 0.5f) * 160;   // spread across the sky
+      meteors[m].x = QX + (110 - ph * 320 + lane * 110 + side * 0.6f) * P;
+      meteors[m].y = QY + (-170 + ph * 240 + lane * 70 + side * 0.8f) * P;
       meteors[m].len = (38 + lane * 30) * P;
-      meteors[m].hue = m * 64 / 7;
+      meteors[m].hue = m * 64 / N;
     }
   }
 }
@@ -750,7 +754,7 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
       *p++ = spaceLUT[hi * 64 + vi];
     }
   }
-  if (look == 16) for (int m = 0; m < 7; m++) {           // shooting stars with coloured tails
+  if (look == 16) for (int m = 0; m < meteorCount; m++) {           // shooting stars with coloured tails
     const Meteor &M = meteors[m];
     for (int k = 0; k < M.len; k++) {
       float f = 1 - k / M.len;
