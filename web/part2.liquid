@@ -466,7 +466,7 @@ const crossMax = M => M.rect ? Math.floor((M.h - 8) * 0.8) : rmax(M) - 9;   // c
 const radiusMax = M => S.style >= 8 && S.style <= 13 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -480,6 +480,7 @@ if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
 if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 S.reverse = S.reverse === true;
+if (![0, 1, 2, 3, 4, 5, 6, 14, 15, 16].includes(S.crossFill)) S.crossFill = 0;
 if (S.c1 === "#c02ad0" && S.c2 === "#f9c8ff") { S.c1 = PRESETS.Bloom[0]; S.c2 = PRESETS.Bloom[1]; }   // the old pale Bloom colours
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
@@ -754,6 +755,13 @@ function buildTftPalette() {           // black → core → rim → near-white,
     tftPal[i] = (255 << 24) | ((b5 | b5 >> 5) << 16) | ((g6 | g6 >> 6) << 8) | (r5 | r5 >> 5);   // ABGR for ImageData
   }
 }
+function polarAt(x, y, cyc) {                        // distance and angle (0-255) of a pixel from (centre column, row cyc)
+  const cy = y < cyc ? cyc - 1 - y : y - cyc, low = y >= cyc;
+  let r, a0;
+  if (cy < TQY) { const ci = cy * TQX + colMap[x]; r = rT[ci]; a0 = aT[ci]; }
+  else { const fx = colMap[x] + 0.5, fy = cy + 0.5; r = Math.min(255, Math.round(Math.hypot(fx, fy))); a0 = Math.round(Math.atan2(fy, fx) / (Math.PI / 2) * 64); }
+  return [r, (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255];
+}
 function tftRespawn(s) { s.a = rnd(0, 628) / 100; s.r = S.radius * 1.05 + rnd(0, Math.trunc(S.radius / 5) + 1); }
 // ---------------- Nebula, Wormhole, Meteor Shower (styles 14-16), same maths as the board ----------------
 const SPACE_SETS = {                                 // four colours each: deep, glow, contrast, highlight
@@ -846,9 +854,9 @@ function fastAtan2(y, x) {                           // quick angle, good to abo
   return y < 0 ? -r : r;
 }
 const whRingT = new Uint8Array(256), whNearT = new Uint8Array(256), whOffT = new Int16Array(256), whCoreT = new Int16Array(256), whHueT = new Int32Array(256);
-function spaceFrame(out) {
+function spaceFrame(out, style = S.style, cyc = QY) {   // cyc: centre row (crosses centre on the crossing)
   buildSpaceLUT();
-  const style = S.style, spU = style === 15 ? 118 / spaceExt(M) : 236 / Math.min(TW, TH), spExt = spaceExt(M) * spU, T = spaceT;
+  const spU = style === 15 ? 118 / spaceExt(M) : 236 / Math.min(TW, TH), spExt = spaceExt(M) * spU, T = spaceT;
   const ang = (T * 0.004) % TWO_PI, nbCa = Math.cos(ang), nbSa = Math.sin(ang);
   const nbO1 = (T * 0.004) % 64, nbO2 = (T * 0.003) % 64, nbO3 = (T * 0.002) % 64;
   const spTw = Math.trunc((T * 0.25) % TWO_PI * 40.74);
@@ -870,10 +878,8 @@ function spaceFrame(out) {
     }
     let p = 0;
     for (let y = 0; y < TH; y++) {
-      const qy = y < QY ? QY - 1 - y : y - QY, low = y >= QY;
       for (let x = 0; x < TW; x++) {
-        const qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
-        const a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
+        const [r, a] = polarAt(x, y, cyc);
         const sp = sinT[(a * 6 + whOffT[r] + whPh) & 255] + 127;
         let vi = (powT[(whRingT[r] * 133 + sp * 123) >> 8] * whNearT[r]) >> 10;
         if (whCoreT[r] >= 0) { if (whCoreT[r] > vi) vi = whCoreT[r]; out[p++] = spaceLUT[48 * 64 + vi]; continue; }
@@ -893,7 +899,7 @@ function spaceFrame(out) {
   const gpx = gcp * GAL_ZOOM, gqx = -gsp * GAL_ZOOM, gpy = gsp / GAL_TILT * GAL_ZOOM, gqy = gcp / GAL_TILT * GAL_ZOOM;   // same, before turning
   if (style === 4) buildGalaxyTex();
   for (let gy = 0; gy < GR; gy++) for (let gx = 0; gx < GC; gx++) {
-    const X = (gx * C + 0.5 - QX) * spU, Y = (gy * C + 0.5 - QY) * spU, i = gy * GC + gx;
+    const X = (gx * C + 0.5 - QX) * spU, Y = (gy * C + 0.5 - cyc) * spU, i = gy * GC + gx;
     if (style === 4) {
       const px = gpx * X + gqx * Y, py = gpy * X + gqy * Y;
       const fr = Math.min(Math.sqrt(px * px + py * py) / GT_DR, GT_R - 1.001);
@@ -918,7 +924,7 @@ function spaceFrame(out) {
   const dens = Math.trunc((style === 14 ? 7 : style === 4 ? 4 : 10) * S.stars / 3), densBand = Math.trunc(22 * S.stars / 3);
   let p = 0;
   for (let y = 0; y < TH; y++) {
-    const gy = Math.trunc(y / C), fy = y % C, Y = (y + 0.5 - QY) * spU;
+    const gy = Math.trunc(y / C), fy = y % C, Y = (y + 0.5 - cyc) * spU;
     const cy = C - fy;
     for (let x = 0, i = gy * GC, fx = 0; x < TW; x++) {
       const cx = C - fx, w00 = cx * cy, w01 = fx * cy, w10 = cx * fy, w11 = fx * fy;
@@ -1017,6 +1023,54 @@ function crossEdges() {
 }
 
 let tftImg = null;
+function styleV(look, a, r, arms, phase, phase2, tw) {   // brightness (0-255) inside the portal for one style
+  let v;
+  if (look === 7 || look === 6) return cartoonV(a, r, arms, phase);
+  if (look === 0) {                       // Vortex
+    const s = sinT[(a * arms + twistT[r] + phase) & 255];
+    const s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255];
+    const d = depthT[r];
+    const band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
+    v = (d * (60 + ((band * 195) >> 8))) >> 8;
+    if (s > 100) v += ((s - 100) * 3 * d) >> 8;
+    if (coreT[r] > v) v = coreT[r];
+  } else if (look === 1) {                // Toon Spiral
+    const w = sinT[(a * 6 + r * 4 + phase2) & 255] >> 2;
+    const sp = sinT[(a * arms - linT[r] + phase + w) & 255];
+    v = sp > 40 ? 235 : sp > -20 ? 190 : sp > -70 ? 150 : 95;
+    if (coreT[r] > v) v = coreT[r];
+  } else if (look === 6) {                // Cartoon Swirl
+    v = cartoonV(a, r, arms, phase);
+  } else if (look === 3) {                // Hyperspace: stars streak outward
+    v = 30 + ((sinT[(a * 3 + (phase >> 3)) & 255] + 127) >> 4) + (spCoreT[r] >> 2);
+    for (let L = 0; L < 3; L++) {
+      const i = L * 256 + a;
+      if (!warpOn[i]) continue;
+      const rr = warpRR[i], len = warpLen[i];
+      if (r <= rr && r > rr - len) { const sv = Math.trunc(110 + warpB[i] * (1 - (rr - r) / len * 0.6)); if (sv > v) v = sv; }
+    }
+  } else if (look === 5) {                // Black hole: shadow, ring, swirling disk
+    if (r < bhHole) v = 0;
+    else {
+      const swirl = sinT[(a * 3 + r * 6 - phase * 2) & 255] + (sinT[(a * 7 - r * 3 - phase) & 255] >> 1);
+      const disk = Math.trunc(bhDiskT[r] * (310 + swirl) / 500);
+      v = bhRingT[r] > disk ? bhRingT[r] : disk;
+      if (bhStarT[r]) { const st = starAt(a, r, S.stars, tw); if (st > v) v = st; }
+    }
+  } else {                                 // Starburst: glowing centre, soft rings, rays, ripples
+    const ray = sinT[(a * 11 + (phase >> 2)) & 255] + (sinT[(a * 19 - (phase >> 1)) & 255] >> 1) + (sinT[(a * 37 + phase) & 255] >> 1);
+    const wave = sinT[(r * 4 - phase * 2 + (sinT[(a * 9 + (phase >> 2)) & 255] >> 4)) & 255];
+    const tex = sinT[(r * 9 - phase * 3 + (sinT[(a * 7 + (phase >> 1)) & 255] >> 3)) & 255];
+    const sd = sinT[(a * 22 + (phase >> 3)) & 255], sdp = sd > 0 ? sd : 0;
+    v = 115 + sbGlowT[r]
+      + ((((wave + 127) * 85 >> 8) * sbRingT[r]) >> 8)
+      + ((((tex * 26) >> 7) * sbRingT[r]) >> 8)
+      + ((((ray * 32) >> 7) * sbOuterT[r]) >> 8)
+      + ((ripCrestT[r] * (141 + ((sdp * 115) >> 7))) >> 8) - ripTroughT[r];
+    if (v < 0) v = 0;
+  }
+  return v < 0 ? 0 : v;
+}
 function tftFrame() {
   // sparks
   for (let i = 0; i < S.sparks; i++) {
@@ -1028,6 +1082,7 @@ function tftFrame() {
   buildTftParams();
   buildTftPalette();
   const R = S.radius, arms = S.arms, style = S.style;
+  const isCross = style >= 8 && style <= 13, fill = isCross ? S.crossFill : style;   // crosses: the chosen style is drawn inside
   const phase = Math.trunc(t * 1.5 * 40.74), phase2 = Math.trunc(-t * 40.74);
   for (let a = 0; a < 256; a++) {
     const ang = a * TWO_PI / 256;
@@ -1036,7 +1091,7 @@ function tftFrame() {
   }
   // Starburst ripples: rings expanding outward, precomputed per distance for this frame
   ripCrestT.fill(0); ripTroughT.fill(0);
-  if (style === 2) for (let i = 0; i < S.ripples; i++) {
+  if (fill === 2) for (let i = 0; i < S.ripples; i++) {
     const pr = (t * S.rspeed + i / S.ripples) % 1, rr = 0.16 + pr * 0.62, w = 0.04 + pr * 0.04, fade = Math.pow(1 - pr, 1.1);
     for (let r = 0; r < 256; r++) {
       const d = (r / R - rr) / w;
@@ -1047,7 +1102,7 @@ function tftFrame() {
   // Hyperspace: where each streaking star is this frame (3 layers × 256 directions)
   bhHole = Math.trunc(0.22 * R);
   const tw = Math.trunc(t * 25);
-  if (style === 3) for (let L = 0; L < 3; L++) for (let a = 0; a < 256; a++) {
+  if (fill === 3) for (let L = 0; L < 3; L++) for (let a = 0; a < 256; a++) {
     const h = hash32(a * 3 + L * 7919), i = L * 256 + a;
     warpOn[i] = (h & 15) < S.stars + 1 ? 1 : 0;
     const pos = ((((h >>> 8) & 1023) + t * (60 + L * 25)) % 1024) / 1024;
@@ -1058,8 +1113,14 @@ function tftFrame() {
   const out = new Uint32Array(tftImg.data.buffer);
   spaceT += S.speed * 8;
   if (spaceT > 1e7) spaceT = 0;
-  if (style === 4 || style >= 14) {                  // Galaxy, Nebula, Wormhole, Meteor Shower
-    spaceFrame(out);
+  const CE = isCross ? crossEdges() : null;
+  if (fill === 4 || fill >= 14) {                    // Galaxy, Nebula, Wormhole, Meteor Shower (also inside a cross)
+    spaceFrame(out, fill, isCross ? crossYC : QY);
+    if (CE) for (let i = 0; i < out.length; i++) {   // glowing cross outline over the space picture
+      const ce = CE[i];
+      if (ce > 0) { const rv = crossRimT[ce]; if (rv > 8) { const a = out[i], b = tftPal[rv]; out[i] = (255 << 24) | (Math.max(a & 0xFF0000, b & 0xFF0000)) | (Math.max(a & 0xFF00, b & 0xFF00)) | Math.max(a & 0xFF, b & 0xFF); } }
+      else out[i] = tftPal[Math.max(crossRimT[-ce], crossHaloT[-ce])];
+    }
     if (typeof composePreview === "function") composePreview(out);
     g.putImageData(tftImg, 0, 0);
     t += S.speed;
@@ -1067,7 +1128,6 @@ function tftFrame() {
     return;
   }
   let p = 0;
-  const CE = style >= 8 && style <= 13 ? crossEdges() : null;
   for (let y = 0; y < TH; y++) {
     const qy = y < QY ? QY - 1 - y : y - QY, low = y >= QY;
     const cy = y < crossYC ? crossYC - 1 - y : y - crossYC, clow = y >= crossYC;   // crosses: swirl around the crossing
@@ -1082,14 +1142,10 @@ function tftFrame() {
       const a = (x >= QX ? (lo ? a0 : 256 - a0) : (lo ? 128 - a0 : 128 + a0)) & 255;
       const e = edgeT[a];
       let v;
-      if (CE) {                                  // Cross: Vortex swirl inside, glowing rim along the cross edge
+      if (CE) {                                  // Cross: the chosen style inside, glowing rim along the cross edge
         const ce = CE[p];
         if (ce > 0) {
-          const s = sinT[(a * arms + twistT[r] + phase) & 255], s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255], d = depthT[r];
-          const band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
-          v = (d * (60 + ((band * 195) >> 8))) >> 8;
-          if (s > 100) v += ((s - 100) * 3 * d) >> 8;
-          if (coreT[r] > v) v = coreT[r];
+          v = styleV(fill, a, r, arms, phase, phase2, tw);
           if (crossRimT[ce] > v) v = crossRimT[ce];
         } else {
           const k = -ce; v = Math.max(crossRimT[k], crossHaloT[k]);
@@ -1099,49 +1155,7 @@ function tftFrame() {
         const e2 = Math.trunc(R * 1.02 + jag / 4);
         v = r >= e2 ? 0 : r >= e2 - 4 ? 235 : cartoonV(a, r, arms, phase);
       } else if (r < e) {
-        if (style === 0) {                       // Vortex
-          const s = sinT[(a * arms + twistT[r] + phase) & 255];
-          const s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255];
-          const d = depthT[r];
-          const band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
-          v = (d * (60 + ((band * 195) >> 8))) >> 8;
-          if (s > 100) v += ((s - 100) * 3 * d) >> 8;
-          if (coreT[r] > v) v = coreT[r];
-        } else if (style === 1) {                // Toon Spiral
-          const w = sinT[(a * 6 + r * 4 + phase2) & 255] >> 2;
-          const sp = sinT[(a * arms - linT[r] + phase + w) & 255];
-          v = sp > 40 ? 235 : sp > -20 ? 190 : sp > -70 ? 150 : 95;
-          if (coreT[r] > v) v = coreT[r];
-        } else if (style === 6) {                // Cartoon Swirl
-          v = cartoonV(a, r, arms, phase);
-        } else if (style === 3) {                // Hyperspace: stars streak outward
-          v = 30 + ((sinT[(a * 3 + (phase >> 3)) & 255] + 127) >> 4) + (spCoreT[r] >> 2);
-          for (let L = 0; L < 3; L++) {
-            const i = L * 256 + a;
-            if (!warpOn[i]) continue;
-            const rr = warpRR[i], len = warpLen[i];
-            if (r <= rr && r > rr - len) { const sv = Math.trunc(110 + warpB[i] * (1 - (rr - r) / len * 0.6)); if (sv > v) v = sv; }
-          }
-        } else if (style === 5) {                // Black hole: shadow, ring, swirling disk
-          if (r < bhHole) v = 0;
-          else {
-            const swirl = sinT[(a * 3 + r * 6 - phase * 2) & 255] + (sinT[(a * 7 - r * 3 - phase) & 255] >> 1);
-            const disk = Math.trunc(bhDiskT[r] * (310 + swirl) / 500);
-            v = bhRingT[r] > disk ? bhRingT[r] : disk;
-            if (bhStarT[r]) { const st = starAt(a, r, S.stars, tw); if (st > v) v = st; }
-          }
-        } else {                                 // Starburst: glowing centre, soft rings, rays, ripples
-          const ray = sinT[(a * 11 + (phase >> 2)) & 255] + (sinT[(a * 19 - (phase >> 1)) & 255] >> 1) + (sinT[(a * 37 + phase) & 255] >> 1);
-          const wave = sinT[(r * 4 - phase * 2 + (sinT[(a * 9 + (phase >> 2)) & 255] >> 4)) & 255];
-          const tex = sinT[(r * 9 - phase * 3 + (sinT[(a * 7 + (phase >> 1)) & 255] >> 3)) & 255];
-          const sd = sinT[(a * 22 + (phase >> 3)) & 255], sdp = sd > 0 ? sd : 0;
-          v = 115 + sbGlowT[r]
-            + ((((wave + 127) * 85 >> 8) * sbRingT[r]) >> 8)
-            + ((((tex * 26) >> 7) * sbRingT[r]) >> 8)
-            + ((((ray * 32) >> 7) * sbOuterT[r]) >> 8)
-            + ((ripCrestT[r] * (141 + ((sdp * 115) >> 7))) >> 8) - ripTroughT[r];
-          if (v < 0) v = 0;
-        }
+        v = styleV(style, a, r, arms, phase, phase2, tw);
         const k = e - r; if (k < 64 && rimT[k] > v) v = rimT[k];
       } else {
         const k = r - e; v = k < 64 ? rimT[k] : 0;
@@ -1151,8 +1165,8 @@ function tftFrame() {
     }
   }
   for (let i = 0; i < S.sparks; i++) {
-    if (style === 5 && sparks[i].r < bhHole) continue;   // sparks vanish into the black hole
-    const sx = Math.floor(QX + Math.cos(sparks[i].a) * sparks[i].r * S.oval), sy = Math.floor((style >= 8 && style <= 13 ? crossYC : QY) + Math.sin(sparks[i].a) * sparks[i].r);
+    if (fill === 5 && sparks[i].r < bhHole) continue;   // sparks vanish into the black hole
+    const sx = Math.floor(QX + Math.cos(sparks[i].a) * sparks[i].r * S.oval), sy = Math.floor((isCross ? crossYC : QY) + Math.sin(sparks[i].a) * sparks[i].r);
     if (CE && !(sx >= 0 && sx < TW && sy >= 0 && sy < TH && CE[sy * TW + sx] > 0)) continue;   // sparks stay inside the cross
     for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
       const xx = sx + dx, yy = sy + dy;

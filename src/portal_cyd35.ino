@@ -85,6 +85,7 @@ uint8_t  BRIGHTNESS = 100;     // 10-100 %: dims the portal's colours
 uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy (Hubble-style spiral), 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
                                 // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
                                 // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
+uint8_t  CROSS_FILL = 0;       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower)
 uint32_t SPACE_COLS[4] = { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF };   // Galaxy, Nebula, Wormhole, Meteor Shower: four colours blended together
 uint8_t  CROSS_W    = 46;      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
 uint8_t  BEAM       = 14;      // crosses: beam thickness, % of the portal size (5-30)
@@ -107,7 +108,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x99DD49C9UL;
+const uint32_t BUILD_ID = 0x3B2444EBUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -128,6 +129,8 @@ uint16_t pal[256];
 uint16_t *stripBuf[2];                 // two strips: one is drawn while the other is sent (allocated in setup)
 uint16_t *picBuf = NULL;               // a third strip, for fading between scenes
 int      crossYC = QY;                 // crosses: row of the crossing (the cross is centred, so this sits above the middle)
+bool     crossOn = false;               // a cross is being drawn (its outline is ready)
+int      spCY = QY;                     // centre row for the space styles (the crossing when inside a cross)
 
 // Dual-core chips (ESP32, ESP32-S3) draw on core 0 while core 1 feeds the screen.
 #if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
@@ -144,7 +147,7 @@ Spark sparks[MAX_SPARKS];
 int16_t sparkX[MAX_SPARKS], sparkY[MAX_SPARKS];
 float t = 0;
 
-struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; };
+struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill; };
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // ---------- tables ----------
@@ -316,16 +319,19 @@ void updateSparks() {
     s.a += SPEED * 2.0 * (RADIUS / (s.r + RADIUS * 0.22));  // faster near the centre
     if (s.r < 3) respawn(s);
     sparkX[i] = (int16_t)floorf(QX + cosf(s.a) * s.r * OVAL);
-    sparkY[i] = (int16_t)floorf((STYLE >= 8 && STYLE <= 13 ? crossYC : QY) + sinf(s.a) * s.r);
+    sparkY[i] = (int16_t)floorf((crossOn ? crossYC : QY) + sinf(s.a) * s.r);
   }
 }
 
 // ---------- saved settings (EEPROM) ----------
+bool validFill(uint8_t f) { return f <= 6 || (f >= 14 && f <= 16); }   // styles that can go inside a cross
+
 bool validScenes(const Saved &s) {
   if (s.sceneCount > 8 || !(s.holdSecs >= 1 && s.holdSecs <= 3600) || !(s.sceneFade >= 0 && s.sceneFade <= 600)) return false;
   if (s.framePct < 10 || s.framePct > 95) return false;
   if (s.crossW < 25 || s.crossW > 100 || s.beam < 5 || s.beam > 30 || s.bar < 20 || s.bar > 50) return false;
   for (int k = 0; k < 4; k++) if (s.spaceCols[k] > 0xFFFFFF) return false;
+  if (!validFill(s.crossFill)) return false;
   for (uint8_t i = 0; i < s.sceneCount; i++) {
     uint8_t c = s.scenes[i];
     if (c != PORTAL && c >= MAX_PICS && (c < 128 || c >= 128 + MAX_PICS)) return false;
@@ -353,6 +359,7 @@ void apply(const Saved &s) {
   CROSS_W = s.crossW; BEAM = s.beam; BAR = s.bar;
   for (int k = 0; k < 8; k++) SCENES[k] = s.scenes[k];
   for (int k = 0; k < 4; k++) SPACE_COLS[k] = s.spaceCols[k];
+  CROSS_FILL = s.crossFill;
 }
 
 void loadSettings() {
@@ -373,6 +380,7 @@ void saveSettings() {
   s.crossW = CROSS_W; s.beam = BEAM; s.bar = BAR;
   for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
   for (int k = 0; k < 4; k++) s.spaceCols[k] = SPACE_COLS[k];
+  s.crossFill = CROSS_FILL;
   EEPROM.put(0, s);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
   EEPROM.commit();
@@ -396,6 +404,7 @@ void clampSettings(Saved &s) {
   s.holdSecs = clampf(s.holdSecs, 1, 3600); s.sceneFade = clampf(s.sceneFade, 0, 600); s.framePct = clampb(s.framePct, 10, 95);
   s.crossW = clampb(s.crossW, 25, 100); s.beam = clampb(s.beam, 5, 30); s.bar = clampb(s.bar, 20, 50);
   for (int k = 0; k < 8; k++) { uint8_t c = s.scenes[k]; if (c != PORTAL && c >= MAX_PICS && (c < 128 || c >= 128 + MAX_PICS)) s.scenes[k] = PORTAL; }
+  if (!validFill(s.crossFill)) s.crossFill = 0;
 }
 
 // ---------- pictures (ESP32 boards: kept in the flash "spiffs" partition) ----------
@@ -674,7 +683,7 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 
 // ---------- live tuning over USB serial (and Bluetooth below) ----------
 // Command: SET radius oval arms twist speed sparks drift core rim brightness style ripples ripspeed glow stars fade count core2 rim2 core3 rim3 core4 rim4 fadesecs rimsmooth
-//              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar [space1..space4]]]]   (reply: OK or ERR)
+//              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar [space1..space4 [crossfill]]]]]   (reply: OK or ERR)
 // Pictures: INFO, then IMG slot bytes id / D base64... / END   (see "pictures" above)
 char cmd[384];
 uint16_t cmdLen = 0;
@@ -683,11 +692,11 @@ uint32_t rebootAt = 0;                   // set by the REBOOT command
 
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strncasecmp(line, "SET ", 4) == 0) {
-    float v[44];
+    float v[45];
     uint8_t n = 0;
     char *p = strtok(line + 4, " ");
-    while (p && n < 44) { v[n++] = atof(p); p = strtok(NULL, " "); }
-    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44) {
+    while (p && n < 45) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45) {
       Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
       for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
       s.fadeSecs = v[23];
@@ -695,7 +704,8 @@ const char* handleCommand(char *line) {   // returns the reply to send back
       s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE; s.framePct = FRAME_PCT;
       s.crossW = CROSS_W; s.beam = BEAM; s.bar = BAR;
       for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
-      for (int k = 0; k < 4; k++) s.spaceCols[k] = n == 44 ? (uint32_t)v[40 + k] : SPACE_COLS[k];
+      for (int k = 0; k < 4; k++) s.spaceCols[k] = n >= 44 ? (uint32_t)v[40 + k] : SPACE_COLS[k];
+      s.crossFill = n >= 45 ? (uint8_t)v[44] : CROSS_FILL;
       if (n >= 36) {
         s.sceneCount = (uint8_t)v[25];
         for (int k = 0; k < 8; k++) s.scenes[k] = (uint8_t)v[26 + k];
@@ -888,6 +898,18 @@ void composeStrip(int y0, int rows, uint16_t *dst) {
 
 // ---------- one frame ----------
 uint8_t look = 0;                        // the style being drawn (crosses fall back to Vortex without flash storage)
+
+inline void polarAt(int x, int y, int cyc, int &r, int &a) {   // distance and angle (0-255) from (centre column, row cyc)
+  int cy = y < cyc ? cyc - 1 - y : y - cyc, a0;
+  bool low = y >= cyc;
+  if (cy < TQY) { int ci = cy * TQX + colMap[x]; r = rT[ci]; a0 = aT[ci]; }
+  else {                                // below the tables: work it out
+    float fx = colMap[x] + 0.5f, fy = cy + 0.5f;
+    r = min(255, (int)lroundf(sqrtf(fx * fx + fy * fy)));
+    a0 = (int)lroundf(atan2f(fy, fx) / (PI / 2) * 64);
+  }
+  a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
+}
 
 // ---------- Nebula, Wormhole, Meteor Shower ----------
 uint8_t  *noise8 = NULL;                // smooth value noise for the gas clouds (allocated when first needed)
@@ -1089,11 +1111,8 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
   uint16_t *p = strip;
   if (look == 15) {                     // Wormhole
     for (int y = y0; y < y0 + rows; y++) {
-      int qy = y < QY ? QY - 1 - y : y - QY;
-      bool low = y >= QY;
       for (int x = 0; x < SCR_W; x++) {
-        int qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
-        int a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
+        int r, a; polarAt(x, y, spCY, r, a);
         int s = sinT[(a * 6 + whOffT[r] + whPh) & 255] + 127;          // spokes, 0..254
         int vi = (powT[(whRingT[r] * 133 + s * 123) >> 8] * whNearT[r]) >> 10;
         if (whCoreT[r] >= 0) { if (whCoreT[r] > vi) vi = whCoreT[r]; *p++ = spaceLUT[48 * 64 + vi]; continue; }   // glowing far end
@@ -1108,12 +1127,12 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
   for (int gy = gy0; gy <= gy1; gy++)
     for (int gx = 0; gx < GC; gx++) {
       int i = (gy - gy0) * GC + gx;
-      spaceNode((gx * C + 0.5f - QX) * spU, (gy * C + 0.5f - QY) * spU, spH[i], spV[i], spX[i]);
+      spaceNode((gx * C + 0.5f - QX) * spU, (gy * C + 0.5f - spCY) * spU, spH[i], spV[i], spX[i]);
     }
   int dens = (look == 14 ? 7 : look == 4 ? 4 : 10) * STARS / 3, densBand = 22 * STARS / 3;
   for (int y = y0; y < y0 + rows; y++) {
     int gy = y / C - gy0, fy = y % C;
-    float Y = (y + 0.5f - QY) * spU;
+    float Y = (y + 0.5f - spCY) * spU;
     const int cy = C - fy;
     for (int x = 0, ic = gy * GC, fx = 0; x < SCR_W; x++) {
       const int i = ic, cx = C - fx, w00 = cx * cy, w01 = fx * cy, w10 = cx * fy, w11 = fx * fy;
@@ -1164,7 +1183,9 @@ void frameStart() {
   }
   bool isCross = STYLE >= 8 && STYLE <= 13;
   if (isCross && crossAvailable() && edgeBuf) prepareCross();
-  look = isCross && !crossReady ? 0 : STYLE;
+  crossOn = isCross && crossReady;
+  look = crossOn ? CROSS_FILL : isCross ? 0 : STYLE;   // crosses: the chosen style is drawn inside
+  spCY = crossOn ? crossYC : QY;
   if (look == 4 || look >= 14) { if (spaceMemory()) prepareSpace(); else look = 0; }   // no room: show the Vortex
   updateColourFade();
   updateSparks();
@@ -1176,7 +1197,7 @@ void frameStart() {
   // Hyperspace: where each streaking star is this frame (3 layers x 256 directions)
   bhHole = (int)(0.22f * RADIUS);
   twinkle = (int)(t * 25);
-  if (STYLE == 3) {
+  if (look == 3) {
     for (int L = 0; L < 3; L++) {
       for (int a = 0; a < 256; a++) {
         uint32_t h = hash32((uint32_t)(a * 3 + L * 7919));
@@ -1193,7 +1214,7 @@ void frameStart() {
   // Starburst ripples: rings expanding outward, precomputed per distance for this frame
   memset(ripCrestT, 0, sizeof(ripCrestT));
   memset(ripTroughT, 0, sizeof(ripTroughT));
-  if (STYLE == 2) {
+  if (look == 2) {
     for (uint8_t i = 0; i < RIPPLES; i++) {
       float pr = fmodf(t * RIP_SPEED + (float)i / RIPPLES, 1.0f);
       float rr = 0.16f + pr * 0.62f, w = 0.04f + pr * 0.04f, fade = powf(1 - pr, 1.1f);
@@ -1222,41 +1243,94 @@ inline int cartoonV(int a, int r, int phase) {   // blobby flat-shaded swirl
   return r < 7 ? 232 : sp > 25 ? 232 : sp > -45 ? 182 : 120;
 }
 
+inline int styleV(int look, int a, int r, int phase, int phase2) {   // brightness (0-255) inside the portal for one style
+  int v;
+  if (look == 7 || look == 6) return cartoonV(a, r, phase);
+  if (look == 0) {                              // Vortex
+    int s  = sinT[(a * ARMS + twistT[r] + phase) & 255];
+    int s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255];
+    int d = depthT[r];
+    int band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
+    v = (d * (60 + ((band * 195) >> 8))) >> 8;   // swirling bands, darker toward the throat
+    if (s > 100) v += ((s - 100) * 3 * d) >> 8; // bright spiral crests
+    if (coreT[r] > v) v = coreT[r];              // glowing core
+  } else if (look == 1) {                       // Toon Spiral: flat-shaded wavy bands
+    int w  = sinT[(a * 6 + r * 4 + phase2) & 255] >> 2;
+    int sp = sinT[(a * ARMS - linT[r] + phase + w) & 255];
+    v = sp > 40 ? 235 : sp > -20 ? 190 : sp > -70 ? 150 : 95;
+    if (coreT[r] > v) v = coreT[r];
+  } else if (look == 6) {                       // Cartoon Swirl: blobby flat-shaded bands
+    v = cartoonV(a, r, phase);
+  } else if (look == 3) {                       // Hyperspace: stars streak outward
+    v = 30 + ((sinT[(a * 3 + (phase >> 3)) & 255] + 127) >> 4) + (spCoreT[r] >> 2);
+    for (int L = 0; L < 3; L++) {
+      int i = L * 256 + a;
+      if (!warpOn[i]) continue;
+      float rr = warpRR[i], len = warpLen[i];
+      if (r <= rr && r > rr - len) {
+        int sv = (int)(110 + warpB[i] * (1 - (rr - r) / len * 0.6f));
+        if (sv > v) v = sv;
+      }
+    }
+  } else if (look == 5) {                       // Black hole: shadow, bright ring, swirling disk
+    if (r < bhHole) v = 0;
+    else {
+      int swirl = sinT[(a * 3 + r * 6 - phase * 2) & 255] + (sinT[(a * 7 - r * 3 - phase) & 255] >> 1);
+      int disk  = bhDiskT[r] * (310 + swirl) / 500;
+      v = bhRingT[r] > disk ? bhRingT[r] : disk;
+      if (bhStarT[r]) { int st = starAt(a, r); if (st > v) v = st; }
+    }
+  } else {                                       // Starburst: glowing centre, soft rings, rays, ripples
+    int ray  = sinT[(a * 11 + (phase >> 2)) & 255] + (sinT[(a * 19 - (phase >> 1)) & 255] >> 1) + (sinT[(a * 37 + phase) & 255] >> 1);
+    int wave = sinT[(r * 4 - phase * 2 + (sinT[(a * 9 + (phase >> 2)) & 255] >> 4)) & 255];
+    int tex  = sinT[(r * 9 - phase * 3 + (sinT[(a * 7 + (phase >> 1)) & 255] >> 3)) & 255];
+    int sd   = sinT[(a * 22 + (phase >> 3)) & 255], sdp = sd > 0 ? sd : 0;
+    v = 115 + sbGlowT[r]
+      + ((((wave + 127) * 85 >> 8) * sbRingT[r]) >> 8)     // soft rings near the centre
+      + ((((tex * 26) >> 7) * sbRingT[r]) >> 8)
+      + ((((ray * 32) >> 7) * sbOuterT[r]) >> 8)            // rays toward the rim
+      + ((ripCrestT[r] * (141 + ((sdp * 115) >> 7))) >> 8) - ripTroughT[r];   // expanding ripples
+    if (v < 0) v = 0;
+  }
+  return v < 0 ? 0 : v;
+}
+
+inline uint16_t max565(uint16_t a, uint16_t b) {   // brighter of two colours, channel by channel
+  return max(a & 0xF800, b & 0xF800) | max(a & 0x07E0, b & 0x07E0) | max(a & 0x001F, b & 0x001F);
+}
+
+void crossMask(int y0, int rows, uint16_t *strip) {   // glowing cross outline over a space picture
+  for (int i = 0; i < rows * SCR_W; i++) {
+    int ce = edgeBuf[i];
+    if (ce > 0) { int rv = crossRimT[ce]; if (rv > 8) strip[i] = max565(strip[i], pal[rv]); }
+    else strip[i] = pal[max(crossRimT[-ce], crossHaloT[-ce])];
+  }
+}
+
 void renderStrip(int y0, int rows, uint16_t *strip) {
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);
   uint16_t *p = strip;
-  if (look == 4 || look >= 14) { renderSpaceStrip(y0, rows, strip); return; }   // Galaxy, Nebula, Wormhole, Meteor Shower
-  bool cross = look >= 8;
+  bool cross = crossOn;
   if (cross) readCrossRows(y0, rows);
+  if (look == 4 || look >= 14) {                   // Galaxy, Nebula, Wormhole, Meteor Shower (also inside a cross)
+    renderSpaceStrip(y0, rows, strip);
+    if (cross) crossMask(y0, rows, strip);
+    return;
+  }
   for (int y = y0; y < y0 + rows; y++) {
     int qy = y < QY ? QY - 1 - y : y - QY;
     bool low = y >= QY;
     const int8_t *eb = cross ? edgeBuf + (y - y0) * SCR_W : NULL;
-    int cy = y < crossYC ? crossYC - 1 - y : y - crossYC;   // crosses: swirl around the crossing
-    bool clow = y >= crossYC;
     for (int x = 0; x < SCR_W; x++) {
       int qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
       int a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
       int e = edgeT[a];
       int v;
-      if (eb) {                                        // Cross: Vortex swirl inside, glowing rim along the cross edge
+      if (eb) {                                        // Cross: the chosen style inside, glowing rim along the cross edge
         int ce = eb[x];
         if (ce > 0) {
-          int ca0;
-          if (cy < TQY) { int ci = cy * TQX + colMap[x]; r = rT[ci]; ca0 = aT[ci]; }
-          else {                                       // below the tables: work it out (only the lower arm)
-            float fx = colMap[x] + 0.5f, fy = cy + 0.5f;
-            r = min(255, (int)lroundf(sqrtf(fx * fx + fy * fy)));
-            ca0 = (int)lroundf(atan2f(fy, fx) / (PI / 2) * 64);
-          }
-          a = (x >= QX ? (clow ? ca0 : 256 - ca0) : (clow ? 128 - ca0 : 128 + ca0)) & 255;
-          int s  = sinT[(a * ARMS + twistT[r] + phase) & 255];
-          int s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255];
-          int d = depthT[r];
-          int band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
-          v = (d * (60 + ((band * 195) >> 8))) >> 8;
-          if (s > 100) v += ((s - 100) * 3 * d) >> 8;
-          if (coreT[r] > v) v = coreT[r];
+          polarAt(x, y, crossYC, r, a);               // centred on the crossing
+          v = styleV(look, a, r, phase, phase2);
           if (crossRimT[ce] > v) v = crossRimT[ce];
         } else {
           v = max(crossRimT[-ce], crossHaloT[-ce]);
@@ -1266,52 +1340,7 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
         int e2 = (int)(RADIUS * 1.02f + jag / 4.0f);
         v = r >= e2 ? 0 : r >= e2 - 4 ? 235 : cartoonV(a, r, phase);
       } else if (r < e) {
-        if (look == 0) {                              // Vortex
-          int s  = sinT[(a * ARMS + twistT[r] + phase) & 255];
-          int s2 = sinT[(a * 2 - twist2T[r] + phase2) & 255];
-          int d = depthT[r];
-          int band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
-          v = (d * (60 + ((band * 195) >> 8))) >> 8;   // swirling bands, darker toward the throat
-          if (s > 100) v += ((s - 100) * 3 * d) >> 8; // bright spiral crests
-          if (coreT[r] > v) v = coreT[r];              // glowing core
-        } else if (look == 1) {                       // Toon Spiral: flat-shaded wavy bands
-          int w  = sinT[(a * 6 + r * 4 + phase2) & 255] >> 2;
-          int sp = sinT[(a * ARMS - linT[r] + phase + w) & 255];
-          v = sp > 40 ? 235 : sp > -20 ? 190 : sp > -70 ? 150 : 95;
-          if (coreT[r] > v) v = coreT[r];
-        } else if (look == 6) {                       // Cartoon Swirl: blobby flat-shaded bands
-          v = cartoonV(a, r, phase);
-        } else if (look == 3) {                       // Hyperspace: stars streak outward
-          v = 30 + ((sinT[(a * 3 + (phase >> 3)) & 255] + 127) >> 4) + (spCoreT[r] >> 2);
-          for (int L = 0; L < 3; L++) {
-            int i = L * 256 + a;
-            if (!warpOn[i]) continue;
-            float rr = warpRR[i], len = warpLen[i];
-            if (r <= rr && r > rr - len) {
-              int sv = (int)(110 + warpB[i] * (1 - (rr - r) / len * 0.6f));
-              if (sv > v) v = sv;
-            }
-          }
-        } else if (look == 5) {                       // Black hole: shadow, bright ring, swirling disk
-          if (r < bhHole) v = 0;
-          else {
-            int swirl = sinT[(a * 3 + r * 6 - phase * 2) & 255] + (sinT[(a * 7 - r * 3 - phase) & 255] >> 1);
-            int disk  = bhDiskT[r] * (310 + swirl) / 500;
-            v = bhRingT[r] > disk ? bhRingT[r] : disk;
-            if (bhStarT[r]) { int st = starAt(a, r); if (st > v) v = st; }
-          }
-        } else {                                       // Starburst: glowing centre, soft rings, rays, ripples
-          int ray  = sinT[(a * 11 + (phase >> 2)) & 255] + (sinT[(a * 19 - (phase >> 1)) & 255] >> 1) + (sinT[(a * 37 + phase) & 255] >> 1);
-          int wave = sinT[(r * 4 - phase * 2 + (sinT[(a * 9 + (phase >> 2)) & 255] >> 4)) & 255];
-          int tex  = sinT[(r * 9 - phase * 3 + (sinT[(a * 7 + (phase >> 1)) & 255] >> 3)) & 255];
-          int sd   = sinT[(a * 22 + (phase >> 3)) & 255], sdp = sd > 0 ? sd : 0;
-          v = 115 + sbGlowT[r]
-            + ((((wave + 127) * 85 >> 8) * sbRingT[r]) >> 8)     // soft rings near the centre
-            + ((((tex * 26) >> 7) * sbRingT[r]) >> 8)
-            + ((((ray * 32) >> 7) * sbOuterT[r]) >> 8)            // rays toward the rim
-            + ((ripCrestT[r] * (141 + ((sdp * 115) >> 7))) >> 8) - ripTroughT[r];   // expanding ripples
-          if (v < 0) v = 0;
-        }
+        v = styleV(look, a, r, phase, phase2);
         int k = e - r; if (k < 64 && rimT[k] > v) v = rimT[k];
       } else {
         int k = r - e; v = k < 64 ? rimT[k] : 0;       // rim

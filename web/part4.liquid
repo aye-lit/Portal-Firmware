@@ -374,30 +374,36 @@ const STYLES = [
 const isCrossStyle = i => i >= 8 && i <= 13, isSpaceStyle = i => (i >= 3 && i <= 5) || i >= 14, hasSpaceCols = i => i === 4 || i >= 14;
 function markStyle() {
   $("style").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.i === S.style));
-  root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(M.kind === "tft" && S.style === 2); });
-  root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(M.kind === "tft" && isSpaceStyle(S.style)); });
-  root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !(M.kind === "tft" && isCrossStyle(S.style)); });
+  const tft = M.kind === "tft", cross = tft && isCrossStyle(S.style);
+  const eff = cross ? S.crossFill : S.style;                 // the style being drawn (inside a cross: the chosen fill)
+  root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(tft && eff === 2); });
+  root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(tft && isSpaceStyle(eff)); });
+  root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !cross; });
+  if ($("crossfill")) $("crossfill").value = S.crossFill;
   $("cross-row").hidden = !picturesAllowed() && !isCrossStyle(S.style);
-  const sc = M.kind === "tft" && hasSpaceCols(S.style);     // Nebula, Wormhole, Meteor Shower use four space colours
+  const sc = tft && hasSpaceCols(eff);                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
+  const scOnly = sc && !cross;                               // a cross still uses the main colours for its glowing outline
   $("space-colors").hidden = !sc;
-  if (M.kind === "tft") { $("rgb-colors").hidden = sc; $("fade-wrap").hidden = sc; $("rimsmooth-wrap").hidden = sc; }
+  if (tft) { $("rgb-colors").hidden = scOnly; $("fade-wrap").hidden = scOnly; $("rimsmooth-wrap").hidden = sc; }
   $("radius").max = radiusMax(M);
   if (S.radius > radiusMax(M)) S.radius = rmax(M);           // leaving a cross: back inside the screen
-  const gal = M.kind === "tft" && S.style === 4;
-  ["radius", "oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = sc && !(gal && k === "twist"); });   // portal-only controls
-  const wh = M.kind === "tft" && S.style === 15;
-  if (wh) { const l = $("twist").closest("label"); if (l) l.hidden = false; }   // the Wormhole uses Twist too
-  const tl = $("twist").closest("label");                    // the Galaxy's Spiral setting is the portal's Twist
+  const gal = tft && eff === 4, wh = tft && eff === 15, met = tft && eff === 16;
+  ["radius", "oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = sc && !(cross && k === "radius") && !((gal || wh) && k === "twist") && !(met && k === "sparks"); });   // portal-only controls
+  const tl = $("twist").closest("label");                    // the Galaxy's Spiral setting is the portal's Twist (the Wormhole uses it too)
   if (tl) {
     tl.querySelector("span").firstChild.nodeValue = gal ? "Spiral " : "Twist ";
     $("twist-hint").hidden = !(gal || wh);
     $("twist-hint").textContent = gal ? "How tightly the arms wind: low is open and loose, high wraps them around the core" : "How much the tunnel walls spiral: 0 is straight, high is a tight corkscrew";
   }
   $("reverse-wrap").hidden = !wh;
-  const met = M.kind === "tft" && S.style === 16;            // Meteor Shower: the Sparks setting is the number of meteors
-  const sl = $("sparks").closest("label");
-  if (sl) { if (met) sl.hidden = false; sl.querySelector("span").firstChild.nodeValue = met ? "Meteors " : "Sparks "; $("sparks-hint").hidden = !met; }
+  const sl = $("sparks").closest("label");                   // Meteor Shower: the Sparks setting is the number of meteors
+  if (sl) { sl.querySelector("span").firstChild.nodeValue = met ? "Meteors " : "Sparks "; $("sparks-hint").hidden = !met; }
 }
+$("crossfill").addEventListener("change", e => {
+  S.crossFill = +e.target.value;
+  if (S.crossFill === 16 && S.sparks < 2) S.sparks = 14;
+  bindAll(); markStyle(); changed(true);
+});
 STYLES.forEach((st, i) => {
   const b = document.createElement("button");
   b.type = "button"; b.textContent = st.name; b.dataset.i = i;
@@ -1013,7 +1019,7 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
 const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${(M.kind === "tft" ? S.reverse : S.drift) ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
-function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${hasSpaceCols(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") : ""}`; }   // space colours only when needed, so older boards still accept the rest
+function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${isCrossStyle(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") + " " + S.crossFill : hasSpaceCols(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") : ""}`; }   // space colours only when needed, so older boards still accept the rest
 
 async function readReply(ms) {
   const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "";
