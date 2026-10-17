@@ -1023,7 +1023,7 @@ async function sendUsb() {
     }
     const w = port.writable.getWriter();
     await w.write(new TextEncoder().encode(cmdLine())); w.releaseLock();
-    const reply = await readReply(2500);
+    const reply = await readReply(5000);
     if (/\bOK\b/.test(reply)) { say("Sent and saved on the board.", "ok"); refreshConn(); }
     else if (/\bERR\b/.test(reply)) { say("The board rejected those settings. If you changed the display model, copy and upload the new sketch first.", "warn"); refreshConn(); }
     else setConn("busy", "USB open, but the board isn't answering"), say("No reply from the board. If the portal program isn't on it yet, install it first (Quick install above, or upload the sketch with Arduino). Also close the Arduino Serial Monitor.", "warn");

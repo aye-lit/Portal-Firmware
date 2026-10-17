@@ -107,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x69E48A31UL;
+const uint32_t BUILD_ID = 0x07EB809FUL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -696,8 +696,12 @@ const char* handleCommand(char *line) {   // returns the reply to send back
   return pictureCommand(line);
 }
 
-void readSerial() {
+void serialPoll(bool quick) {            // quick: between strips, answer settings at once (pictures wait for the end of the frame)
   while (Serial.available()) {
+    if (quick) {
+      char f = cmdLen ? cmd[0] : (char)Serial.peek();
+      if (pausedForUpload() || !(f == 'S' || f == 's' || f == 'P' || f == 'p' || f == '\n' || f == '\r')) return;
+    }
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
       if (cmdLen) {
@@ -705,12 +709,15 @@ void readSerial() {
         const char *reply = handleCommand(cmd);
         if (reply) Serial.println(reply);
         cmdLen = 0;
+        if (quick) return;
       }
     } else if (cmdLen < sizeof(cmd) - 1) {
       cmd[cmdLen++] = c;
     }
   }
 }
+void readSerial() { serialPoll(false); }
+void readSerialQuick() { serialPoll(true); }
 
 // ---------- Bluetooth tuning (ESP32 boards with Bluetooth) ----------
 // The board shows up as "Vortex Portal". In the Studio (Chrome on Android or a
@@ -1348,6 +1355,7 @@ void loop() {
     tft.writePixels(stripBuf[b], SCR_W * min(STRIP, SCR_H - y0));
     xSemaphoreGive(freeSem[b]);
     b ^= 1;
+    readSerialQuick();                   // new settings get an answer even while a slow frame is drawn
   }
 #else
   frameStart();
@@ -1355,6 +1363,7 @@ void loop() {
     int rows = min(STRIP, SCR_H - y0);
     composeStrip(y0, rows, stripBuf[0]);
     tft.writePixels(stripBuf[0], SCR_W * rows);
+    readSerialQuick();
   }
   frameEnd();
 #endif
