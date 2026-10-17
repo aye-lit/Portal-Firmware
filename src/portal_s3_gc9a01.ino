@@ -78,7 +78,7 @@ uint8_t  ARMS       = 4;       // spiral arms
 float    TWIST      = 2.40;    // how tightly the arms coil
 float    SPEED      = 0.12;    // spin per frame
 uint8_t  NUM_SPARKS = 28;      // particles being sucked in
-bool     DRIFT      = true;    // not used on LCDs (they don't burn in)
+bool     DRIFT      = false;    // Wormhole: true = Reverse, the rings fly out toward you (LCDs don't need burn-in drift)
 uint32_t COLOR_CORE = 0x3B1CFF;  // inner colour
 uint32_t COLOR_RIM  = 0x38F0FF;  // outer colour
 uint8_t  BRIGHTNESS = 100;     // 10-100 %: dims the portal's colours
@@ -107,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x95434CE5UL;
+const uint32_t BUILD_ID = 0xE3391F5FUL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -999,14 +999,15 @@ void prepareSpace() {                   // once per frame
     galK = 3 + TWIST * 2.5f;            // Spiral setting (TWIST 0-6)
   }
   if (look == 15) {                     // Wormhole: rings falling away, worked out per distance
-    whPh = (int)(fmod(T * 0.06, TWO_PI) * 40.74f);
-    float off = (float)fmod(T * 0.09, 100.0);
+    float rev = DRIFT ? -1 : 1;          // Reverse: rings fly out toward you
+    whPh = (int)(rev * fmod(T * 0.06, TWO_PI) * 40.74f);
+    float off = rev * (float)fmod(T * 0.09, 100.0);
     for (int r = 0; r < 256; r++) {
       float ru = max(r * spU, 1.0f), depth = 90 / ru, ringPos = depth * 2.6f - off, fl = floorf(ringPos);
       whRingT[r] = (uint8_t)(255 * (0.5f + 0.5f * cosf((ringPos - fl) * TWO_PI)));
       float near = min(1.0f, ru / 95);
       whNearT[r] = (uint8_t)(255 * (0.25f + 0.75f * near * near));
-      whOffT[r] = (int16_t)((int)(depth * 1.6f * 40.74f) & 255);
+      whOffT[r] = (int16_t)((int)(TWIST * (depth * 0.667f + 3 * logf(ru / 20)) * 40.74f) & 255);   // Twist: how much the walls spiral
       whHueT[r] = (int32_t)floorf(fl * 0.27f * 256) & 255;               // each ring its own colour
       whCoreT[r] = ru < 18 ? (int16_t)min(63.0f, expf(-(ru / 9) * (ru / 9)) * 1.05f * 63) : -1;
     }
@@ -1033,7 +1034,7 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
         int qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
         int a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
         int s = sinT[(a * 6 + whOffT[r] + whPh) & 255] + 127;          // spokes, 0..254
-        int vi = (powT[(whRingT[r] * 158 + s * 97) >> 8] * whNearT[r]) >> 10;
+        int vi = (powT[(whRingT[r] * 133 + s * 123) >> 8] * whNearT[r]) >> 10;
         if (whCoreT[r] >= 0) { if (whCoreT[r] > vi) vi = whCoreT[r]; *p++ = spaceLUT[48 * 64 + vi]; continue; }   // glowing far end
         *p++ = spaceLUT[(((whHueT[r] + s * 20 / 254) >> 2) & 63) * 64 + vi];
       }

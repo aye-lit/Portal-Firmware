@@ -385,8 +385,15 @@ function markStyle() {
   if (S.radius > radiusMax(M)) S.radius = rmax(M);           // leaving a cross: back inside the screen
   const gal = M.kind === "tft" && S.style === 4;
   ["radius", "oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = sc && !(gal && k === "twist"); });   // portal-only controls
+  const wh = M.kind === "tft" && S.style === 15;
+  if (wh) { const l = $("twist").closest("label"); if (l) l.hidden = false; }   // the Wormhole uses Twist too
   const tl = $("twist").closest("label");                    // the Galaxy's Spiral setting is the portal's Twist
-  if (tl) { tl.querySelector("span").firstChild.nodeValue = gal ? "Spiral " : "Twist "; $("twist-hint").hidden = !gal; }
+  if (tl) {
+    tl.querySelector("span").firstChild.nodeValue = gal ? "Spiral " : "Twist ";
+    $("twist-hint").hidden = !(gal || wh);
+    $("twist-hint").textContent = gal ? "How tightly the arms wind: low is open and loose, high wraps them around the core" : "How much the tunnel walls spiral: 0 is straight, high is a tight corkscrew";
+  }
+  $("reverse-wrap").hidden = !wh;
 }
 STYLES.forEach((st, i) => {
   const b = document.createElement("button");
@@ -573,7 +580,7 @@ function selectModel(key, userChose) {
 function bindAll() {
   if (typeof markStyle === "function") markStyle();
   for (const k of Object.keys(fmt)) { $(k).value = S[k]; $("o-" + k).textContent = fmt[k](S[k]); }
-  $("drift").checked = S.drift; $("addr").value = S.addr;
+  $("drift").checked = S.drift; $("addr").value = S.addr; $("reverse").checked = S.reverse;
   $("c1").value = S.c1; $("c2").value = S.c2;
   $("fade").checked = S.fade; $("fade-opts").hidden = !S.fade;
   if (typeof renderFadeSets === "function") { renderFadeSets(); showFadeTime(); }
@@ -589,6 +596,7 @@ for (const k of Object.keys(fmt)) {
   });
 }
 $("drift").addEventListener("change", e => { S.drift = e.target.checked; changed(); });
+$("reverse").addEventListener("change", e => { S.reverse = e.target.checked; changed(); });
 $("addr").addEventListener("change", e => { S.addr = e.target.value; save(); refreshCode(); });
 $("reset").addEventListener("click", () => {
   S = { ...DEFAULTS, model: S.model, tint: S.tint, addr: S.addr, board: S.board, custom: S.custom, pics: S.pics, scenes: S.scenes.slice(), fadeSets: DEFAULTS.fadeSets.map(x => ({ ...x })) };
@@ -989,7 +997,7 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   for (let i = 0; i < 3; i++) { const st = S.fadeSets[i]; cols.push(st ? parseInt(hex6(st.core), 16) : 0, st ? parseInt(hex6(st.rim), 16) : 0); }
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
-const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${S.drift ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
+const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${(M.kind === "tft" ? S.reverse : S.drift) ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
 function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${hasSpaceCols(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") : ""}`; }   // space colours only when needed, so older boards still accept the rest
 
 async function readReply(ms) {

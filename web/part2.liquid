@@ -466,7 +466,7 @@ const crossMax = M => M.rect ? Math.floor((M.h - 8) * 0.8) : rmax(M) - 9;   // c
 const radiusMax = M => S.style >= 8 && S.style <= 13 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -479,6 +479,7 @@ if (!(S.crossw >= 25 && S.crossw <= 100)) S.crossw = 46;
 if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
 if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
+S.reverse = S.reverse === true;
 if (S.c1 === "#c02ad0" && S.c2 === "#f9c8ff") { S.c1 = PRESETS.Bloom[0]; S.c2 = PRESETS.Bloom[1]; }   // the old pale Bloom colours
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
@@ -836,13 +837,13 @@ function spaceFrame(out) {
     return [(h >>> 20) & 63, 47 + Math.trunc(sinT[(spTw + (h >>> 10)) & 255] / 10)];
   };
   if (style === 15) {                                // Wormhole
-    const whPh = Math.trunc((T * 0.06) % TWO_PI * 40.74), off = (T * 0.09) % 100;
+    const rev = S.reverse ? -1 : 1, whPh = Math.trunc(rev * ((T * 0.06) % TWO_PI) * 40.74), off = rev * ((T * 0.09) % 100);
     for (let r = 0; r < 256; r++) {
       const ru = Math.max(r * spU, 1), depth = 90 / ru, ringPos = depth * 2.6 - off, fl = Math.floor(ringPos);
       whRingT[r] = Math.trunc(255 * (0.5 + 0.5 * Math.cos((ringPos - fl) * TWO_PI)));
       const near = Math.min(1, ru / 95);
       whNearT[r] = Math.trunc(255 * (0.25 + 0.75 * near * near));
-      whOffT[r] = Math.trunc(depth * 1.6 * 40.74) & 255;
+      whOffT[r] = Math.trunc(S.twist * (depth * 0.667 + 3 * Math.log(ru / 20)) * 40.74) & 255;   // Twist: how much the walls spiral
       whHueT[r] = Math.floor(fl * 0.27 * 256) & 255;
       whCoreT[r] = ru < 18 ? Math.trunc(Math.min(63, Math.exp(-(ru / 9) * (ru / 9)) * 1.05 * 63)) : -1;
     }
@@ -853,7 +854,7 @@ function spaceFrame(out) {
         const qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
         const a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
         const sp = sinT[(a * 6 + whOffT[r] + whPh) & 255] + 127;
-        let vi = (powT[(whRingT[r] * 158 + sp * 97) >> 8] * whNearT[r]) >> 10;
+        let vi = (powT[(whRingT[r] * 133 + sp * 123) >> 8] * whNearT[r]) >> 10;
         if (whCoreT[r] >= 0) { if (whCoreT[r] > vi) vi = whCoreT[r]; out[p++] = spaceLUT[48 * 64 + vi]; continue; }
         out[p++] = spaceLUT[(((whHueT[r] + Math.trunc(sp * 20 / 254)) >> 2) & 63) * 64 + vi];
       }
