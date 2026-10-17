@@ -886,7 +886,7 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
           int wave = sinT[(r * 4 - phase * 2 + (sinT[(a * 9 + (phase >> 2)) & 255] >> 4)) & 255];
           int tex  = sinT[(r * 9 - phase * 3 + (sinT[(a * 7 + (phase >> 1)) & 255] >> 3)) & 255];
           int sd   = sinT[(a * 22 + (phase >> 3)) & 255], sdp = sd > 0 ? sd : 0;
-          v = 150 + sbGlowT[r]
+          v = 115 + sbGlowT[r]
             + ((((wave + 127) * 85 >> 8) * sbRingT[r]) >> 8)     // soft rings near the centre
             + ((((tex * 26) >> 7) * sbRingT[r]) >> 8)
             + ((((ray * 32) >> 7) * sbOuterT[r]) >> 8)            // rays toward the rim

@@ -460,7 +460,7 @@ const MODELS = {
   ssd1351:    { chip: "SSD1351", spec: "1.5″ · 128×128 · SPI", w: 128, h: 128, kind: "rgb", driver: "ssd1351", lib: "Adafruit SSD1351 library", band: 32, r: 54, fps: "about 6–8 fps on an Uno (it renders in 4 strips to fit in memory), smooth on an ESP32" },
 };
 const TINTS = { white: ["White", "#f2f7ff", "#f2f7ff"], blue: ["Blue", "#5fd0ff", "#5fd0ff"], duo: ["Yellow + blue", "#ffd94d", "#5fd0ff"], yellow: ["Yellow", "#ffd94d", "#ffd94d"], green: ["Green", "#6dff8c", "#6dff8c"] };
-const PRESETS = { Rift: ["#3b1cff", "#38f0ff"], Slime: ["#0b6b1a", "#8dff4f"], Bloom: ["#c02ad0", "#f9c8ff"], Warp: ["#1b2a8a", "#9fe8ff"], Nebula: ["#4b1a9a", "#ff7ad9"], Event: ["#b3360a", "#ffd27a"], Ember: ["#ff3d00", "#ffd36b"], Toxic: ["#13c94a", "#d8ff5a"], Glacier: ["#0a3fa8", "#e8fbff"], Crimson: ["#9e0030", "#ff7ab0"], Void: ["#5a1ccc", "#e3a6ff"] };
+const PRESETS = { Rift: ["#3b1cff", "#38f0ff"], Slime: ["#0b6b1a", "#8dff4f"], Bloom: ["#a400ff", "#ff4fd8"], Warp: ["#1b2a8a", "#9fe8ff"], Nebula: ["#4b1a9a", "#ff7ad9"], Event: ["#b3360a", "#ffd27a"], Ember: ["#ff3d00", "#ffd36b"], Toxic: ["#13c94a", "#d8ff5a"], Glacier: ["#0a3fa8", "#e8fbff"], Crimson: ["#9e0030", "#ff7ab0"], Void: ["#5a1ccc", "#e3a6ff"] };
 const rmax = M => Math.floor(Math.min(M.w, M.h) / 2) - 1;
 const crossMax = M => M.rect ? Math.floor((M.h - 8) * 0.8) : rmax(M) - 9;   // crosses fill the screen (round: flared ends stay inside the circle)
 const radiusMax = M => S.style >= 8 && S.style <= 13 ? crossMax(M) : rmax(M);
@@ -479,6 +479,7 @@ if (!(S.crossw >= 25 && S.crossw <= 100)) S.crossw = 46;
 if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
 if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
+if (S.c1 === "#c02ad0" && S.c2 === "#f9c8ff") { S.c1 = PRESETS.Bloom[0]; S.c2 = PRESETS.Bloom[1]; }   // the old pale Bloom colours
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
 const isHex = c => /^#[0-9a-f]{6}$/i.test(c || "");
@@ -1103,7 +1104,7 @@ function tftFrame() {
           const wave = sinT[(r * 4 - phase * 2 + (sinT[(a * 9 + (phase >> 2)) & 255] >> 4)) & 255];
           const tex = sinT[(r * 9 - phase * 3 + (sinT[(a * 7 + (phase >> 1)) & 255] >> 3)) & 255];
           const sd = sinT[(a * 22 + (phase >> 3)) & 255], sdp = sd > 0 ? sd : 0;
-          v = 150 + sbGlowT[r]
+          v = 115 + sbGlowT[r]
             + ((((wave + 127) * 85 >> 8) * sbRingT[r]) >> 8)
             + ((((tex * 26) >> 7) * sbRingT[r]) >> 8)
             + ((((ray * 32) >> 7) * sbOuterT[r]) >> 8)

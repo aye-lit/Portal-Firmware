@@ -107,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xFEF73895UL;
+const uint32_t BUILD_ID = 0x59607E73UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -1214,7 +1214,7 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
           int wave = sinT[(r * 4 - phase * 2 + (sinT[(a * 9 + (phase >> 2)) & 255] >> 4)) & 255];
           int tex  = sinT[(r * 9 - phase * 3 + (sinT[(a * 7 + (phase >> 1)) & 255] >> 3)) & 255];
           int sd   = sinT[(a * 22 + (phase >> 3)) & 255], sdp = sd > 0 ? sd : 0;
-          v = 150 + sbGlowT[r]
+          v = 115 + sbGlowT[r]
             + ((((wave + 127) * 85 >> 8) * sbRingT[r]) >> 8)     // soft rings near the centre
             + ((((tex * 26) >> 7) * sbRingT[r]) >> 8)
             + ((((ray * 32) >> 7) * sbOuterT[r]) >> 8)            // rays toward the rim
