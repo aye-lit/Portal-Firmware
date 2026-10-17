@@ -370,8 +370,9 @@ const STYLES = [
   { name: "Nebula" },
   { name: "Wormhole" },
   { name: "Meteor Shower", sparks: 14 },
+  { name: "Wooden", cross: CROSS_SHAPE[0], c: ["#d26a00", "#ffd27a"], wood: true },
 ];
-const isCrossStyle = i => i >= 8 && i <= 13, isSpaceStyle = i => (i >= 3 && i <= 5) || i >= 14, hasSpaceCols = i => i === 4 || i >= 14;
+const isCrossStyle = i => (i >= 8 && i <= 13) || i === 17, isSpaceStyle = i => (i >= 3 && i <= 5) || (i >= 14 && i <= 16), hasSpaceCols = i => i === 4 || (i >= 14 && i <= 16);
 function markStyle() {
   $("style").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.i === S.style));
   const tft = M.kind === "tft", cross = tft && isCrossStyle(S.style);
@@ -379,6 +380,10 @@ function markStyle() {
   root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(tft && eff === 2); });
   root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(tft && isSpaceStyle(eff)); });
   root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !cross; });
+  const woodSel = S.style === 17;                            // the Wooden cross picks what goes behind it
+  $("crossfill-label").textContent = woodSel ? "Behind the cross" : "Inside the cross";
+  $("crossfill-hint").textContent = woodSel ? "What's shown behind the wooden cross. The warm glow uses the colours below." : "What's shown inside the glowing cross outline";
+  $("fill-glow").hidden = $("fill-glow").disabled = !woodSel;
   if ($("crossfill")) $("crossfill").value = S.crossFill;
   $("cross-row").hidden = !picturesAllowed() && !isCrossStyle(S.style);
   const sc = tft && hasSpaceCols(eff);                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
@@ -416,7 +421,9 @@ STYLES.forEach((st, i) => {
     if (st.arms) S.arms = st.arms;
     if (st.twist) S.twist = st.twist;
     if (st.sparks) S.sparks = st.sparks;
-    if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.crossw = DEFAULTS.crossw; S.radius = crossMax(M); }   // crosses fill the screen, each with its own proportions
+    if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.crossw = DEFAULTS.crossw; S.radius = crossMax(M); }
+    if (st.wood) S.crossFill = 7;                              // Wooden cross: starts with the warm glow behind it
+    else if (S.crossFill === 7) S.crossFill = 0;   // crosses fill the screen, each with its own proportions
     bindAll(); markStyle(); changed(true);
   });
   $(isCrossStyle(i) ? "style-cross" : isSpaceStyle(i) ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole, Nebula, Wormhole, Meteor Shower are space styles
@@ -539,7 +546,7 @@ function buildTints() {
 function selectModel(key, userChose) {
   S.model = key; M = { ...MODELS[key] };
   if (M.rect && S.portrait && M.w !== M.h) [M.w, M.h] = [M.h, M.w];      // stood upright
-  if (userChose || S.radius > radiusMax(M)) S.radius = S.style >= 8 && S.style <= 13 ? crossMax(M) : Math.min(M.r, rmax(M));
+  if (userChose || S.radius > radiusMax(M)) S.radius = isCrossStyle(S.style) ? crossMax(M) : Math.min(M.r, rmax(M));
   $("model").value = key; showModelDetail();
   $("radius").max = radiusMax(M);
   sizeCanvas();
@@ -993,8 +1000,8 @@ if (S.portalR === undefined && !isCrossStyle(S.style)) {    // undo a portal siz
 }
 S.crossw = DEFAULTS.crossw;                                  // cross width and crossbar height are set by each cross now
 if (isCrossStyle(S.style)) {
-  S.bar = CROSS_SHAPE[S.style - 8].bar;
-  if (S.wideCross) S.beam = CROSS_SHAPE[S.style - 8].beam;           // undo the short-lived wide-beam version
+  S.bar = CROSS_SHAPE[crossKind(S.style)].bar;
+  if (S.wideCross) S.beam = CROSS_SHAPE[crossKind(S.style)].beam;           // undo the short-lived wide-beam version
   const m = MODELS[S.model]; if (m && !m.rect && S.radius === rmax(m) - 9) S.radius = crossMax(m);   // round: crosses grew to fill the circle
 }
 delete S.wideCross;

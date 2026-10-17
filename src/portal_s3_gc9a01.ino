@@ -85,7 +85,7 @@ uint8_t  BRIGHTNESS = 100;     // 10-100 %: dims the portal's colours
 uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy (Hubble-style spiral), 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
                                 // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
                                 // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
-uint8_t  CROSS_FILL = 0;       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower)
+uint8_t  CROSS_FILL = 0;       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower; the Wooden cross: what's behind it, 7 = warm glow)
 uint32_t SPACE_COLS[4] = { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF };   // Galaxy, Nebula, Wormhole, Meteor Shower: four colours blended together
 uint8_t  CROSS_W    = 46;      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
 uint8_t  BEAM       = 14;      // crosses: beam thickness, % of the portal size (5-30)
@@ -108,7 +108,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x87DC2033UL;
+const uint32_t BUILD_ID = 0x4D302269UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -324,7 +324,7 @@ void updateSparks() {
 }
 
 // ---------- saved settings (EEPROM) ----------
-bool validFill(uint8_t f) { return f <= 6 || (f >= 14 && f <= 16); }   // styles that can go inside a cross
+bool validFill(uint8_t f) { return f <= 7 || (f >= 14 && f <= 16); }   // styles that can go inside a cross (7: warm glow behind the Wooden cross)
 
 bool validScenes(const Saved &s) {
   if (s.sceneCount > 8 || !(s.holdSecs >= 1 && s.holdSecs <= 3600) || !(s.sceneFade >= 0 && s.sceneFade <= 600)) return false;
@@ -343,7 +343,7 @@ bool valid(const Saved &s) {
   return s.radius >= 6 && s.radius <= RADIUS_MAX && s.oval >= 1 && s.oval <= 2 &&
          s.arms >= 1 && s.arms <= 8 && s.twist >= 0 && s.twist <= 6 &&
          s.speed >= 0 && s.speed <= 0.4f && s.sparks <= MAX_SPARKS &&
-         s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && s.style <= 16 && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
+         s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && s.style <= 17 && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
          s.ripples <= 6 && s.ripSpeed >= 0.03f && s.ripSpeed <= 0.3f && s.glow >= 0.3f && s.glow <= 0.9f &&
          validScenes(s);
 }
@@ -394,7 +394,7 @@ uint8_t clampb(uint8_t v, uint8_t lo, uint8_t hi) { return v < lo ? lo : v > hi 
 void clampSettings(Saved &s) {
   s.radius = clampf(s.radius, 6, RADIUS_MAX); s.oval = clampf(s.oval, 1, 2); s.arms = clampb(s.arms, 1, 8);
   s.twist = clampf(s.twist, 0, 6); s.speed = clampf(s.speed, 0, 0.4f); if (s.sparks > MAX_SPARKS) s.sparks = MAX_SPARKS;
-  s.core &= 0xFFFFFF; s.rim &= 0xFFFFFF; s.bright = clampb(s.bright, 10, 100); if (s.style > 16) s.style = 0;
+  s.core &= 0xFFFFFF; s.rim &= 0xFFFFFF; s.bright = clampb(s.bright, 10, 100); if (s.style > 17) s.style = 0;
   s.stars = clampb(s.stars, 1, 6); s.fadeCount = clampb(s.fadeCount, 1, 3); s.fadeSecs = clampf(s.fadeSecs, 1, 3600);
   if (s.rimSmooth > 100) s.rimSmooth = 100; if (s.ripples > 6) s.ripples = 6;
   s.ripSpeed = clampf(s.ripSpeed, 0.03f, 0.3f); s.glow = clampf(s.glow, 0.3f, 0.9f);
@@ -898,6 +898,7 @@ void composeStrip(int y0, int rows, uint16_t *dst) {
 
 // ---------- one frame ----------
 uint8_t look = 0;                        // the style being drawn (crosses fall back to Vortex without flash storage)
+extern bool woodOn; extern int woodPulse; void prepareWood();   // Wooden cross (below)
 
 inline void polarAt(int x, int y, int cyc, int &r, int &a) {   // distance and angle (0-255) from (centre column, row cyc)
   int cy = y < cyc ? cyc - 1 - y : y - cyc, a0;
@@ -1181,10 +1182,13 @@ void frameStart() {
     resetSparks();
     havePending = false;
   }
-  bool isCross = STYLE >= 8 && STYLE <= 13;
+  bool isCross = (STYLE >= 8 && STYLE <= 13) || STYLE == 17;   // 17: Wooden cross
   if (isCross && crossAvailable() && edgeBuf) prepareCross();
   crossOn = isCross && crossReady;
-  look = crossOn ? CROSS_FILL : isCross ? 0 : STYLE;   // crosses: the chosen style is drawn inside
+  woodOn = crossOn && STYLE == 17;
+  look = crossOn ? CROSS_FILL : isCross ? 0 : STYLE;   // crosses: the chosen style is drawn inside (the Wooden cross: behind)
+  if (crossOn && look == 7 && !woodOn) look = 0;        // the warm glow is only for the Wooden cross
+  if (woodOn) { prepareWood(); woodPulse = (int)(256 * (0.75f + 0.25f * sinf(millis() / 1000.0f * 1.3f))); }
   spCY = crossOn ? crossYC : QY;
   if (look == 4 || look >= 14) { if (spaceMemory()) prepareSpace(); else look = 0; }   // no room: show the Vortex
   updateColourFade();
@@ -1307,11 +1311,128 @@ void crossMask(int y0, int rows, uint16_t *strip) {   // glowing cross outline o
   }
 }
 
+// ---------- Wooden cross (style 17): carved wood, the crossbar joined flush with the upright ----------
+// Behind it (CROSS_FILL): 7 = a warm glow in the main colours, otherwise any portal or space style.
+bool     woodOn = false;
+uint8_t  woodGT[256], woodGlowT[128], woodShT[128], woodWideT[256], woodVigT[256];
+uint8_t  woodWobT[2][1024];               // grain sway along each beam
+uint16_t woodPal[64 * 16];                // 64 wood tones x 16 shades (bevel light and shadow)
+float    woodAW = 10, woodHHL = 20, woodBot = 100, woodTop = 50, woodS = 1;
+int      woodVS = 51, woodFS = 384, woodUS = 51, woodPulse = 256;
+uint32_t woodKey = 0;
+
+float woodNoise(float x, uint32_t seed) {      // smooth 1-D noise, 0..1
+  int i = (int)floorf(x);
+  float f = x - i; f = f * f * (3 - 2 * f);
+  float a = (hash32((uint32_t)(i * 7919) + seed) & 1023) / 1023.0f, b = (hash32((uint32_t)((i + 1) * 7919) + seed) & 1023) / 1023.0f;
+  return a + (b - a) * f;
+}
+
+float woodBox(float x, float y, float cx, float cy, float hw, float hh) {
+  float dx = fabsf(x - cx) - hw, dy = fabsf(y - cy) - hh;
+  return hypotf(fmaxf(dx, 0), fmaxf(dy, 0)) + fminf(fmaxf(dx, dy), 0);
+}
+float woodSD(float x, float y) {               // one solid piece: upright and crossbar together
+  return fminf(woodBox(x, y, 0, (woodBot - woodTop) / 2, woodAW, (woodBot + woodTop) / 2), woodBox(x, y, 0, 0, woodHHL, woodAW));
+}
+
+void prepareWood() {
+  float R = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100);
+  uint32_t key = 2166136261UL;
+  uint32_t parts[] = { (uint32_t)(R * 16), CROSS_W, BEAM, BAR, BRIGHTNESS, SCR_W, SCR_H, 1 };
+  for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
+  if (key == woodKey) return;
+  woodKey = key;
+  woodBot = R; woodTop = R * BAR / (100.0f - BAR);
+  woodAW = max(2.0f, R * BEAM / 100.0f); woodHHL = max(woodAW + 1, min(R * CROSS_W / 100.0f, SCR_W / 2.0f - 2));
+  woodS = R / 149.0f;
+  woodVS = (int)lroundf(0.2f / woodS * 256); woodFS = (int)lroundf(1.5f / woodS * 256); woodUS = (int)lroundf(0.2f / woodS * 256);
+  for (int i = 0; i < 256; i++) woodGT[i] = (uint8_t)lroundf(powf(fabsf(sinf(i * PI / 256)), 14) * 255);
+  for (int k = 0; k < 2; k++) for (int u = 0; u < 1024; u++) woodWobT[k][u] = (uint8_t)lroundf(woodNoise((u - 512) * 0.008f / woodS, k ? 11 : 3) * 0.8f * 256);
+  const float c0[3] = { 46, 26, 12 }, c1[3] = { 112, 66, 32 }, c2[3] = { 176, 120, 66 };   // dark walnut -> oak
+  for (int tn = 0; tn < 64; tn++) {
+    float tt = tn / 63.0f, c[3];
+    for (int j = 0; j < 3; j++) c[j] = tt < 0.5f ? c0[j] + (c1[j] - c0[j]) * tt * 2 : c1[j] + (c2[j] - c1[j]) * (tt - 0.5f) * 2;
+    for (int sh = 0; sh < 16; sh++) {
+      float k = (0.6f + sh * 0.05f) * BRIGHTNESS / 100.0f;
+      woodPal[tn * 16 + sh] = to565((uint8_t)min(255.0f, c[0] * k), (uint8_t)min(255.0f, c[1] * k), (uint8_t)min(255.0f, c[2] * k));
+    }
+  }
+  for (int k = 0; k < 128; k++) { woodGlowT[k] = (uint8_t)(200 * expf(-k / (14 * woodS))); woodShT[k] = (uint8_t)(255 * (1 - 0.8f * expf(-k / 3.0f))); }
+  for (int r = 0; r < 256; r++) {
+    woodWideT[r] = (uint8_t)(90 * fmaxf(0, 1 - r / (1.3f * woodBot)));
+    float q = r / (1.3f * woodBot); woodVigT[r] = (uint8_t)(255 * fmaxf(0, 1 - q * q));   // a portal behind fades out toward the screen edge
+  }
+}
+
+uint16_t woodColor(int x, int y, int ce) {     // the wood at one pixel inside the cross
+  float fx = x + 0.5f - SCR_W / 2.0f, fy = y + 0.5f - crossYC;
+  bool inH = fabsf(fy) < woodAW && fabsf(fx) < woodHHL;   // the crossbar (its grain runs across)
+  int u = (int)floorf(inH ? fx : fy), v = (int)floorf(inH ? fy : fx), seed = inH ? 11 : 3;
+  int ring = (v * woodVS + woodWobT[inH][constrain(u + 512, 0, 1023)]) & 255;
+  int fi = (v * woodFS) >> 8, fu = (u * woodUS) >> 8;
+  int h = hash32((uint32_t)(fi * 7919 + fu * 104729 + seed * 97)) & 255;
+  int tone = (int)lroundf((0.66f - woodGT[ring] / 255.0f * 0.2f + (h - 128) / 256.0f * 0.05f) * 63);
+  float k = 1;
+  if (ce <= 5) {                               // bevelled edges, lit from the top left
+    float e = -woodSD(fx, fy), bev = 3.2f * woodS;
+    if (e < bev) {
+      float gx = woodSD(fx + 1, fy) - woodSD(fx - 1, fy), gy = woodSD(fx, fy + 1) - woodSD(fx, fy - 1), gl = hypotf(gx, gy);
+      if (gl < 1e-6f) gl = 1;
+      float lit = -(gx / gl * 0.6f + gy / gl * 0.8f), q = 1 - fmaxf(e, 0) / bev;
+      k = 1 + 0.28f * lit * q - 0.12f * q;
+    }
+  }
+  if (inH ? (fabsf(fx) < woodAW + 0.5f && woodAW - fabsf(fy) < 1) : (fabsf(fy) < woodAW + 1 && fabsf(fy) >= woodAW)) k *= 0.86f;   // faint joint line
+  int sh = constrain((int)lroundf((k - 0.6f) / 0.05f), 0, 15);
+  return woodPal[constrain(tone, 0, 63) * 16 + sh];
+}
+
+inline uint16_t dim565(uint16_t c, int m) {    // darken a colour (m: 0-255)
+  return ((((c >> 11) * m) >> 8) << 11) | (((((c >> 5) & 63) * m) >> 8) << 5) | (((c & 31) * m) >> 8);
+}
+
+void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase2) {
+  if (look == 4 || look >= 14) {                 // a space picture behind the cross
+    renderSpaceStrip(y0, rows, strip);
+    for (int y = y0, i = 0; y < y0 + rows; y++) for (int x = 0; x < SCR_W; x++, i++) {
+      int ce = edgeBuf[i];
+      if (ce > 0) strip[i] = woodColor(x, y, ce);
+      else if (-ce < 12) strip[i] = dim565(strip[i], woodShT[-ce]);
+    }
+    return;
+  }
+  uint16_t *p = strip;
+  for (int y = y0; y < y0 + rows; y++) {
+    const int8_t *eb = edgeBuf + (y - y0) * SCR_W;
+    for (int x = 0; x < SCR_W; x++) {
+      int ce = eb[x];
+      if (ce > 0) {
+        uint16_t c = woodColor(x, y, ce);
+        if (look == 7 && ce <= 3) c = max565(c, pal[min(255, ((3 - ce) * 60 * woodPulse) >> 8)]);   // warm light on the edge
+        *p++ = c;
+        continue;
+      }
+      int k = -ce, r, a, v;
+      polarAt(x, y, crossYC, r, a);
+      if (look == 7) v = ((woodGlowT[k] + woodWideT[r]) * woodPulse) >> 8;   // warm glow, slowly breathing
+      else {                                         // a portal behind the cross, centred on the crossing
+        int e = edgeT[a];
+        if (r < e) { v = styleV(look, a, r, phase, phase2); int kk = e - r; if (kk < 64 && rimT[kk] > v) v = rimT[kk]; }
+        else { int kk = r - e; v = kk < 64 ? rimT[kk] : 0; int hh = haloT[kk > 255 ? 255 : kk]; if (hh > v) v = hh; }
+        v = (((v * woodShT[k]) >> 8) * woodVigT[r]) >> 8;   // soft shadow around the wood, fading toward the edge
+      }
+      *p++ = pal[v > 255 ? 255 : v];
+    }
+  }
+}
+
 void renderStrip(int y0, int rows, uint16_t *strip) {
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);
   uint16_t *p = strip;
   bool cross = crossOn;
   if (cross) readCrossRows(y0, rows);
+  if (cross && woodOn) { renderWoodStrip(y0, rows, strip, phase, phase2); return; }
   if (look == 4 || look >= 14) {                   // Galaxy, Nebula, Wormhole, Meteor Shower (also inside a cross)
     renderSpaceStrip(y0, rows, strip);
     if (cross) crossMask(y0, rows, strip);

@@ -1,21 +1,21 @@
 {
   "name": "Vortex Portal firmware",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "builds": {
     "portal_s3_gc9a01": {
       "file": "firmware/portal_s3_gc9a01.bin",
       "chip": "ESP32-S3",
       "address": 0,
-      "size": 783840,
-      "md5": "55d3afdd8144c786898a1a03a594656e",
+      "size": 787120,
+      "md5": "2b57640ef27c88d90a561fdbef47695c",
       "board": "ESP32-S3 + 1.28\" round GC9A01 (pins SCK 12, MOSI 11, CS 10, DC 9, RST 13)"
     },
     "portal_cyd35": {
       "file": "firmware/portal_cyd35.bin",
       "chip": "ESP32",
       "address": 0,
-      "size": 1228320,
-      "md5": "fcbb85ef2f97abd05fea95577b5a660f",
+      "size": 1231744,
+      "md5": "db57058d72b17d24b9faf8ed4284db6f",
       "board": "3.5\" ESP32 display board (Hosyond / LCDwiki E32R35T, ST7796)"
     }
   }
