@@ -884,7 +884,7 @@ function spaceFrame(out) {
   }
   // Galaxy, Nebula and Meteor Shower: gas worked out on a grid, smoothed in between
   galK = 3 + S.twist * 2.5;                          // Galaxy: Spiral setting
-  const C = style === 4 && Math.min(TW, TH) < 300 ? 2 : 4, SH = C === 2 ? 2 : 4;
+  const C = style === 4 && Math.min(TW, TH) < 300 ? 3 : 4, WM = C === 3 ? 7282 : 4096;   // WM: 1 / (C * C) in 1/65536ths
   const GC = Math.trunc(TW / C) + 2, GR = Math.trunc((TH - 1) / C) + 2;
   const gH = new Uint8Array(GC * GR), gV = new Uint8Array(GC * GR), gX = new Uint8Array(GC * GR);
   const rot = (T * 0.007) % TWO_PI, gcr = Math.cos(rot), gsr = Math.sin(rot), gcp = Math.cos(GAL_PA), gsp = Math.sin(GAL_PA);
@@ -919,14 +919,15 @@ function spaceFrame(out) {
   let p = 0;
   for (let y = 0; y < TH; y++) {
     const gy = Math.trunc(y / C), fy = y % C, Y = (y + 0.5 - QY) * spU;
-    for (let x = 0; x < TW; x++) {
-      const fx = x % C, i = gy * GC + Math.trunc(x / C);
-      const w00 = (C - fx) * (C - fy), w01 = fx * (C - fy), w10 = (C - fx) * fy, w11 = fx * fy;
-      const h = (gH[i] * w00 + gH[i + 1] * w01 + gH[i + GC] * w10 + gH[i + GC + 1] * w11) >> SH;
-      const v = (gV[i] * w00 + gV[i + 1] * w01 + gV[i + GC] * w10 + gV[i + GC + 1] * w11) >> SH;
+    const cy = C - fy;
+    for (let x = 0, i = gy * GC, fx = 0; x < TW; x++) {
+      const cx = C - fx, w00 = cx * cy, w01 = fx * cy, w10 = cx * fy, w11 = fx * fy;
+      const h = (((gH[i] * cx + gH[i + 1] * fx) * cy + (gH[i + GC] * cx + gH[i + GC + 1] * fx) * fy) * WM) >> 16;
+      const v = (((gV[i] * cx + gV[i + 1] * fx) * cy + (gV[i + GC] * cx + gV[i + GC + 1] * fx) * fy) * WM) >> 16;
+      const ii = i; if (++fx === C) { fx = 0; i++; }
       let hi = (h >> 1) & 63, vi = v >> 2;
       if (style === 4) {
-        const am = (gX[i] * w00 + gX[i + 1] * w01 + gX[i + GC] * w10 + gX[i + GC + 1] * w11) >> SH;
+        const am = (gX[ii] > 90 || gX[ii + 1] > 90 || gX[ii + GC] > 90 || gX[ii + GC + 1] > 90) ? ((gX[ii] * w00 + gX[ii + 1] * w01 + gX[ii + GC] * w10 + gX[ii + GC + 1] * w11) * WM) >> 16 : 0;
         if (am > 90) {                               // knots on the arms: pink star nurseries, blue clusters
           const X = (x + 0.5 - QX) * spU, xr = gax * X + gbx * Y, yr = gay * X + gby * Y;
           const kx = Math.floor(xr / 4), ky = Math.floor(yr / 4), kh = hash32((Math.imul(kx + 4096, 7919) + Math.imul(ky + 4096, 104729)) >>> 0), kind = kh & 15;
@@ -937,7 +938,7 @@ function spaceFrame(out) {
         }
         const st = star(y * TW + x, dens); if (st && st[1] > vi + 8) { hi = 42; vi = st[1]; }
       } else if (style === 14) { const st = star(y * TW + x, dens); if (st && st[1] > vi) { hi = st[0]; vi = Math.min(63, st[1] + 13); } }
-      else { const st = star(y * TW + x, gX[i] ? densBand : dens); if (st) { hi = st[0]; vi = st[1]; } }
+      else { const st = star(y * TW + x, gX[ii] ? densBand : dens); if (st) { hi = st[0]; vi = st[1]; } }
       out[p++] = spaceLUT[hi * 64 + vi];
     }
   }

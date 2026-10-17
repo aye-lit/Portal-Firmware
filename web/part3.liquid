@@ -770,7 +770,7 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
     return;
   }
   // Galaxy, Nebula and Meteor Shower: gas worked out on a coarse grid, smoothed in between
-  const int C = look == 4 && min(SCR_W, SCR_H) < 300 ? 2 : 4, SH = C == 2 ? 2 : 4, GC = SCR_W / C + 2;
+  const int C = look == 4 && min(SCR_W, SCR_H) < 300 ? 3 : 4, WM = C == 3 ? 7282 : 4096, GC = SCR_W / C + 2;   // WM: 1 / (C * C) in 1/65536ths
   int gy0 = y0 / C, gy1 = (y0 + rows - 1) / C + 1;
   for (int gy = gy0; gy <= gy1; gy++)
     for (int gx = 0; gx < GC; gx++) {
@@ -781,15 +781,16 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
   for (int y = y0; y < y0 + rows; y++) {
     int gy = y / C - gy0, fy = y % C;
     float Y = (y + 0.5f - QY) * spU;
-    for (int x = 0; x < SCR_W; x++) {
-      int fx = x % C, i = gy * GC + x / C;
-      int w00 = (C - fx) * (C - fy), w01 = fx * (C - fy), w10 = (C - fx) * fy, w11 = fx * fy;
-      int h = (spH[i] * w00 + spH[i + 1] * w01 + spH[i + GC] * w10 + spH[i + GC + 1] * w11) >> SH;
-      int v = (spV[i] * w00 + spV[i + 1] * w01 + spV[i + GC] * w10 + spV[i + GC + 1] * w11) >> SH;
+    const int cy = C - fy;
+    for (int x = 0, ic = gy * GC, fx = 0; x < SCR_W; x++) {
+      const int i = ic, cx = C - fx, w00 = cx * cy, w01 = fx * cy, w10 = cx * fy, w11 = fx * fy;
+      if (++fx == C) { fx = 0; ic++; }
+      int h = (((spH[i] * cx + spH[i + 1] * (C - cx)) * cy + (spH[i + GC] * cx + spH[i + GC + 1] * (C - cx)) * fy) * WM) >> 16;
+      int v = (((spV[i] * cx + spV[i + 1] * (C - cx)) * cy + (spV[i + GC] * cx + spV[i + GC + 1] * (C - cx)) * fy) * WM) >> 16;
       int hi = (h >> 1) & 63, vi = v >> 2, shi, svi;
       uint32_t pix = (uint32_t)(y * SCR_W + x);
       if (look == 4) {
-        int am = (spX[i] * w00 + spX[i + 1] * w01 + spX[i + GC] * w10 + spX[i + GC + 1] * w11) >> SH;
+        int am = (spX[i] > 90 || spX[i + 1] > 90 || spX[i + GC] > 90 || spX[i + GC + 1] > 90) ? ((spX[i] * w00 + spX[i + 1] * w01 + spX[i + GC] * w10 + spX[i + GC + 1] * w11) * WM) >> 16 : 0;
         if (am > 90) {                                   // knots on the arms: pink star nurseries, blue clusters
           float X = (x + 0.5f - QX) * spU, xr = gax * X + gbx * Y, yr = gay * X + gby * Y;
           int kx = (int)floorf(xr / 4), ky = (int)floorf(yr / 4);
