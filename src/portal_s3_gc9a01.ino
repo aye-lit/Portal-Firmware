@@ -107,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x59607E73UL;
+const uint32_t BUILD_ID = 0x69E48A31UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -968,7 +968,7 @@ void prepareSpace() {                   // once per frame
   nbO1 = (float)fmod(T * 0.004, 64.0); nbO2 = (float)fmod(T * 0.003, 64.0); nbO3 = (float)fmod(T * 0.002, 64.0);
   spTw = (int)(fmod(T * 0.25, TWO_PI) * 40.74f);
   if (look == 4) {                      // Galaxy: screen -> the galaxy's own slowly turning plane
-    float rot = (float)fmod(T * 0.0025, TWO_PI), cr = cosf(rot), sr = sinf(rot), cp = cosf(GAL_PA), sp = sinf(GAL_PA);
+    float rot = (float)fmod(T * 0.007, TWO_PI), cr = cosf(rot), sr = sinf(rot), cp = cosf(GAL_PA), sp = sinf(GAL_PA);
     gax = (cp * cr + sp * sr / GAL_TILT) * GAL_ZOOM; gbx = (-sp * cr + cp * sr / GAL_TILT) * GAL_ZOOM;
     gay = (-cp * sr + sp * cr / GAL_TILT) * GAL_ZOOM; gby = (sp * sr + cp * cr / GAL_TILT) * GAL_ZOOM;
     galK = 3 + TWIST * 2.5f;            // Spiral setting (TWIST 0-6)
@@ -1120,7 +1120,10 @@ void frameStart() {
 
 void frameEnd() {
   t += SPEED;
-  spaceT += SPEED * 8;
+  static uint32_t lastMs = millis();     // space styles move by the clock, so they match the Studio at any frame rate
+  uint32_t now = millis();
+  spaceT += SPEED * 8 * min(8.0f, (now - lastMs) / 35.7f);   // the Studio preview steps 28 times a second
+  lastMs = now;
   if (spaceT > 1e7) spaceT = 0;
   if (t > TWO_PI * 100) t -= TWO_PI * 100;   // wrap seamlessly so it can run forever
 }
