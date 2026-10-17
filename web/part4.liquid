@@ -410,7 +410,7 @@ STYLES.forEach((st, i) => {
     if (st.arms) S.arms = st.arms;
     if (st.twist) S.twist = st.twist;
     if (st.sparks) S.sparks = st.sparks;
-    if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.radius = crossMax(M); }   // crosses fill the screen
+    if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.crossw = DEFAULTS.crossw; S.radius = crossMax(M); }   // crosses fill the screen, each with its own proportions
     bindAll(); markStyle(); changed(true);
   });
   $(isCrossStyle(i) ? "style-cross" : isSpaceStyle(i) ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole, Nebula, Wormhole, Meteor Shower are space styles
@@ -985,6 +985,8 @@ if (S.portalR === undefined && !isCrossStyle(S.style)) {    // undo a portal siz
   const m = { ...MODELS[S.model] }; if (m.rect && S.portrait && m.w !== m.h) [m.w, m.h] = [m.h, m.w];
   if (S.radius === crossMax(m) || (S.radius === rmax(m) && crossMax(m) > rmax(m))) S.radius = Math.min(m.r, rmax(m));
 }
+S.crossw = DEFAULTS.crossw;                                  // cross width and crossbar height are set by each cross now
+if (isCrossStyle(S.style)) S.bar = CROSS_SHAPE[S.style - 8].bar;
 selectModel(S.model, false);
 countPlugged();
 requestAnimationFrame(loop);
