@@ -87,7 +87,7 @@ int      STRIP = 9600 / SCR_W;          // rows drawn per chunk (fewer if memory
 #define MAX_SPARKS 30
 #define MAX_PICS   8                     // picture slots
 #define PORTAL     255                   // scene number for the portal itself
-#define RADIUS_MAX ${Math.max(rmax(M), crossMax(M))}
+#define RADIUS_MAX ${Math.max(rmax(M), ...[8, 9, 10, 11, 12, 13].map(st => crossMax(M, st)))}
 #define SP_EXT     ${spaceExt(M)}          // space styles: distance from the centre to the edge of the picture area
 
 // ---------- Settings baked in from the Studio ----------

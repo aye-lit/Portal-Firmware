@@ -989,11 +989,15 @@ $("fw-install").addEventListener("click", installFirmware);
 
 if (S.portalR === undefined && !isCrossStyle(S.style)) {    // undo a portal size left over from a cross (Studio versions before this fix)
   const m = { ...MODELS[S.model] }; if (m.rect && S.portrait && m.w !== m.h) [m.w, m.h] = [m.h, m.w];
-  if (S.radius === crossMax(m) || (S.radius === rmax(m) && crossMax(m) > rmax(m))) S.radius = Math.min(m.r, rmax(m));
+  if (S.radius === crossMax(m) || (!m.rect && S.radius === rmax(m) - 9) || (S.radius === rmax(m) && crossMax(m) > rmax(m))) S.radius = Math.min(m.r, rmax(m));
 }
 S.crossw = DEFAULTS.crossw;                                  // cross width and crossbar height are set by each cross now
-if (isCrossStyle(S.style)) { S.bar = CROSS_SHAPE[S.style - 8].bar; if (!S.wideCross) S.beam = CROSS_SHAPE[S.style - 8].beam; }   // crosses got wider beams
-S.wideCross = 1;
+if (isCrossStyle(S.style)) {
+  S.bar = CROSS_SHAPE[S.style - 8].bar;
+  if (S.wideCross) S.beam = CROSS_SHAPE[S.style - 8].beam;           // undo the short-lived wide-beam version
+  const m = MODELS[S.model]; if (m && !m.rect && S.radius === rmax(m) - 9) S.radius = crossMax(m);   // round: crosses grew to fill the circle
+}
+delete S.wideCross;
 selectModel(S.model, false);
 countPlugged();
 requestAnimationFrame(loop);

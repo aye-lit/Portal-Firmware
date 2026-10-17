@@ -68,7 +68,7 @@ int      STRIP = 9600 / SCR_W;          // rows drawn per chunk (fewer if memory
 #define MAX_SPARKS 30
 #define MAX_PICS   8                     // picture slots
 #define PORTAL     255                   // scene number for the portal itself
-#define RADIUS_MAX 119
+#define RADIUS_MAX 151
 #define SP_EXT     120          // space styles: distance from the centre to the edge of the picture area
 
 // ---------- Settings baked in from the Studio ----------
@@ -108,7 +108,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x3B2444EBUL;
+const uint32_t BUILD_ID = 0x87DC2033UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -614,7 +614,7 @@ void prepareCross() {                           // (re)build the outline when th
   for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
   if (key == crossKey && crossReady) return;
   crossReady = false;
-  float rw = max(1.5f, max(2.0f, min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100) * BEAM / 100.0f) * 0.3f);
+  float rw = max(1.5f, max(2.0f, min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100) * BEAM / 100.0f) * 0.18f);
   for (int k = 0; k < 128; k++) { crossRimT[k] = (uint8_t)(255 * expf(-(k / rw) * (k / rw))); crossHaloT[k] = (uint8_t)(115 * expf(-k / 12.0f)); }
   uint32_t head[4];
   esp_partition_read(picPart, crossOff, head, 16);

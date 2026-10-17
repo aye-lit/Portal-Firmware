@@ -108,7 +108,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x3B2444EBUL;
+const uint32_t BUILD_ID = 0x87DC2033UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -614,7 +614,7 @@ void prepareCross() {                           // (re)build the outline when th
   for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
   if (key == crossKey && crossReady) return;
   crossReady = false;
-  float rw = max(1.5f, max(2.0f, min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100) * BEAM / 100.0f) * 0.3f);
+  float rw = max(1.5f, max(2.0f, min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100) * BEAM / 100.0f) * 0.18f);
   for (int k = 0; k < 128; k++) { crossRimT[k] = (uint8_t)(255 * expf(-(k / rw) * (k / rw))); crossHaloT[k] = (uint8_t)(115 * expf(-k / 12.0f)); }
   uint32_t head[4];
   esp_partition_read(picPart, crossOff, head, 16);
