@@ -481,7 +481,7 @@ if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
 if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 S.reverse = S.reverse === true;
-if (![0, 1, 2, 3, 4, 5, 6, 7, 14, 15, 16].includes(S.crossFill)) S.crossFill = 0;
+if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 15, 16].includes(S.crossFill)) S.crossFill = 0;
 if (S.c1 === "#c02ad0" && S.c2 === "#f9c8ff") { S.c1 = PRESETS.Bloom[0]; S.c2 = PRESETS.Bloom[1]; }   // the old pale Bloom colours
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
@@ -1076,8 +1076,93 @@ function woodColor(x, y, ce) {
 }
 const max32 = (a, b) => (255 << 24) | Math.max(a & 0xFF0000, b & 0xFF0000) | Math.max(a & 0xFF00, b & 0xFF00) | Math.max(a & 0xFF, b & 0xFF);
 const dim32 = (c, m) => (255 << 24) | ((((c >> 16) & 255) * m >> 8) << 16) | ((((c >> 8) & 255) * m >> 8) << 8) | ((c & 255) * m >> 8);
+// ---------------- cloud skies behind the Wooden cross (fills 8 blue sky, 9 sunset, 10 heavenly light), same maths as the board ----------------
+let cloudTex = null, cloudDrift = 0, cloudLastMs = 0, cloudKey = "";
+const cloudDensT = new Uint8Array(512), cloudShT = new Uint8Array(64), cloudGlowT = new Uint8Array(128), cloudRayT = new Uint8Array(256), cloudRayRT = new Uint8Array(256), cloudCol = Array.from({ length: 16 }, () => [0, 0, 0]);
+const CK = { k1: 0, k2: 0, k3: 0 };
+const SKY_TOP = [[38, 96, 190], [58, 38, 110], [140, 178, 236]], SKY_MID = [225, 110, 92], SKY_BOT = [[150, 200, 240], [255, 190, 110], [255, 232, 190]];
+const CL_LIT = [[250, 252, 255], [255, 226, 180], [255, 255, 250]], CL_SH = [[150, 168, 198], [78, 44, 92], [188, 188, 208]], CL_COV = [[0.44, 0.60], [0.45, 0.61], [0.42, 0.59]];
+const cloudLat = (ix, iy, p, o) => { ix &= p - 1; iy &= p - 1; return hash32((Math.imul(ix, 73856093) ^ Math.imul(iy, 19349663) ^ Math.imul(o, 83492791)) >>> 0) & 255; };
+function cloudMemory() {
+  if (cloudTex) return;
+  cloudTex = new Uint8Array(128 * 128);
+  const per = [4, 8, 16, 32], amp = [0.52, 0.27, 0.14, 0.05];
+  for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) {
+    let v = 0;
+    for (let o = 0; o < 4; o++) {
+      const p = per[o], fx = x * p / 128, fy = y * p / 128, ix = Math.trunc(fx), iy = Math.trunc(fy);
+      let u = fx - ix, w = fy - iy; u = u * u * (3 - 2 * u); w = w * w * (3 - 2 * w);
+      const a = cloudLat(ix, iy, p, o), b = cloudLat(ix + 1, iy, p, o), c = cloudLat(ix, iy + 1, p, o), d = cloudLat(ix + 1, iy + 1, p, o);
+      v += amp[o] * ((a + (b - a) * u) * (1 - w) + (c + (d - c) * u) * w);
+    }
+    cloudTex[y * 128 + x] = Math.trunc(Math.min(255, v / 0.98));
+  }
+}
+function cloudAt(X, Y) {
+  const ix = (X >> 8) & 127, iy = (Y >> 8) & 127, fx = X & 255, fy = Y & 255, ix1 = (ix + 1) & 127, iy1 = (iy + 1) & 127;
+  const a = cloudTex[iy * 128 + ix], b = cloudTex[iy * 128 + ix1], c = cloudTex[iy1 * 128 + ix], d = cloudTex[iy1 * 128 + ix1];
+  const top = (a << 8) + (b - a) * fx, bot = (c << 8) + (d - c) * fx;
+  return ((top << 8) + (bot - top) * fy) >> 16;
+}
+function prepareClouds(kind) {
+  const key = kind + "," + W8.s;
+  if (key === cloudKey) return;
+  cloudKey = key;
+  const [c0, c1] = CL_COV[kind];
+  for (let i = 0; i < 512; i++) { const x = Math.min(1, Math.max(0, ((i - 128) / 255 - c0) / (c1 - c0))); cloudDensT[i] = Math.trunc(255 * x * x * (3 - 2 * x)); }
+  for (let k = 0; k < 64; k++) cloudShT[k] = Math.trunc(255 * (1 - Math.exp(-k / 2.5) * (kind === 2 ? 0.15 : 0.45)));
+  for (let k = 0; k < 128; k++) cloudGlowT[k] = Math.trunc(255 * 0.7 * Math.exp(-k / (10 * W8.s)));
+  for (let a = 0; a < 256; a++) cloudRayT[a] = Math.trunc(255 * Math.pow(Math.max(0, Math.sin(a * TWO_PI / 256)), 6));
+  for (let r = 0; r < 256; r++) cloudRayRT[r] = Math.trunc(255 * 0.55 * Math.max(0, 1 - r / (1.4 * W8.bot)));
+  for (let i = 0; i < 16; i++) for (let j = 0; j < 3; j++) cloudCol[i][j] = Math.trunc(CL_SH[kind][j] + (CL_LIT[kind][j] - CL_SH[kind][j]) * i / 15);
+  CK.k1 = Math.round(64 / W8.s * 256); CK.k2 = Math.round(64 / W8.s * 256 * 1.7); CK.k3 = Math.round(64 / W8.s * 256 * 3.1);
+}
+const rgb32 = (r, g, b) => { const r5 = r & 0xF8, g6 = g & 0xFC, b5 = b & 0xF8; return (255 << 24) | ((b5 | b5 >> 5) << 16) | ((g6 | g6 >> 6) << 8) | (r5 | r5 >> 5); };
+function cloudFrame(out, CE, fill) {
+  cloudMemory();
+  const kind = fill - 8, br = Math.trunc(S.bright * 256 / 100);
+  prepareClouds(kind);
+  const now = performance.now();
+  if (cloudLastMs) cloudDrift += 6 * Math.min(8, (now - cloudLastMs) / 1000) * (S.speed / 0.12);
+  cloudLastMs = now;
+  if (cloudDrift > 1e6) cloudDrift = 0;
+  const D1 = Math.trunc(cloudDrift * 76.8), D2 = Math.trunc((cloudDrift * 0.3 + 97) * 128), D3 = Math.trunc((cloudDrift * 0.2 + 53) * 128);
+  const rayPh = Math.trunc(now / 1000 * 0.15 * 40.74);
+  const sky = [0, 0, 0], c = [0, 0, 0];
+  for (let y = 0, p = 0; y < TH; y++) {
+    const fy = y / TH;
+    for (let j = 0; j < 3; j++) sky[j] = kind === 1 ? Math.trunc(fy < 0.55 ? SKY_TOP[1][j] + (SKY_MID[j] - SKY_TOP[1][j]) * fy / 0.55 : SKY_MID[j] + (SKY_BOT[1][j] - SKY_MID[j]) * (fy - 0.55) / 0.45)
+                                                 : Math.trunc(SKY_TOP[kind][j] + (SKY_BOT[kind][j] - SKY_TOP[kind][j]) * fy);
+    const Y1 = (y * CK.k1) >> 8, Y2 = ((y * CK.k2) >> 8) + 31 * 128, Y3 = ((y * CK.k3) >> 8) + 11 * 128;
+    for (let x = 0; x < TW; x++, p++) {
+      const ce = CE[p];
+      if (ce > 0) {
+        let w = woodColor(x, y, ce);
+        if (kind === 1 && ce <= 1) w = max32(w, rgb32(64, 42, 22));
+        if (kind === 2 && ce <= 2) w = max32(w, ce === 1 ? rgb32(170, 156, 120) : rgb32(110, 100, 78));
+        out[p] = w; continue;
+      }
+      const k = -ce, X1 = ((x * CK.k1) >> 8) + D1, X2 = ((x * CK.k2) >> 8) + D2, X3 = ((x * CK.k3) >> 8) + D3;
+      const n = (cloudAt(X1, Y1) * 205 + cloudAt(X2, Y2) * 51) >> 8;
+      const n2 = (cloudAt(X1, Y1 - 768) * 205 + cloudAt(X2, Y2 - 1280) * 51) >> 8;
+      const det = ((cloudAt(X3, Y3) - 128) * 36) >> 8;
+      const dens = cloudDensT[Math.max(0, Math.min(511, n + det + 128))];
+      const light = Math.max(0, Math.min(255, 158 + (n - n2) * 5 + ((det * 3) >> 1))) >> 4;
+      for (let j = 0; j < 3; j++) c[j] = sky[j] + (((cloudCol[light][j] - sky[j]) * dens) >> 8);
+      if (kind === 2) {
+        const [r, a] = polarAt(x, y, crossYC);
+        let q = ((cloudRayT[(a * 9 + rayPh) & 255] * cloudRayRT[r]) >> 8) + cloudGlowT[k > 127 ? 127 : k];
+        if (q > 255) q = 255;
+        c[0] += ((255 - c[0]) * q) >> 8; c[1] += ((248 - c[1]) * q) >> 8; c[2] += ((225 - c[2]) * q) >> 8;
+      }
+      const m = (cloudShT[k > 63 ? 63 : k] * br) >> 8;
+      out[p] = rgb32((c[0] * m) >> 8, (c[1] * m) >> 8, (c[2] * m) >> 8);
+    }
+  }
+}
 function woodFrame(out, CE, fill, arms, phase, phase2, tw) {
   prepareWood();
+  if (fill >= 8 && fill <= 10) { cloudFrame(out, CE, fill); return; }   // a cloud sky behind the cross
   const pulse = Math.trunc(256 * (0.75 + 0.25 * Math.sin(performance.now() / 1000 * 1.3)));
   if (fill === 4 || fill >= 14) {
     spaceFrame(out, fill, crossYC);
@@ -1165,7 +1250,7 @@ function tftFrame() {
   const R = S.radius, arms = S.arms, style = S.style;
   const isCross = (style >= 8 && style <= 13) || style === 17, wood = style === 17;
   let fill = isCross ? S.crossFill : style;               // crosses: the chosen style is drawn inside (the Wooden cross: behind)
-  if (isCross && fill === 7 && !wood) fill = 0;           // the warm glow is only for the Wooden cross
+  if (isCross && fill >= 7 && fill <= 10 && !wood) fill = 0;   // the warm glow and the skies are only for the Wooden cross
   const phase = Math.trunc(t * 1.5 * 40.74), phase2 = Math.trunc(-t * 40.74);
   for (let a = 0; a < 256; a++) {
     const ang = a * TWO_PI / 256;

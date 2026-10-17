@@ -382,8 +382,9 @@ function markStyle() {
   root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !cross; });
   const woodSel = S.style === 17;                            // the Wooden cross picks what goes behind it
   $("crossfill-label").textContent = woodSel ? "Behind the cross" : "Inside the cross";
-  $("crossfill-hint").textContent = woodSel ? "What's shown behind the wooden cross. The warm glow uses the colours below." : "What's shown inside the glowing cross outline";
-  $("fill-glow").hidden = $("fill-glow").disabled = !woodSel;
+  $("crossfill-hint").textContent = woodSel ? "What's shown behind the wooden cross. The warm glow uses the colours below; the skies drift faster with a higher spin speed." : "What's shown inside the glowing cross outline";
+  $("fill-sky").hidden = $("fill-sky").disabled = !woodSel;
+  $("fill-sky").querySelectorAll("option").forEach(o => { o.hidden = o.disabled = !woodSel; });
   if ($("crossfill")) $("crossfill").value = S.crossFill;
   $("cross-row").hidden = !picturesAllowed() && !isCrossStyle(S.style);
   const sc = tft && hasSpaceCols(eff);                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
@@ -423,7 +424,7 @@ STYLES.forEach((st, i) => {
     if (st.sparks) S.sparks = st.sparks;
     if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.crossw = DEFAULTS.crossw; S.radius = crossMax(M); }
     if (st.wood) S.crossFill = 7;                              // Wooden cross: starts with the warm glow behind it
-    else if (S.crossFill === 7) S.crossFill = 0;   // crosses fill the screen, each with its own proportions
+    else if (S.crossFill >= 7 && S.crossFill <= 10) S.crossFill = 0;   // crosses fill the screen, each with its own proportions
     bindAll(); markStyle(); changed(true);
   });
   $(isCrossStyle(i) ? "style-cross" : isSpaceStyle(i) ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole, Nebula, Wormhole, Meteor Shower are space styles
