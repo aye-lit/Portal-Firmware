@@ -87,7 +87,7 @@ int      STRIP = 9600 / SCR_W;          // rows drawn per chunk (fewer if memory
 #define MAX_SPARKS 30
 #define MAX_PICS   8                     // picture slots
 #define PORTAL     255                   // scene number for the portal itself
-#define RADIUS_MAX ${crossMax(M)}
+#define RADIUS_MAX ${Math.max(rmax(M), crossMax(M))}
 #define SP_EXT     ${spaceExt(M)}          // space styles: distance from the centre to the edge of the picture area
 
 // ---------- Settings baked in from the Studio ----------
@@ -537,7 +537,7 @@ double   spaceT = 0;                    // space clock (runs on its own so it ne
 float    spU = 1, spExt = 118;          // space units per pixel, edge of the picture in space units
 float    nbCa = 1, nbSa = 0, nbO1 = 0, nbO2 = 0, nbO3 = 0;
 int      spTw = 0, whPh = 0;
-#define SP_GRID ((SCR_W / 2 + 2) * (9600 / SCR_W / 2 + 3))   // gas worked out every 2 or 4 pixels, smoothed in between
+#define SP_GRID ((SCR_W / 2 + 2) * (STRIP / 2 + 3))   // gas worked out every 2 or 4 pixels, smoothed in between (one strip at a time)
 uint8_t  *spH = NULL, *spV = NULL, *spX = NULL;
 // Galaxy: a Hubble-style spiral (like M51, M100, NGC 4414)
 #define GAL_TILT 0.86f                   // how tilted toward you (1 = face on)
@@ -556,7 +556,7 @@ void buildNoise() {
   for (int i = 0; i < 256; i++) powT[i] = (uint8_t)(255 * powf(i / 255.0f, 1.6f));
 }
 
-bool spaceMemory() {                    // the colour table and noise only take memory once a space style is used
+bool spaceMemory() {                    // reserved at startup (allocBuffers), so every space style always has room
   if (spaceLUT && noise8 && spX) return true;
   if (!spH) spH = (uint8_t *)malloc(SP_GRID);
   if (!spV) spV = (uint8_t *)malloc(SP_GRID);
@@ -947,13 +947,18 @@ bool allocBuffers() {
   rT = (uint8_t *)malloc(TQX * TQY);
   aT = (uint8_t *)malloc(TQX * TQY);
   if (!rT || !aT) return false;
-  for (; STRIP >= 2; STRIP /= 2) {           // smaller strips if memory is tight
-    stripBuf[0] = (uint16_t *)malloc(SCR_W * STRIP * 2);
-    stripBuf[1] = (uint16_t *)malloc(SCR_W * STRIP * 2);
-    picBuf = picturesAvailable() ? (uint16_t *)malloc(SCR_W * STRIP * 2) : NULL;   // for fades with pictures
-    edgeBuf = crossAvailable() ? (int8_t *)malloc(SCR_W * STRIP) : NULL;            // for the cross styles
-    if (stripBuf[0] && stripBuf[1] && (picBuf || !picturesAvailable()) && (edgeBuf || !crossAvailable())) return true;
-    free(stripBuf[0]); free(stripBuf[1]); free(picBuf); free(edgeBuf); picBuf = NULL; edgeBuf = NULL;
+  const int first = STRIP;
+  for (int withSpace = 1; withSpace >= 0; withSpace--) {   // try to make room for the space styles too, then without
+    for (STRIP = first; STRIP >= (withSpace ? 4 : 2); STRIP /= 2) {   // smaller strips if memory is tight
+      stripBuf[0] = (uint16_t *)malloc(SCR_W * STRIP * 2);
+      stripBuf[1] = (uint16_t *)malloc(SCR_W * STRIP * 2);
+      picBuf = picturesAvailable() ? (uint16_t *)malloc(SCR_W * STRIP * 2) : NULL;   // for fades with pictures
+      edgeBuf = crossAvailable() ? (int8_t *)malloc(SCR_W * STRIP) : NULL;            // for the cross styles
+      bool space = !withSpace || spaceMemory();                                        // Galaxy, Nebula, Wormhole, Meteor Shower
+      if (stripBuf[0] && stripBuf[1] && (picBuf || !picturesAvailable()) && (edgeBuf || !crossAvailable()) && space) return true;
+      free(stripBuf[0]); free(stripBuf[1]); free(picBuf); free(edgeBuf); picBuf = NULL; edgeBuf = NULL;
+      free(spH); free(spV); free(spX); free(spaceLUT); free(noise8); spH = spV = spX = NULL; spaceLUT = NULL; noise8 = NULL;
+    }
   }
   return false;
 }
@@ -978,7 +983,7 @@ ${DISP.begin}
     for (;;) { Serial.println(F("[portal] not enough memory for this screen")); delay(2000); }
   }
 #if defined(ESP32)
-  Serial.printf("[portal] memory ok, %u bytes free, %d rows per strip, room for %d pictures\\n", (unsigned)ESP.getFreeHeap(), STRIP, picturesAvailable());
+  Serial.printf("[portal] memory ok, %u bytes free, %d rows per strip, room for %d pictures, space styles %s\\n", (unsigned)ESP.getFreeHeap(), STRIP, picturesAvailable(), spaceLUT ? "ready" : "off (not enough memory)");
 #endif
   loadSettings();
   randomSeed(micros());
