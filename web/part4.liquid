@@ -992,7 +992,8 @@ if (S.portalR === undefined && !isCrossStyle(S.style)) {    // undo a portal siz
   if (S.radius === crossMax(m) || (S.radius === rmax(m) && crossMax(m) > rmax(m))) S.radius = Math.min(m.r, rmax(m));
 }
 S.crossw = DEFAULTS.crossw;                                  // cross width and crossbar height are set by each cross now
-if (isCrossStyle(S.style)) S.bar = CROSS_SHAPE[S.style - 8].bar;
+if (isCrossStyle(S.style)) { S.bar = CROSS_SHAPE[S.style - 8].bar; if (!S.wideCross) S.beam = CROSS_SHAPE[S.style - 8].beam; }   // crosses got wider beams
+S.wideCross = 1;
 selectModel(S.model, false);
 countPlugged();
 requestAnimationFrame(loop);
