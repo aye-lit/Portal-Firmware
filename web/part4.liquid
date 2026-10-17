@@ -392,6 +392,9 @@ STYLES.forEach((st, i) => {
   const b = document.createElement("button");
   b.type = "button"; b.textContent = st.name; b.dataset.i = i;
   b.addEventListener("click", () => {
+    const wasCross = isCrossStyle(S.style);
+    if (!wasCross && st.cross) S.portalR = S.radius;          // remember the portal size while showing a cross
+    if (wasCross && !st.cross) S.radius = Math.min(S.portalR || M.r, rmax(M));   // and put it back afterwards
     S.style = i;
     if (st.c) { S.c1 = st.c[0]; S.c2 = st.c[1]; }
     if (st.arms) S.arms = st.arms;
@@ -957,6 +960,10 @@ async function installFirmware() {
 }
 $("fw-install").addEventListener("click", installFirmware);
 
+if (S.portalR === undefined && !isCrossStyle(S.style)) {    // undo a portal size left over from a cross (Studio versions before this fix)
+  const m = { ...MODELS[S.model] }; if (m.rect && S.portrait && m.w !== m.h) [m.w, m.h] = [m.h, m.w];
+  if (S.radius === crossMax(m) || (S.radius === rmax(m) && crossMax(m) > rmax(m))) S.radius = Math.min(m.r, rmax(m));
+}
 selectModel(S.model, false);
 countPlugged();
 requestAnimationFrame(loop);
