@@ -381,6 +381,8 @@ function markStyle() {
   const sc = M.kind === "tft" && hasSpaceCols(S.style);     // Nebula, Wormhole, Meteor Shower use four space colours
   $("space-colors").hidden = !sc;
   if (M.kind === "tft") { $("rgb-colors").hidden = sc; $("fade-wrap").hidden = sc; $("rimsmooth-wrap").hidden = sc; }
+  $("radius").max = radiusMax(M);
+  if (S.radius > radiusMax(M)) S.radius = rmax(M);           // leaving a cross: back inside the screen
   const gal = M.kind === "tft" && S.style === 4;
   ["radius", "oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = sc && !(gal && k === "twist"); });   // portal-only controls
   const tl = $("twist").closest("label");                    // the Galaxy's Spiral setting is the portal's Twist
@@ -394,7 +396,7 @@ STYLES.forEach((st, i) => {
     if (st.c) { S.c1 = st.c[0]; S.c2 = st.c[1]; }
     if (st.arms) S.arms = st.arms;
     if (st.twist) S.twist = st.twist;
-    if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; }
+    if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.radius = crossMax(M); }   // crosses fill the screen
     bindAll(); markStyle(); changed(true);
   });
   $(isCrossStyle(i) ? "style-cross" : isSpaceStyle(i) ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole, Nebula, Wormhole, Meteor Shower are space styles
@@ -517,9 +519,9 @@ function buildTints() {
 function selectModel(key, userChose) {
   S.model = key; M = { ...MODELS[key] };
   if (M.rect && S.portrait && M.w !== M.h) [M.w, M.h] = [M.h, M.w];      // stood upright
-  if (userChose || S.radius > rmax(M)) S.radius = Math.min(M.r, rmax(M));
+  if (userChose || S.radius > radiusMax(M)) S.radius = S.style >= 8 && S.style <= 13 ? crossMax(M) : Math.min(M.r, rmax(M));
   $("model").value = key; showModelDetail();
-  $("radius").max = rmax(M);
+  $("radius").max = radiusMax(M);
   sizeCanvas();
   const tft = M.kind === "tft", rgb = M.kind !== "mono";
   $("pins").innerHTML = (tft ? TFT_PINS : rgb ? SPI_PINS : I2C_PINS).map(p => `<span>${p}</span>`).join("");

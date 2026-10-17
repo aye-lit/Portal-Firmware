@@ -241,8 +241,8 @@ void addX(uint8_t t, float cx, float cy, float hw, float hh, float r = 0, float 
 }
 
 void crossShapes() {
-  float R = RADIUS;
-  float bot = min(R, SCR_H / 2.0f - 2), top = min(bot * BAR / (100.0f - BAR), SCR_H / 2.0f - 2);
+  float R = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100);   // never taller than the screen (the cross is centred)
+  float bot = R, top = bot * BAR / (100.0f - BAR);
   float AW = max(2.0f, R * BEAM / 100.0f), HHL = max(AW + 1, min(R * CROSS_W / 100.0f, SCR_W / 2.0f - 2));
   nxs = 0;
   switch (STYLE - 8) {
@@ -305,7 +305,7 @@ float crossSD(float x, float y) {               // signed distance: negative ins
 bool crossAvailable() { return picPart != NULL; }
 
 int crossShift() {                              // move the crossing up so the whole cross is centred on the screen
-  float bot = min(RADIUS, SCR_H / 2.0f - 2), top = min(bot * BAR / (100.0f - BAR), SCR_H / 2.0f - 2);
+  float bot = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100), top = bot * BAR / (100.0f - BAR);
   return (int)lroundf((bot - top) / 2);
 }
 
@@ -317,7 +317,7 @@ void prepareCross() {                           // (re)build the outline when th
   for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
   if (key == crossKey && crossReady) return;
   crossReady = false;
-  float rw = max(1.5f, max(2.0f, RADIUS * BEAM / 100.0f) * 0.3f);
+  float rw = max(1.5f, max(2.0f, min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100) * BEAM / 100.0f) * 0.3f);
   for (int k = 0; k < 128; k++) { crossRimT[k] = (uint8_t)(255 * expf(-(k / rw) * (k / rw))); crossHaloT[k] = (uint8_t)(115 * expf(-k / 12.0f)); }
   uint32_t head[4];
   esp_partition_read(picPart, crossOff, head, 16);
@@ -462,6 +462,8 @@ const MODELS = {
 const TINTS = { white: ["White", "#f2f7ff", "#f2f7ff"], blue: ["Blue", "#5fd0ff", "#5fd0ff"], duo: ["Yellow + blue", "#ffd94d", "#5fd0ff"], yellow: ["Yellow", "#ffd94d", "#ffd94d"], green: ["Green", "#6dff8c", "#6dff8c"] };
 const PRESETS = { Rift: ["#3b1cff", "#38f0ff"], Slime: ["#0b6b1a", "#8dff4f"], Bloom: ["#c02ad0", "#f9c8ff"], Warp: ["#1b2a8a", "#9fe8ff"], Nebula: ["#4b1a9a", "#ff7ad9"], Event: ["#b3360a", "#ffd27a"], Ember: ["#ff3d00", "#ffd36b"], Toxic: ["#13c94a", "#d8ff5a"], Glacier: ["#0a3fa8", "#e8fbff"], Crimson: ["#9e0030", "#ff7ab0"], Void: ["#5a1ccc", "#e3a6ff"] };
 const rmax = M => Math.floor(Math.min(M.w, M.h) / 2) - 1;
+const crossMax = M => M.rect ? Math.floor((M.h - 8) * 0.8) : rmax(M) - 9;   // crosses fill the screen (round: flared ends stay inside the circle)
+const radiusMax = M => S.style >= 8 && S.style <= 13 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
 const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
@@ -928,7 +930,8 @@ function spaceFrame(out) {
 const CROSS_NAMES = ["Latin", "Celtic", "Budded", "Patriarchal", "Orthodox", "Pattée"];
 const CROSS_SHAPE = [{ beam: 14, bar: 32 }, { beam: 11, bar: 33 }, { beam: 10, bar: 33 }, { beam: 9, bar: 38 }, { beam: 8, bar: 37 }, { beam: 12, bar: 38 }];
 function crossShapes(kind, R, W, H) {
-  const bot = Math.min(R, H / 2 - 2), top = Math.min(bot * S.bar / (100 - S.bar), H / 2 - 2);
+  R = Math.min(R, (H - 8) * (100 - S.bar) / 100);  // never taller than the screen (the cross is centred)
+  const bot = R, top = bot * S.bar / (100 - S.bar);
   const AW = Math.max(2, R * S.beam / 100), HHL = Math.max(AW + 1, Math.min(R * S.crossw / 100, W / 2 - 2));
   const U = (t, b) => ({ t: "box", cx: 0, cy: (t + b) / 2, hw: AW, hh: (b - t) / 2 }), B = hl => ({ t: "box", cx: 0, cy: 0, hw: hl, hh: AW });
   switch (kind) {
@@ -963,7 +966,7 @@ function sdShapeJ(o, x, y) {
 let crossKey = "", crossE = null;                  // distance to the cross edge per pixel: >0 inside, <0 outside
 const crossRimT = new Uint8Array(128), crossHaloT = new Uint8Array(128);   // rim and outer glow, sized to the beam
 let crossYC = 0;                                   // row of the crossing: moved up so the whole cross is centred
-function crossShift(R, H) { const bot = Math.min(R, H / 2 - 2), top = Math.min(bot * S.bar / (100 - S.bar), H / 2 - 2); return Math.round((bot - top) / 2); }
+function crossShift(R, H) { const bot = Math.min(R, (H - 8) * (100 - S.bar) / 100), top = bot * S.bar / (100 - S.bar); return Math.round((bot - top) / 2); }
 function crossEdges() {
   crossYC = QY - crossShift(S.radius, TH);
   const key = [S.style, S.radius, S.crossw, S.beam, S.bar, TW, TH].join(",");
@@ -975,7 +978,7 @@ function crossEdges() {
     let e = -d; if (e > 0 && e < 1) e = 1; if (e <= 0 && e > -1) e = -1;
     E[i] = Math.max(-127, Math.min(127, Math.trunc(e)));
   }
-  const rw = Math.max(1.5, Math.max(2, S.radius * S.beam / 100) * 0.3);
+  const rw = Math.max(1.5, Math.max(2, Math.min(S.radius, (TH - 8) * (100 - S.bar) / 100) * S.beam / 100) * 0.3);
   for (let k = 0; k < 128; k++) { crossRimT[k] = Math.trunc(255 * Math.exp(-(k / rw) * (k / rw))); crossHaloT[k] = Math.trunc(115 * Math.exp(-k / 12)); }
   crossKey = key; crossE = E;
   return E;

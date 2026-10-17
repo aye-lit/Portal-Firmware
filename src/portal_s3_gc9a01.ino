@@ -68,7 +68,7 @@ int      STRIP = 9600 / SCR_W;          // rows drawn per chunk (fewer if memory
 #define MAX_SPARKS 30
 #define MAX_PICS   8                     // picture slots
 #define PORTAL     255                   // scene number for the portal itself
-#define RADIUS_MAX 119
+#define RADIUS_MAX 110
 #define SP_EXT     120          // space styles: distance from the centre to the edge of the picture area
 
 // ---------- Settings baked in from the Studio ----------
@@ -107,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x61F80211UL;
+const uint32_t BUILD_ID = 0x3034AAD0UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -512,8 +512,8 @@ void addX(uint8_t t, float cx, float cy, float hw, float hh, float r = 0, float 
 }
 
 void crossShapes() {
-  float R = RADIUS;
-  float bot = min(R, SCR_H / 2.0f - 2), top = min(bot * BAR / (100.0f - BAR), SCR_H / 2.0f - 2);
+  float R = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100);   // never taller than the screen (the cross is centred)
+  float bot = R, top = bot * BAR / (100.0f - BAR);
   float AW = max(2.0f, R * BEAM / 100.0f), HHL = max(AW + 1, min(R * CROSS_W / 100.0f, SCR_W / 2.0f - 2));
   nxs = 0;
   switch (STYLE - 8) {
@@ -576,7 +576,7 @@ float crossSD(float x, float y) {               // signed distance: negative ins
 bool crossAvailable() { return picPart != NULL; }
 
 int crossShift() {                              // move the crossing up so the whole cross is centred on the screen
-  float bot = min(RADIUS, SCR_H / 2.0f - 2), top = min(bot * BAR / (100.0f - BAR), SCR_H / 2.0f - 2);
+  float bot = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100), top = bot * BAR / (100.0f - BAR);
   return (int)lroundf((bot - top) / 2);
 }
 
@@ -588,7 +588,7 @@ void prepareCross() {                           // (re)build the outline when th
   for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
   if (key == crossKey && crossReady) return;
   crossReady = false;
-  float rw = max(1.5f, max(2.0f, RADIUS * BEAM / 100.0f) * 0.3f);
+  float rw = max(1.5f, max(2.0f, min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100) * BEAM / 100.0f) * 0.3f);
   for (int k = 0; k < 128; k++) { crossRimT[k] = (uint8_t)(255 * expf(-(k / rw) * (k / rw))); crossHaloT[k] = (uint8_t)(115 * expf(-k / 12.0f)); }
   uint32_t head[4];
   esp_partition_read(picPart, crossOff, head, 16);
