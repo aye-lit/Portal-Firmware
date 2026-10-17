@@ -794,20 +794,21 @@ function vn(x, y) {
 const to8 = v => v <= 0 ? 0 : v >= 1 ? 255 : Math.trunc(v * 255);
 let spaceT = 0;
 // Galaxy: a Hubble-style spiral (like M51, M100, NGC 4414)
-const GAL_TILT = 0.86, GAL_PA = -0.55, GAL_K = 9, GAL_ZOOM = 0.7;   // tilt, which way it points, arm winding, size
+const GAL_TILT = 0.86, GAL_PA = -0.55, GAL_ZOOM = 0.7;   // tilt, which way it points, size
+let galK = 9;                                        // how tightly the arms wind (from the Spiral setting)
 const smf = x => { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); };
 function galaxyNode(xr, yr) {                        // light, colour and "arm" at one point of the galaxy's plane
   const gr = Math.hypot(xr, yr), ga = Math.atan2(yr, xr), lr = Math.log(gr / 5 + 1);
   const wob = (vn(xr / 16 + 50, yr / 16) - 0.5) * 1.3;               // arms wander and break up
-  const ph = 2 * ga - GAL_K * lr + wob;
+  const ph = 2 * ga - galK * lr + wob;
   const c = 0.5 + 0.5 * Math.cos(ph), c2v = c * c, c4 = c2v * c2v, c8 = c4 * c4;
-  const b = 0.5 + 0.5 * Math.cos(2 * ga - GAL_K * 1.12 * lr + 2.3 + wob * 1.5), b2 = b * b, b6 = b2 * b2 * b2;   // fainter branch arms
-  const e = 0.5 + 0.5 * Math.cos(5 * ga - GAL_K * 1.5 * lr + wob * 2.2), e2 = e * e, e4 = e2 * e2, e10 = e4 * e4 * e2;   // feathery spurs
+  const b = 0.5 + 0.5 * Math.cos(2 * ga - galK * 1.12 * lr + 2.3 + wob * 1.5), b2 = b * b, b6 = b2 * b2 * b2;   // fainter branch arms
+  const e = 0.5 + 0.5 * Math.cos(5 * ga - galK * 1.5 * lr + wob * 2.2), e2 = e * e, e4 = e2 * e2, e10 = e4 * e4 * e2;   // feathery spurs
   const arm = Math.min(1, 0.7 * c2v + 0.3 * c8 + 0.5 * b6 * smf((gr - 8) / 20) + 0.28 * e10 * smf((gr - 14) / 16));
   const clump = vn(xr / 3.2, yr / 3.2) * 0.55 + vn(xr / 8 + 7, yr / 8) * 0.45;   // star clouds along the arms
   const l = 0.5 + 0.5 * Math.cos(ph - 0.6), l2 = l * l, l4 = l2 * l2, l8 = l4 * l4, l16 = l8 * l8;   // dust on the inner edge of each arm
   const lane = l16 * l8 * l4 * l2 * (0.35 + 0.9 * vn(xr / 2.6 + 20, yr / 2.6));
-  const f = 0.5 + 0.5 * Math.cos(4 * ga - GAL_K * 1.05 * lr + vn(xr / 7 + 31, yr / 7) * 5), f2 = f * f, f8 = f2 * f2 * f2 * f2, f16 = f8 * f8;   // thin dust filaments
+  const f = 0.5 + 0.5 * Math.cos(4 * ga - galK * 1.05 * lr + vn(xr / 7 + 31, yr / 7) * 5), f2 = f * f, f8 = f2 * f2 * f2 * f2, f16 = f8 * f8;   // thin dust filaments
   const wisp = f16 * f8 * f2 * 0.8 * smf((gr - 6) / 14) + Math.max(0, vn(xr / 4.5 + 3, yr / 4.5 - 9) - 0.64) * 1.4 * c;
   const edge = smf((104 - gr) / 44);
   const dust = Math.min(1, lane + wisp) * smf(gr / 14) * edge;
@@ -857,6 +858,7 @@ function spaceFrame(out) {
     return;
   }
   // Galaxy, Nebula and Meteor Shower: gas worked out on a grid, smoothed in between
+  galK = 3 + S.twist * 2.5;                          // Galaxy: Spiral setting
   const C = style === 4 && Math.min(TW, TH) < 300 ? 2 : 4, SH = C === 2 ? 2 : 4;
   const GC = Math.trunc(TW / C) + 2, GR = Math.trunc((TH - 1) / C) + 2;
   const gH = new Uint8Array(GC * GR), gV = new Uint8Array(GC * GR), gX = new Uint8Array(GC * GR);

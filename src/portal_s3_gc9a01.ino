@@ -107,7 +107,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xC46B6ABAUL;
+const uint32_t BUILD_ID = 0x61F80211UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -870,9 +870,8 @@ uint8_t  *spH = NULL, *spV = NULL, *spX = NULL;
 // Galaxy: a Hubble-style spiral (like M51, M100, NGC 4414)
 #define GAL_TILT 0.86f                   // how tilted toward you (1 = face on)
 #define GAL_PA   -0.55f                  // which way it points
-#define GAL_K    9.0f                    // how tightly the arms wind
 #define GAL_ZOOM 0.7f                    // size (smaller = bigger galaxy)
-float    gax = 1, gbx = 0, gay = 0, gby = 1;
+float    gax = 1, gbx = 0, gay = 0, gby = 1, galK = 9;   // galK: how tightly the arms wind (the Spiral setting)
 uint8_t  powT[256], whRingT[256], whNearT[256];
 int16_t  whOffT[256], whCoreT[256];
 int32_t  whHueT[256];
@@ -913,15 +912,15 @@ inline uint8_t to8(float v) { return v <= 0 ? 0 : v >= 1 ? 255 : (uint8_t)(v * 2
 void galaxyNode(float xr, float yr, uint8_t &h, uint8_t &v, uint8_t &a8) {   // light, colour and "arm" at one point of the galaxy's plane
   float gr = sqrtf(xr * xr + yr * yr), ga = atan2f(yr, xr), lr = logf(gr / 5 + 1);
   float wob = (vn(xr / 16 + 50, yr / 16) - 0.5f) * 1.3f;              // arms wander and break up
-  float ph = 2 * ga - GAL_K * lr + wob;
+  float ph = 2 * ga - galK * lr + wob;
   float c = 0.5f + 0.5f * cosf(ph), c2 = c * c, c4 = c2 * c2, c8 = c4 * c4;
-  float b = 0.5f + 0.5f * cosf(2 * ga - GAL_K * 1.12f * lr + 2.3f + wob * 1.5f), b2 = b * b, b6 = b2 * b2 * b2;   // fainter branch arms
-  float e = 0.5f + 0.5f * cosf(5 * ga - GAL_K * 1.5f * lr + wob * 2.2f), e2 = e * e, e4 = e2 * e2, e10 = e4 * e4 * e2;   // feathery spurs
+  float b = 0.5f + 0.5f * cosf(2 * ga - galK * 1.12f * lr + 2.3f + wob * 1.5f), b2 = b * b, b6 = b2 * b2 * b2;   // fainter branch arms
+  float e = 0.5f + 0.5f * cosf(5 * ga - galK * 1.5f * lr + wob * 2.2f), e2 = e * e, e4 = e2 * e2, e10 = e4 * e4 * e2;   // feathery spurs
   float arm = min(1.0f, 0.7f * c2 + 0.3f * c8 + 0.5f * b6 * smf((gr - 8) / 20) + 0.28f * e10 * smf((gr - 14) / 16));
   float clump = vn(xr / 3.2f, yr / 3.2f) * 0.55f + vn(xr / 8 + 7, yr / 8) * 0.45f;   // star clouds along the arms
   float l = 0.5f + 0.5f * cosf(ph - 0.6f), l2 = l * l, l4 = l2 * l2, l8 = l4 * l4, l16 = l8 * l8;   // dust on the inner edge of each arm
   float lane = l16 * l8 * l4 * l2 * (0.35f + 0.9f * vn(xr / 2.6f + 20, yr / 2.6f));
-  float f = 0.5f + 0.5f * cosf(4 * ga - GAL_K * 1.05f * lr + vn(xr / 7 + 31, yr / 7) * 5), f2 = f * f, f8 = f2 * f2 * f2 * f2, f16 = f8 * f8;   // thin dust filaments
+  float f = 0.5f + 0.5f * cosf(4 * ga - galK * 1.05f * lr + vn(xr / 7 + 31, yr / 7) * 5), f2 = f * f, f8 = f2 * f2 * f2 * f2, f16 = f8 * f8;   // thin dust filaments
   float wisp = f16 * f8 * f2 * 0.8f * smf((gr - 6) / 14) + max(0.0f, vn(xr / 4.5f + 3, yr / 4.5f - 9) - 0.64f) * 1.4f * c;
   float edge = smf((104 - gr) / 44);
   float dust = min(1.0f, lane + wisp) * smf(gr / 14) * edge;
@@ -972,6 +971,7 @@ void prepareSpace() {                   // once per frame
     float rot = (float)fmod(T * 0.0025, TWO_PI), cr = cosf(rot), sr = sinf(rot), cp = cosf(GAL_PA), sp = sinf(GAL_PA);
     gax = (cp * cr + sp * sr / GAL_TILT) * GAL_ZOOM; gbx = (-sp * cr + cp * sr / GAL_TILT) * GAL_ZOOM;
     gay = (-cp * sr + sp * cr / GAL_TILT) * GAL_ZOOM; gby = (sp * sr + cp * cr / GAL_TILT) * GAL_ZOOM;
+    galK = 3 + TWIST * 2.5f;            // Spiral setting (TWIST 0-6)
   }
   if (look == 15) {                     // Wormhole: rings falling away, worked out per distance
     whPh = (int)(fmod(T * 0.06, TWO_PI) * 40.74f);

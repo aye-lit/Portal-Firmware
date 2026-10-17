@@ -381,7 +381,10 @@ function markStyle() {
   const sc = M.kind === "tft" && hasSpaceCols(S.style);     // Nebula, Wormhole, Meteor Shower use four space colours
   $("space-colors").hidden = !sc;
   if (M.kind === "tft") { $("rgb-colors").hidden = sc; $("fade-wrap").hidden = sc; $("rimsmooth-wrap").hidden = sc; }
-  ["radius", "oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = sc; });   // portal-only controls
+  const gal = M.kind === "tft" && S.style === 4;
+  ["radius", "oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = sc && !(gal && k === "twist"); });   // portal-only controls
+  const tl = $("twist").closest("label");                    // the Galaxy's Spiral setting is the portal's Twist
+  if (tl) { tl.querySelector("span").firstChild.nodeValue = gal ? "Spiral " : "Twist "; $("twist-hint").hidden = !gal; }
 }
 STYLES.forEach((st, i) => {
   const b = document.createElement("button");
