@@ -75,7 +75,7 @@ ${B.builtin ? "// Wiring:  none, the screen is built into the board. Tools -> Bo
 #endif
 
 ${pinBlock(B, "spi")}
-#define SPI_HZ    ${hz}000000UL   // ${hz >= 80 ? "turbo: if the picture glitches or stays dark, change to 40000000UL" : "screen speed; lower it if the picture glitches"}
+${B.dma && M.kind === "tft" ? "#define LCD_DMA   1               // the screen is fed by DMA on the chip's own SPI pins (0 = the slower Arduino way)\n" : ""}#define SPI_HZ    ${hz}000000UL   // ${hz >= 80 ? "turbo: if the picture glitches or stays dark, change to 40000000UL" : "screen speed; lower it if the picture glitches"}
 
 #define PX         ${M.px || 1}            // ${(M.px || 1) > 1 ? "each drawn pixel fills 2 x 2 screen pixels, so this big screen moves smoothly" : "one drawn pixel per screen pixel"}
 #define SCR_W      ${M.w}          // drawing width and height (the screen is PX times bigger)
@@ -158,6 +158,14 @@ int      spCY = QY;                     // centre row for the space styles (the 
   #define DUAL_CORE 1
 #else
   #define DUAL_CORE 0
+#endif
+#if defined(LCD_DMA) && LCD_DMA && DUAL_CORE && PX == 1 && defined(CONFIG_IDF_TARGET_ESP32)
+  #define USE_DMA 1                     // pixels go out by DMA while both cores draw
+  #include "driver/spi_master.h"
+  #include "esp_timer.h"
+  #include "esp_heap_caps.h"
+#else
+  #define USE_DMA 0
 #endif
 
 // New settings from live tuning are applied between frames
@@ -603,6 +611,7 @@ float    nbCa = 1, nbSa = 0, nbO1 = 0, nbO2 = 0, nbO3 = 0;
 int      spTw = 0, whPh = 0;
 #define SP_GRID ((SCR_W / 2 + 2) * (STRIP / 2 + 3))   // gas worked out every 2 or 4 pixels, smoothed in between (one strip at a time)
 uint8_t  *spH = NULL, *spV = NULL, *spX = NULL;
+uint8_t  *spH1 = NULL, *spV1 = NULL, *spX1 = NULL;   // a second gas grid, so core 1 can draw space styles at the same time
 // Galaxy: a Hubble-style spiral (like M51, M100, NGC 4414)
 #define GAL_TILT 0.86f                   // how tilted toward you (1 = face on)
 #define GAL_PA   -0.55f                  // which way it points
@@ -618,6 +627,9 @@ bool     gtReady = false;
 uint8_t  powT[256], whRingT[256], whNearT[256];
 int16_t  whOffT[256], whCoreT[256];
 int32_t  whHueT[256];
+uint16_t whRing133T[256], spokeVT[256];  // Wormhole, ready-multiplied for the per-pixel loop
+uint8_t  spokeHT[256], whHue8T[256];
+int      whCoreR = 0;                    // rows nearer the centre than this show the glowing far end
 struct Meteor { float x, y, len; uint8_t hue; };
 Meteor   meteors[30];
 int      meteorCount = 7;
@@ -634,6 +646,11 @@ bool spaceMemory() {                    // reserved at startup (allocBuffers), s
   if (!spV) spV = (uint8_t *)malloc(SP_GRID);
   if (!spX) spX = (uint8_t *)malloc(SP_GRID);
   if (!spH || !spV || !spX) return false;
+#if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
+  if (!spH1) spH1 = (uint8_t *)malloc(SP_GRID);   // optional: without it, core 0 draws these styles alone
+  if (!spV1) spV1 = (uint8_t *)malloc(SP_GRID);
+  if (!spX1) spX1 = (uint8_t *)malloc(SP_GRID);
+#endif
   if (!spaceLUT) { spaceLUT = (uint16_t *)malloc(64 * 64 * 2); if (spaceLUT) buildSpaceLUT(); }
   if (!noise8) { noise8 = (uint8_t *)malloc(64 * 64); if (noise8) buildNoise(); }
   return spaceLUT && noise8;
@@ -763,6 +780,7 @@ void prepareSpace() {                   // once per frame
     gtReady = galaxyTex();
   }
   if (look == 15) {                     // Wormhole: rings falling away, worked out per distance
+    whCoreR = 0;
     float rev = DRIFT ? -1 : 1;          // Reverse: rings fly out toward you
     whPh = (int)(rev * fmod(T * 0.06, TWO_PI) * 40.74f);
     float off = rev * (float)fmod(T * 0.09, 100.0);
@@ -774,7 +792,11 @@ void prepareSpace() {                   // once per frame
       whOffT[r] = (int16_t)((int)(TWIST * (depth * 0.667f + 3 * logf(ru / 20)) * 40.74f) & 255);   // Twist: how much the walls spiral
       whHueT[r] = (int32_t)floorf(fl * 0.27f * 256) & 255;               // each ring its own colour
       whCoreT[r] = ru < 18 ? (int16_t)min(63.0f, expf(-(ru / 9) * (ru / 9)) * 1.05f * 63) : -1;
+      whRing133T[r] = whRingT[r] * 133;
+      whHue8T[r] = (uint8_t)whHueT[r];
+      if (whCoreT[r] >= 0) whCoreR = r + 1;
     }
+    for (int i = 0; i < 256; i++) { int sp = sinT[i] + 127; spokeVT[i] = sp * 123; spokeHT[i] = sp * 20 / 254; }
   }
   if (look == 16) {                     // Meteor Shower: where each shooting star is
     float P = sqrtf((float)SCR_W * SCR_W + (float)SCR_H * SCR_H) / 340;
@@ -795,6 +817,22 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
   uint16_t *p = strip;
   if (look == 15) {                     // Wormhole
     for (int y = y0; y < y0 + rows; y++) {
+      int cy = y < spCY ? spCY - 1 - y : y - spCY;
+      if (cy < TQY) {                    // the usual case: distance and angle straight from the tables, one half at a time
+        const bool low = y >= spCY;
+        const uint8_t *rr = rT + cy * TQX, *aa = aT + cy * TQX;
+        for (int half = 0; half < 2; half++) {
+          const int xa = half ? QX : 0, xb = half ? SCR_W : QX;
+          const int base = (half ? (low ? 0 : 256) : 128) * 6 + whPh, sg6 = (half ? low : !low) ? 6 : -6;
+          for (int x = xa; x < xb; x++) {
+            const int ci = colMap[x], r = rr[ci], i = (base + sg6 * aa[ci] + whOffT[r]) & 255;
+            int vi = (powT[(whRing133T[r] + spokeVT[i]) >> 8] * whNearT[r]) >> 10;
+            if (r < whCoreR) { if (whCoreT[r] > vi) vi = whCoreT[r]; *p++ = spaceLUT[48 * 64 + vi]; continue; }   // glowing far end
+            *p++ = spaceLUT[(((whHue8T[r] + spokeHT[i]) >> 2) & 63) * 64 + vi];
+          }
+        }
+        continue;
+      }
       for (int x = 0; x < SCR_W; x++) {
         int r, a; polarAt(x, y, spCY, r, a);
         int s = sinT[(a * 6 + whOffT[r] + whPh) & 255] + 127;          // spokes, 0..254
@@ -806,12 +844,16 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
     return;
   }
   // Galaxy, Nebula and Meteor Shower: gas worked out on a coarse grid, smoothed in between
+  uint8_t *gH = spH, *gV = spV, *gX = spX;
+#if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
+  if (xPortGetCoreID() == 1 && spX1) { gH = spH1; gV = spV1; gX = spX1; }   // core 1 has its own grid
+#endif
   const int C = look == 4 && min(SCR_W, SCR_H) < 300 ? 3 : 4, WM = C == 3 ? 7282 : 4096, GC = SCR_W / C + 2;   // WM: 1 / (C * C) in 1/65536ths
   int gy0 = y0 / C, gy1 = (y0 + rows - 1) / C + 1;
   for (int gy = gy0; gy <= gy1; gy++)
     for (int gx = 0; gx < GC; gx++) {
       int i = (gy - gy0) * GC + gx;
-      spaceNode((gx * C + 0.5f - QX) * spU, (gy * C + 0.5f - spCY) * spU, spH[i], spV[i], spX[i]);
+      spaceNode((gx * C + 0.5f - QX) * spU, (gy * C + 0.5f - spCY) * spU, gH[i], gV[i], gX[i]);
     }
   int dens = (look == 14 ? 7 : look == 4 ? 4 : 10) * STARS / 3, densBand = 22 * STARS / 3;
   for (int y = y0; y < y0 + rows; y++) {
@@ -821,12 +863,12 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
     for (int x = 0, ic = gy * GC, fx = 0; x < SCR_W; x++) {
       const int i = ic, cx = C - fx, w00 = cx * cy, w01 = fx * cy, w10 = cx * fy, w11 = fx * fy;
       if (++fx == C) { fx = 0; ic++; }
-      int h = (((spH[i] * cx + spH[i + 1] * (C - cx)) * cy + (spH[i + GC] * cx + spH[i + GC + 1] * (C - cx)) * fy) * WM) >> 16;
-      int v = (((spV[i] * cx + spV[i + 1] * (C - cx)) * cy + (spV[i + GC] * cx + spV[i + GC + 1] * (C - cx)) * fy) * WM) >> 16;
+      int h = (((gH[i] * cx + gH[i + 1] * (C - cx)) * cy + (gH[i + GC] * cx + gH[i + GC + 1] * (C - cx)) * fy) * WM) >> 16;
+      int v = (((gV[i] * cx + gV[i + 1] * (C - cx)) * cy + (gV[i + GC] * cx + gV[i + GC + 1] * (C - cx)) * fy) * WM) >> 16;
       int hi = (h >> 1) & 63, vi = v >> 2, shi, svi;
       uint32_t pix = (uint32_t)(y * SCR_W + x);
       if (look == 4) {
-        int am = (spX[i] > 90 || spX[i + 1] > 90 || spX[i + GC] > 90 || spX[i + GC + 1] > 90) ? ((spX[i] * w00 + spX[i + 1] * w01 + spX[i + GC] * w10 + spX[i + GC + 1] * w11) * WM) >> 16 : 0;
+        int am = (gX[i] > 90 || gX[i + 1] > 90 || gX[i + GC] > 90 || gX[i + GC + 1] > 90) ? ((gX[i] * w00 + gX[i + 1] * w01 + gX[i + GC] * w10 + gX[i + GC + 1] * w11) * WM) >> 16 : 0;
         if (am > 90) {                                   // knots on the arms: pink star nurseries, blue clusters
           float X = (x + 0.5f - QX) * spU, xr = gax * X + gbx * Y, yr = gay * X + gby * Y;
           int kx = (int)floorf(xr / 4), ky = (int)floorf(yr / 4);
@@ -839,7 +881,7 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
         }
         if (spaceStar(pix, dens, shi, svi) && svi > vi + 8) { hi = 42; vi = svi; }
       } else if (look == 14) { if (spaceStar(pix, dens, shi, svi) && svi > vi) { hi = shi; vi = min(63, svi + 13); } }
-      else if (spaceStar(pix, spX[i] ? densBand : dens, shi, svi)) { hi = shi; vi = svi; }
+      else if (spaceStar(pix, gX[i] ? densBand : dens, shi, svi)) { hi = shi; vi = svi; }
       *p++ = spaceLUT[hi * 64 + vi];
     }
   }
@@ -1363,6 +1405,12 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
 // ---------- frame-rate readout (Serial Monitor, 115200 baud) ----------
 uint32_t fpsFrames = 0, fpsSince = 0;
 volatile uint32_t drawUs = 0, sendUs = 0;   // time spent working out the pixels and sending them to the screen
+#if USE_DMA
+extern bool lcdDma;
+#endif
+#if DUAL_CORE
+extern volatile float helpShare; extern volatile bool sharing;
+#endif
 void countFrame() {
   fpsFrames++;
   uint32_t now = millis();
@@ -1370,28 +1418,148 @@ void countFrame() {
     Serial.print(F("FPS: "));
     Serial.print(fpsFrames * 1000.0f / (now - fpsSince), 1);
     Serial.print(F(" draw ")); Serial.print(drawUs / 1000.0f / fpsFrames, 1);
-    Serial.print(F(" ms send ")); Serial.print(sendUs / 1000.0f / fpsFrames, 1); Serial.println(F(" ms"));
+    Serial.print(F(" ms send ")); Serial.print(sendUs / 1000.0f / fpsFrames, 1); Serial.print(F(" ms"));
+#if USE_DMA
+    Serial.print(lcdDma ? F(" (dma") : F(" (no dma"));
+#elif DUAL_CORE
+    Serial.print(F(" ("));
+#endif
+#if DUAL_CORE
+    Serial.print(F(", core 1 draws ")); Serial.print(sharing ? (int)(helpShare * 100 + 0.5f) : 0); Serial.print(F("%)"));
+#endif
+    Serial.println();
     fpsFrames = 0; drawUs = 0; sendUs = 0;
     fpsSince = now;
   }
 }
 
+#if USE_DMA
+// ---------- DMA to the screen: the chip sends each strip by itself while the cores draw ----------
+spi_device_handle_t lcdDev;
+bool lcdDma = false;
+spi_transaction_t lcdTr[2];
+volatile int64_t lcdDoneAt[3];
+int64_t lcdQueuedAt[2], lcdLastDone = 0;
+void IRAM_ATTR lcdDoneCb(spi_transaction_t *t) { lcdDoneAt[(int)(intptr_t)t->user] = esp_timer_get_time(); }
+
+bool lcdSend(const uint8_t *d, int n, bool dc, uint32_t waitMs) {   // a command byte (dc low) or its few data bytes (dc high)
+  digitalWrite(PIN_DC, dc);
+  spi_transaction_t t;
+  memset(&t, 0, sizeof(t));
+  t.length = n * 8; t.flags = SPI_TRANS_USE_TXDATA; t.user = (void *)2;
+  memcpy(t.tx_data, d, n);
+  if (spi_device_polling_start(lcdDev, &t, pdMS_TO_TICKS(waitMs)) != ESP_OK) return false;
+  return spi_device_polling_end(lcdDev, pdMS_TO_TICKS(waitMs)) == ESP_OK;
+}
+
+bool lcdWindow(uint32_t waitMs) {        // whole screen, then "write memory": the strips follow
+  const uint8_t ca = 0x2A, ra = 0x2B, wr = 0x2C;
+  const uint8_t x[4] = { 0, 0, (uint8_t)((SCR_W - 1) >> 8), (uint8_t)(SCR_W - 1) };
+  const uint8_t y[4] = { 0, 0, (uint8_t)((SCR_H - 1) >> 8), (uint8_t)(SCR_H - 1) };
+  if (!lcdSend(&ca, 1, false, waitMs) || !lcdSend(x, 4, true, waitMs)) return false;
+  if (!lcdSend(&ra, 1, false, waitMs) || !lcdSend(y, 4, true, waitMs)) return false;
+  if (!lcdSend(&wr, 1, false, waitMs)) return false;
+  digitalWrite(PIN_DC, HIGH);
+  lcdLastDone = esp_timer_get_time();
+  return true;
+}
+
+bool lcdQueue(int b, int rows, uint32_t waitMs) {
+  spi_transaction_t &t = lcdTr[b];
+  memset(&t, 0, sizeof(t));
+  t.length = SCR_W * rows * 16; t.tx_buffer = stripBuf[b]; t.user = (void *)(intptr_t)b;
+  lcdQueuedAt[b] = esp_timer_get_time();
+  return spi_device_queue_trans(lcdDev, &t, pdMS_TO_TICKS(waitMs)) == ESP_OK;
+}
+
+bool lcdFinish(int b, uint32_t waitMs) {   // wait for strip b to finish sending
+  spi_transaction_t *r;
+  if (spi_device_get_trans_result(lcdDev, &r, pdMS_TO_TICKS(waitMs)) != ESP_OK) return false;
+  int64_t start = lcdQueuedAt[b] > lcdLastDone ? lcdQueuedAt[b] : lcdLastDone;
+  sendUs += (uint32_t)(lcdDoneAt[b] - start);
+  lcdLastDone = lcdDoneAt[b];
+  return true;
+}
+
+bool beginDma() {                        // after the screen is set up: move its pins to the DMA driver, and check it works
+  SPI.end();
+  spi_bus_config_t bc;
+  memset(&bc, 0, sizeof(bc));
+  bc.mosi_io_num = PIN_MOSI; bc.miso_io_num = -1; bc.sclk_io_num = PIN_SCK; bc.quadwp_io_num = -1; bc.quadhd_io_num = -1;
+  bc.max_transfer_sz = SCR_W * STRIP * 2;
+  if (spi_bus_initialize(SPI2_HOST, &bc, SPI_DMA_CH_AUTO) != ESP_OK) return false;
+  spi_device_interface_config_t dc;
+  memset(&dc, 0, sizeof(dc));
+  dc.clock_speed_hz = SPI_HZ; dc.mode = 0; dc.spics_io_num = -1; dc.queue_size = 3; dc.post_cb = lcdDoneCb;
+  dc.flags = SPI_DEVICE_HALFDUPLEX | SPI_DEVICE_NO_DUMMY;
+  if (spi_bus_add_device(SPI2_HOST, &dc, &lcdDev) != ESP_OK) { spi_bus_free(SPI2_HOST); return false; }
+  pinMode(PIN_CS, OUTPUT); digitalWrite(PIN_CS, LOW);   // the screen is the only thing listening on these pins
+  if (!lcdWindow(100)) return false;
+  memset(stripBuf[0], 0, SCR_W * STRIP * 2);
+  if (!lcdQueue(0, STRIP, 100) || !lcdFinish(0, 300)) return false;   // one strip of black: the DMA really runs
+  sendUs = 0;
+  return true;
+}
+#endif
+
 #if DUAL_CORE
-SemaphoreHandle_t readySem[2], freeSem[2];
+// Both cores draw: core 0 the top of each strip, core 1 the bottom (when the style allows), then core 1 sends it.
+SemaphoreHandle_t readySem[2], freeSem[2], goSem[2], helperIdle;
+volatile int stripY0[2], stripRows[2], stripHelp[2];   // the strip in each buffer, and how many of its bottom rows core 1 draws
+volatile uint32_t wait0Us = 0, wait1Us = 0;           // time each core spent waiting for the other
+volatile float helpShare = 0.3f;                       // part of each strip core 1 draws, balanced every frame
+volatile bool sharing = false;
+
+bool canShare() {                        // styles whose drawing can be split between the two cores
+  if (crossOn) return false;
+  if (sceneMix > 0 && sceneA != sceneB) return false;  // fading between scenes
+  if ((sceneMix >= 128 ? sceneB : sceneA) != PORTAL) return false;   // pictures
+  return spX1 || !(look == 4 || look == 14 || look == 16);   // Galaxy, Nebula and Meteor Shower need core 1's own gas grid
+}
+
+inline void swapBytes565(uint16_t *p, int n) {   // DMA: the screen wants each pixel's high byte first
+#if USE_DMA
+  if (!lcdDma) return;
+  uint32_t *w = (uint32_t *)p;
+  for (int i = 0; i < n / 2; i++) { uint32_t v = w[i]; w[i] = ((v & 0x00FF00FFu) << 8) | ((v >> 8) & 0x00FF00FFu); }
+#endif
+}
+
+void balanceCores(uint32_t frameUs) {    // move rows toward whichever core is waiting
+  if (sharing && frameUs > 0) {
+    float d = ((float)wait1Us - (float)wait0Us) / frameUs, h = helpShare + 0.25f * d;
+    helpShare = h < 0 ? 0 : h > 0.85f ? 0.85f : h;
+  }
+  wait0Us = 0; wait1Us = 0;
+}
 
 void renderTask(void *) {         // runs on core 0
   uint8_t b = 0;
+  bool first = true;
   for (;;) {
+    uint32_t w = micros();
+    xSemaphoreTake(helperIdle, portMAX_DELAY);   // core 1 has finished its part of the last frame
+    wait0Us += micros() - w;
+    if (!first) frameEnd();
+    first = false;
     frameStart();
+    bool share = canShare();
+    sharing = share;
     for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
+      w = micros();
       xSemaphoreTake(freeSem[b], portMAX_DELAY);
+      wait0Us += micros() - w;
+      int rows = min(STRIP, SCR_H - y0), help = share ? (int)(rows * helpShare + 0.5f) : 0;
+      if (help > rows - 1) help = rows - 1;
+      stripY0[b] = y0; stripRows[b] = rows; stripHelp[b] = help;
+      xSemaphoreGive(goSem[b]);
       uint32_t t0 = micros();
-      composeStrip(y0, min(STRIP, SCR_H - y0), stripBuf[b]);
+      composeStrip(y0, rows - help, stripBuf[b]);
+      swapBytes565(stripBuf[b], SCR_W * (rows - help));
       drawUs += micros() - t0;
       xSemaphoreGive(readySem[b]);
       b ^= 1;
     }
-    frameEnd();
     vTaskDelay(1);                // let core 0's housekeeping run
   }
 }
@@ -1405,14 +1573,20 @@ bool allocBuffers() {
   const int first = STRIP;
   for (int withSpace = 1; withSpace >= 0; withSpace--) {   // try to make room for the space styles too, then without
     for (STRIP = first; STRIP >= (withSpace ? 4 : 2); STRIP /= 2) {   // smaller strips if memory is tight
+#if USE_DMA
+      stripBuf[0] = (uint16_t *)heap_caps_malloc(SCR_W * STRIP * 2, MALLOC_CAP_DMA);
+      stripBuf[1] = (uint16_t *)heap_caps_malloc(SCR_W * STRIP * 2, MALLOC_CAP_DMA);
+#else
       stripBuf[0] = (uint16_t *)malloc(SCR_W * STRIP * 2);
       stripBuf[1] = (uint16_t *)malloc(SCR_W * STRIP * 2);
+#endif
       picBuf = picturesAvailable() ? (uint16_t *)malloc(SCR_W * STRIP * 2) : NULL;   // for fades with pictures
       edgeBuf = crossAvailable() ? (int8_t *)malloc(SCR_W * STRIP) : NULL;            // for the cross styles
       bool space = !withSpace || spaceMemory();                                        // Galaxy, Nebula, Wormhole, Meteor Shower
       if (stripBuf[0] && stripBuf[1] && (picBuf || !picturesAvailable()) && (edgeBuf || !crossAvailable()) && space) return true;
       free(stripBuf[0]); free(stripBuf[1]); free(picBuf); free(edgeBuf); picBuf = NULL; edgeBuf = NULL;
       free(spH); free(spV); free(spX); free(spaceLUT); free(noise8); spH = spV = spX = NULL; spaceLUT = NULL; noise8 = NULL;
+      free(spH1); free(spV1); free(spX1); spH1 = spV1 = spX1 = NULL;
     }
   }
   return false;
@@ -1447,12 +1621,20 @@ ${DISP.begin}
   buildParams();
   buildPalette();
   resetSparks();
+#if USE_DMA
+  lcdDma = beginDma();
+  if (!lcdDma) { beginBus(); tft.setSPISpeed(SPI_HZ); }   // DMA didn't answer: back to the Arduino way
+  Serial.println(lcdDma ? F("[portal] screen DMA on") : F("[portal] screen DMA off"));
+#endif
 #if DUAL_CORE
   for (int i = 0; i < 2; i++) {
     readySem[i] = xSemaphoreCreateBinary();
     freeSem[i] = xSemaphoreCreateBinary();
+    goSem[i] = xSemaphoreCreateBinary();
     xSemaphoreGive(freeSem[i]);
   }
+  helperIdle = xSemaphoreCreateBinary();
+  xSemaphoreGive(helperIdle);
   xTaskCreatePinnedToCore(renderTask, "portal", 4096, NULL, 1, NULL, 0);
 #endif
   Serial.println(F("[portal] running"));
@@ -1482,20 +1664,53 @@ void loop() {
   readBluetooth();
 #endif
   if (pausedForUpload()) return;         // the screen holds still while a picture arrives
-  tft.startWrite();
-  tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX);
 #if DUAL_CORE
   static uint8_t b = 0;
+  uint32_t frameT0 = micros();
+#if USE_DMA
+  if (lcdDma) lcdWindow(1000); else
+#endif
+  { tft.startWrite(); tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX); }
+  int pending = -1;
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
-    xSemaphoreTake(readySem[b], portMAX_DELAY);
+    xSemaphoreTake(goSem[b], portMAX_DELAY);
+    int rows = stripRows[b], help = stripHelp[b];
+    if (help) {                          // core 1's share of the drawing: the bottom rows
+      uint16_t *dst = stripBuf[b] + (rows - help) * SCR_W;
+      composeStrip(stripY0[b] + rows - help, help, dst);
+      swapBytes565(dst, SCR_W * help);
+    }
+    if (y0 + STRIP >= SCR_H) xSemaphoreGive(helperIdle);   // core 0 can start the next frame
     uint32_t t0 = micros();
-    sendStrip(stripBuf[b], min(STRIP, SCR_H - y0));
-    sendUs += micros() - t0;
-    xSemaphoreGive(freeSem[b]);
+    xSemaphoreTake(readySem[b], portMAX_DELAY);
+    wait1Us += micros() - t0;
+#if USE_DMA
+    if (lcdDma) {                        // send this strip in the background, then free the one before
+      lcdQueue(b, rows, 1000);
+      if (pending >= 0) { lcdFinish(pending, 1000); xSemaphoreGive(freeSem[pending]); }
+      pending = b;
+    } else
+#endif
+    {
+      t0 = micros();
+      sendStrip(stripBuf[b], rows);
+      sendUs += micros() - t0;
+      xSemaphoreGive(freeSem[b]);
+    }
     b ^= 1;
     readSerialQuick();                   // new settings get an answer even while a slow frame is drawn
   }
+#if USE_DMA
+  if (pending >= 0) { lcdFinish(pending, 1000); xSemaphoreGive(freeSem[pending]); }
+  if (!lcdDma)
+#endif
+  tft.endWrite();
+  countFrame();
+  balanceCores(micros() - frameT0);
+  return;
 #else
+  tft.startWrite();
+  tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX);
   frameStart();
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
     int rows = min(STRIP, SCR_H - y0);
@@ -1507,9 +1722,9 @@ void loop() {
     readSerialQuick();
   }
   frameEnd();
-#endif
   tft.endWrite();
   countFrame();
+#endif
 }
 `;
 }
