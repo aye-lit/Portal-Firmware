@@ -56,7 +56,7 @@ void beginBus() {
   SPI.begin();                     // fixed hardware SPI pins
 #endif
 }
-#define SPI_HZ    27000000UL   // screen speed; lower it if the picture glitches
+#define SPI_HZ    40000000UL   // screen speed; lower it if the picture glitches
 
 #define SCR_W      480          // screen width and height as mounted
 #define SCR_H      320
@@ -109,7 +109,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x4E18C7B2UL;
+const uint32_t BUILD_ID = 0xD937FB08UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -313,11 +313,13 @@ void resetSparks() {
   }
 }
 
+float frameK = 1;                                        // how many Studio frames (1/28 s) the last frame took
 void updateSparks() {
+  float fall = powf(0.95f, frameK);
   for (uint8_t i = 0; i < NUM_SPARKS; i++) {
     Spark &s = sparks[i];
-    s.r *= 0.95;                                         // fall inward
-    s.a += SPEED * 2.0 * (RADIUS / (s.r + RADIUS * 0.22));  // faster near the centre
+    s.r *= fall;                                         // fall inward
+    s.a += SPEED * 2.0 * (RADIUS / (s.r + RADIUS * 0.22)) * frameK;  // faster near the centre
     if (s.r < 3) respawn(s);
     sparkX[i] = (int16_t)floorf(QX + cosf(s.a) * s.r * OVAL);
     sparkY[i] = (int16_t)floorf((crossOn ? crossYC : QY) + sinf(s.a) * s.r);
@@ -1264,9 +1266,10 @@ void frameStart() {
 }
 
 void frameEnd() {
-  t += SPEED;
-  static uint32_t lastMs = millis();     // space styles move by the clock, so they match the Studio at any frame rate
+  static uint32_t lastMs = millis();     // everything moves by the clock, so every screen matches the Studio at any frame rate
   uint32_t now = millis();
+  frameK = min(8.0f, (now - lastMs) / 35.7f);   // the Studio preview steps 28 times a second
+  t += SPEED * frameK;
   spaceT += SPEED * 8 * min(8.0f, (now - lastMs) / 35.7f);   // the Studio preview steps 28 times a second
   cloudDrift += 6 * min(8.0f, (now - lastMs) / 1000.0f) * (SPEED / 0.12f);   // clouds drift by the clock, faster with a higher Spin speed
   if (cloudDrift > 1e6f) cloudDrift = 0;
