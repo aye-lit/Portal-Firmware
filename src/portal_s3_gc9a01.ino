@@ -58,7 +58,8 @@ void beginBus() {
 }
 #define SPI_HZ    80000000UL   // turbo: if the picture glitches or stays dark, change to 40000000UL
 
-#define SCR_W      240          // screen width and height as mounted
+#define PX         1            // one drawn pixel per screen pixel
+#define SCR_W      240          // drawing width and height (the screen is PX times bigger)
 #define SCR_H      240
 #define QX         120          // centre of the screen
 #define QY         120
@@ -109,7 +110,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xD937FB08UL;
+const uint32_t BUILD_ID = 0xB4DE8AC2UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -1774,7 +1775,7 @@ void setup() {
 #endif
   beginPictures();
   if (!allocBuffers()) {
-    tft.setTextColor(0xFFFF); tft.setTextSize(2); tft.setCursor(10, SCR_H / 2 - 8); tft.print(F("Not enough memory"));   // say so on the screen too
+    tft.setTextColor(0xFFFF); tft.setTextSize(2); tft.setCursor(10, SCR_H * PX / 2 - 8); tft.print(F("Not enough memory"));   // say so on the screen too
     for (;;) { Serial.println(F("[portal] not enough memory for this screen")); delay(2000); }
   }
 #if defined(ESP32)
@@ -1797,6 +1798,21 @@ void setup() {
   Serial.println(F("[portal] running"));
 }
 
+#if PX > 1
+uint16_t pxLine[SCR_W * PX];                // one screen row, each drawn pixel repeated PX times
+void sendStrip(uint16_t *buf, int rows) {
+  for (int r = 0; r < rows; r++) {
+    const uint16_t *src = buf + r * SCR_W;
+    for (int k = 0; k < PX; k++) {             // refilled each time: the SPI driver may byte-swap the buffer
+      for (int x = 0; x < SCR_W; x++) for (int j = 0; j < PX; j++) pxLine[x * PX + j] = src[x];
+      tft.writePixels(pxLine, SCR_W * PX);
+    }
+  }
+}
+#else
+void sendStrip(uint16_t *buf, int rows) { tft.writePixels(buf, SCR_W * rows); }
+#endif
+
 void loop() {
   readSerial();
 #if defined(ESP32)
@@ -1807,12 +1823,12 @@ void loop() {
 #endif
   if (pausedForUpload()) return;         // the screen holds still while a picture arrives
   tft.startWrite();
-  tft.setAddrWindow(0, 0, SCR_W, SCR_H);
+  tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX);
 #if DUAL_CORE
   static uint8_t b = 0;
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
     xSemaphoreTake(readySem[b], portMAX_DELAY);
-    tft.writePixels(stripBuf[b], SCR_W * min(STRIP, SCR_H - y0));
+    sendStrip(stripBuf[b], min(STRIP, SCR_H - y0));
     xSemaphoreGive(freeSem[b]);
     b ^= 1;
     readSerialQuick();                   // new settings get an answer even while a slow frame is drawn
@@ -1822,7 +1838,7 @@ void loop() {
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
     int rows = min(STRIP, SCR_H - y0);
     composeStrip(y0, rows, stripBuf[0]);
-    tft.writePixels(stripBuf[0], SCR_W * rows);
+    sendStrip(stripBuf[0], rows);
     readSerialQuick();
   }
   frameEnd();

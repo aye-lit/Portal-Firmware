@@ -29,7 +29,7 @@ const hex6 = h => h.slice(1).toUpperCase();
 function tftSketch() {
 const B = boardOf();
 const rot = M.rect && M.w !== M.h ? (M.w > M.h ? 1 : 0) : 0;
-const hz = M.driver === "st7735" ? Math.min(B.hz, 27) : M.driver === "ili9341" ? Math.min(B.hz, 40) : M.driver === "st7796" ? Math.min(B.hz, 27) : B.hz;
+const hz = M.driver === "st7735" ? Math.min(B.hz, 27) : M.driver === "ili9341" ? Math.min(B.hz, 40) : M.driver === "st7796" ? Math.min(B.hz, 40) : B.hz;
 const DISP = {
   gc9a01:  { inc: "Adafruit_GC9A01A.h", decl: "Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);", begin: "  tft.begin(SPI_HZ);" },
   st7789:  { inc: "Adafruit_ST7789.h", decl: "Adafruit_ST7789 tft(PIN_CS, PIN_DC, PIN_RST);",
@@ -77,7 +77,8 @@ ${B.builtin ? "// Wiring:  none, the screen is built into the board. Tools -> Bo
 ${pinBlock(B, "spi")}
 #define SPI_HZ    ${hz}000000UL   // ${hz >= 80 ? "turbo: if the picture glitches or stays dark, change to 40000000UL" : "screen speed; lower it if the picture glitches"}
 
-#define SCR_W      ${M.w}          // screen width and height as mounted
+#define PX         ${M.px || 1}            // ${(M.px || 1) > 1 ? "each drawn pixel fills 2 x 2 screen pixels, so this big screen moves smoothly" : "one drawn pixel per screen pixel"}
+#define SCR_W      ${M.w}          // drawing width and height (the screen is PX times bigger)
 #define SCR_H      ${M.h}
 #define QX         ${M.w >> 1}          // centre of the screen
 #define QY         ${M.h >> 1}
@@ -332,11 +333,13 @@ void resetSparks() {
   }
 }
 
+float frameK = 1;                                        // how many Studio frames (1/28 s) the last frame took
 void updateSparks() {
+  float fall = powf(0.95f, frameK);
   for (uint8_t i = 0; i < NUM_SPARKS; i++) {
     Spark &s = sparks[i];
-    s.r *= 0.95;                                         // fall inward
-    s.a += SPEED * 2.0 * (RADIUS / (s.r + RADIUS * 0.22));  // faster near the centre
+    s.r *= fall;                                         // fall inward
+    s.a += SPEED * 2.0 * (RADIUS / (s.r + RADIUS * 0.22)) * frameK;  // faster near the centre
     if (s.r < 3) respawn(s);
     sparkX[i] = (int16_t)floorf(QX + cosf(s.a) * s.r * OVAL);
     sparkY[i] = (int16_t)floorf((crossOn ? crossYC : QY) + sinf(s.a) * s.r);
@@ -919,9 +922,10 @@ void frameStart() {
 }
 
 void frameEnd() {
-  t += SPEED;
-  static uint32_t lastMs = millis();     // space styles move by the clock, so they match the Studio at any frame rate
+  static uint32_t lastMs = millis();     // everything moves by the clock, so every screen matches the Studio at any frame rate
   uint32_t now = millis();
+  frameK = min(8.0f, (now - lastMs) / 35.7f);   // the Studio preview steps 28 times a second
+  t += SPEED * frameK;
   spaceT += SPEED * 8 * min(8.0f, (now - lastMs) / 35.7f);   // the Studio preview steps 28 times a second
   cloudDrift += 6 * min(8.0f, (now - lastMs) / 1000.0f) * (SPEED / 0.12f);   // clouds drift by the clock, faster with a higher Spin speed
   if (cloudDrift > 1e6f) cloudDrift = 0;
@@ -1426,7 +1430,7 @@ ${DISP.begin}
 #endif
   beginPictures();
   if (!allocBuffers()) {
-    tft.setTextColor(0xFFFF); tft.setTextSize(2); tft.setCursor(10, SCR_H / 2 - 8); tft.print(F("Not enough memory"));   // say so on the screen too
+    tft.setTextColor(0xFFFF); tft.setTextSize(2); tft.setCursor(10, SCR_H * PX / 2 - 8); tft.print(F("Not enough memory"));   // say so on the screen too
     for (;;) { Serial.println(F("[portal] not enough memory for this screen")); delay(2000); }
   }
 #if defined(ESP32)
@@ -1449,6 +1453,21 @@ ${DISP.begin}
   Serial.println(F("[portal] running"));
 }
 
+#if PX > 1
+uint16_t pxLine[SCR_W * PX];                // one screen row, each drawn pixel repeated PX times
+void sendStrip(uint16_t *buf, int rows) {
+  for (int r = 0; r < rows; r++) {
+    const uint16_t *src = buf + r * SCR_W;
+    for (int k = 0; k < PX; k++) {             // refilled each time: the SPI driver may byte-swap the buffer
+      for (int x = 0; x < SCR_W; x++) for (int j = 0; j < PX; j++) pxLine[x * PX + j] = src[x];
+      tft.writePixels(pxLine, SCR_W * PX);
+    }
+  }
+}
+#else
+void sendStrip(uint16_t *buf, int rows) { tft.writePixels(buf, SCR_W * rows); }
+#endif
+
 void loop() {
   readSerial();
 #if defined(ESP32)
@@ -1459,12 +1478,12 @@ void loop() {
 #endif
   if (pausedForUpload()) return;         // the screen holds still while a picture arrives
   tft.startWrite();
-  tft.setAddrWindow(0, 0, SCR_W, SCR_H);
+  tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX);
 #if DUAL_CORE
   static uint8_t b = 0;
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
     xSemaphoreTake(readySem[b], portMAX_DELAY);
-    tft.writePixels(stripBuf[b], SCR_W * min(STRIP, SCR_H - y0));
+    sendStrip(stripBuf[b], min(STRIP, SCR_H - y0));
     xSemaphoreGive(freeSem[b]);
     b ^= 1;
     readSerialQuick();                   // new settings get an answer even while a slow frame is drawn
@@ -1474,7 +1493,7 @@ void loop() {
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
     int rows = min(STRIP, SCR_H - y0);
     composeStrip(y0, rows, stripBuf[0]);
-    tft.writePixels(stripBuf[0], SCR_W * rows);
+    sendStrip(stripBuf[0], rows);
     readSerialQuick();
   }
   frameEnd();

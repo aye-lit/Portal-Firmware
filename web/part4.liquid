@@ -564,7 +564,7 @@ function selectModel(key, userChose) {
   sizeCanvas();
   const tft = M.kind === "tft", rgb = M.kind !== "mono";
   $("pins").innerHTML = (tft ? TFT_PINS : rgb ? SPI_PINS : I2C_PINS).map(p => `<span>${p}</span>`).join("");
-  $("preview-title").textContent = `Preview · ${M.w} × ${M.h}`;
+  $("preview-title").textContent = `Preview · ${M.w * (M.px || 1)} × ${M.h * (M.px || 1)}`;
   root.querySelector(".glass").classList.toggle("round", tft && !M.rect);
   root.querySelector(".glass").classList.toggle("tft", tft);
   $("orient-wrap").hidden = !(M.rect && MODELS[key].w !== MODELS[key].h);
@@ -1017,6 +1017,8 @@ if (isCrossStyle(S.style)) {
   const m = MODELS[S.model]; if (m && !m.rect && S.radius === rmax(m) - 9) S.radius = crossMax(m);   // round: crosses grew to fill the circle
 }
 delete S.wideCross;
+if (S.model === "st7796" && !S.halfRes) { S.radius = Math.max(6, Math.round(S.radius / 2)); if (S.portalR) S.portalR = Math.round(S.portalR / 2); }   // the 3.5″ screen is now drawn at half size
+S.halfRes = 1;
 selectModel(S.model, false);
 countPlugged();
 requestAnimationFrame(loop);
