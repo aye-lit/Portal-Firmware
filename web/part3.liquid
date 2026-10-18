@@ -50,8 +50,8 @@ return `// Vortex Portal for the ${M.spec.split(" · ")[0]} ${M.chip} colour dis
 //
 ${B.builtin ? "// Wiring:  none, the screen is built into the board. Tools -> Board -> ESP32 Dev Module." : `// Wiring:  VCC->3V3  GND->GND  SCL->${B.lab.sck}  SDA->${B.lab.mosi}  DC->${B.lab.dc}  CS->${B.lab.cs}  RST->${B.lab.rst}  BLK->3V3 (if present)`}
 //
-// Live tuning: open Vortex Portal Studio in Chrome and tap "Connect over Bluetooth"
-// (ESP32 boards), or plug in over USB and click "Connect over USB". The board saves them.
+// Live tuning: plug in over USB, open Vortex Portal Studio in Chrome or Edge and click
+// "Connect over USB". The board saves the settings.
 
 #if defined(__AVR__) || defined(ESP8266)
   #error "This screen needs a board with more memory: an ESP32, Raspberry Pi Pico or Teensy 4."

@@ -37,7 +37,7 @@ function bleBlock() { return `
 // ---------- Bluetooth tuning (ESP32 boards with Bluetooth) ----------
 // The board shows up as "Vortex Portal". In the Studio (Chrome on Android or a
 // computer), tap "Connect over Bluetooth". Same commands as USB.
-#if defined(ESP32) && defined(CONFIG_BT_ENABLED)
+#if 0                                    // Bluetooth is switched off: it needed too much memory (USB only)
   #define HAS_BLE 1
 #else
   #define HAS_BLE 0

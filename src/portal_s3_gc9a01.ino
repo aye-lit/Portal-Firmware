@@ -7,8 +7,8 @@
 //
 // Wiring:  VCC->3V3  GND->GND  SCL->GPIO 12  SDA->GPIO 11  DC->GPIO 9  CS->GPIO 10  RST->GPIO 13  BLK->3V3 (if present)
 //
-// Live tuning: open Vortex Portal Studio in Chrome and tap "Connect over Bluetooth"
-// (ESP32 boards), or plug in over USB and click "Connect over USB". The board saves them.
+// Live tuning: plug in over USB, open Vortex Portal Studio in Chrome or Edge and click
+// "Connect over USB". The board saves the settings.
 
 #if defined(__AVR__) || defined(ESP8266)
   #error "This screen needs a board with more memory: an ESP32, Raspberry Pi Pico or Teensy 4."
@@ -109,7 +109,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x1CB85613UL;
+const uint32_t BUILD_ID = 0x4E18C7B2UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -778,7 +778,7 @@ void readSerialQuick() { serialPoll(true); }
 // ---------- Bluetooth tuning (ESP32 boards with Bluetooth) ----------
 // The board shows up as "Vortex Portal". In the Studio (Chrome on Android or a
 // computer), tap "Connect over Bluetooth". Same commands as USB.
-#if defined(ESP32) && defined(CONFIG_BT_ENABLED)
+#if 0                                    // Bluetooth is switched off: it needed too much memory (USB only)
   #define HAS_BLE 1
 #else
   #define HAS_BLE 0

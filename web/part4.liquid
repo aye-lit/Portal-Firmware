@@ -85,8 +85,8 @@ return `// Vortex Portal for the ${M.spec.split(" · ")[0]} ${M.chip} ${rgb ? "c
 //
 ${wiringLines}
 //
-// Live tuning: open Vortex Portal Studio in Chrome and tap "Connect over Bluetooth"
-// (ESP32 boards), or plug in over USB and click "Connect over USB". The board saves them.
+// Live tuning: plug in over USB, open Vortex Portal Studio in Chrome or Edge and click
+// "Connect over USB". The board saves the settings.
 
 ${includes}
 #include <EEPROM.h>
@@ -584,7 +584,7 @@ function selectModel(key, userChose) {
   if (B.custom) fillCustom();
   $("lib-note").textContent = "Board support: " + B.ide + (M.kind === "tft" && (/^ESP32/.test(B.family) || B.custom) ? " For pictures, also set Tools → Partition Scheme → “No OTA (2MB APP/2MB SPIFFS)”." : "");
   const hasBle = /^ESP32/.test(B.family) || !!B.custom;   // boards with Bluetooth in the sketch
-  $("ble").hidden = !hasBle; $("ble-note").hidden = !hasBle;
+  $("ble").hidden = true; $("ble-note").hidden = true;   // Bluetooth is switched off (USB only)
   if (typeof showFirmware === "function") showFirmware();
   if (typeof showPictures === "function") showPictures();
   const fpsTft = B.screen ? B.fpsTft : B.fpsTft ? B.fpsTft.replace(/\d+/g, n => Math.min(60, Math.max(1, Math.round(n * 57600 / (M.w * M.h))))).replace(/(\d+)–\1/, "$1") : "";   // scaled by screen area
@@ -877,7 +877,7 @@ async function boardRequest(line, re, ms) {          // send one command line, w
 async function sendPictures() {
   const st = $("pic-status"), bar = progressBar("pic");
   const sayP = (m, c = "") => { st.className = "status " + c; st.textContent = m; };
-  if (!port && !bleRx) { sayP("Connect over Bluetooth or USB first (buttons above), then send the pictures.", "warn"); return; }
+  if (!port && !bleRx) { sayP("Connect over USB first (button above), then send the pictures.", "warn"); return; }
   if (busy) { sayP("Wait a moment, the board is busy. Then try again."); return; }
   busy = true; $("send-pics").disabled = true; sayP("");
   try {
@@ -949,7 +949,7 @@ async function installFirmware() {
   const st = $("fw-status"), bar = progressBar("fw");
   const sayF = (m, c = "") => { st.className = "status " + c; st.textContent = m; };
   const viaUsb = IS_ANDROID && fw.phone && !!navigator.usb;      // phones: CH340 boards over WebUSB
-  if (IS_ANDROID && !fw.phone) { sayF("Installing on this board needs a computer with Chrome or Edge. After that, you can change everything from your phone with Bluetooth.", "warn"); return; }
+  if (IS_ANDROID && !fw.phone) { sayF("Installing on this board needs a computer with Chrome or Edge. After that, you can change everything over USB.", "warn"); return; }
   if (!viaUsb && !("serial" in navigator)) { sayF("This browser can't install on USB boards. Use Chrome or Edge on a computer.", "warn"); return; }
   if (port) { try { await port.close(); } catch (_) {} port = null; }   // free the USB link if it's open
   let transport = null;
@@ -1121,7 +1121,7 @@ async function sendBle() {
 }
 $("reboot").addEventListener("click", async () => {
   if (busy) return;
-  if (!port && !bleRx) { say("Connect over USB or Bluetooth first. Or just unplug the board and plug it back in.", "warn"); return; }
+  if (!port && !bleRx) { say("Connect over USB first. Or just unplug the board and plug it back in.", "warn"); return; }
   busy = true;
   try {
     const data = new TextEncoder().encode("REBOOT\n");
@@ -1134,7 +1134,7 @@ $("reboot").addEventListener("click", async () => {
   } finally { busy = false; }
 });
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-if (IS_IOS && !navigator.bluetooth) $("ble-note").innerHTML = "<b>Bluetooth on iPhone/iPad:</b> Safari and Chrome on iPhone can't use Bluetooth. Install the free “Bluefy – Web BLE Browser” app from the App Store, open this page in it, then tap Connect over Bluetooth.";
+if (false) $("ble-note").innerHTML = "<b>Bluetooth on iPhone/iPad:</b> Safari and Chrome on iPhone can't use Bluetooth. Install the free “Bluefy – Web BLE Browser” app from the App Store, open this page in it, then tap Connect over Bluetooth.";
 $("ble").addEventListener("click", async () => {
   if (!navigator.bluetooth) {
     say(IS_IOS ? "iPhone and iPad browsers like Safari and Chrome can't use Bluetooth from a web page. Install the free “Bluefy – Web BLE Browser” app from the App Store, open this page in it, and tap Connect over Bluetooth again."

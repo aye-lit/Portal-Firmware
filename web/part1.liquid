@@ -293,13 +293,13 @@
           </li>
           <li>
             <div>
-              <h3>Change settings from your phone or computer</h3>
+              <h3>Change settings over USB</h3>
               <p>Once the sketch is on the board, you can send any style, colours and settings without re-uploading. The board saves them.</p>
-              <p id="vps-ble-note"><b>Bluetooth:</b> tap Connect over Bluetooth and pick “Vortex Portal”. Works in Chrome on Android and on computers. On iPhone, use the free Bluefy browser app.</p>
+              <p id="vps-ble-note" hidden><b>Bluetooth:</b> tap Connect over Bluetooth and pick “Vortex Portal”. Works in Chrome on Android and on computers. On iPhone, use the free Bluefy browser app.</p>
               <p><b>USB:</b> plug the board in and tap Connect over USB. Works in Chrome or Edge on a computer (close the Arduino Serial Monitor first), and in Chrome on some Android phones.</p>
               <div class="btns">
-                <button class="b" id="vps-ble" type="button">Connect over Bluetooth</button>
-                <button class="b ghost" id="vps-send" type="button">Connect over USB</button>
+                <button class="b" id="vps-ble" type="button" hidden>Connect over Bluetooth</button>
+                <button class="b" id="vps-send" type="button">Connect over USB</button>
                 <button class="b ghost" id="vps-reboot" type="button">Restart board</button>
                 <label style="display:flex;align-items:center;gap:6px;font-size:13px" for="vps-live"><input id="vps-live" type="checkbox" checked> Send every change</label>
               </div>
