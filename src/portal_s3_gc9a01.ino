@@ -110,7 +110,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x0CBDD144UL;
+const uint32_t BUILD_ID = 0x8E12509AUL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -1793,7 +1793,7 @@ bool lcdSend(const uint8_t *d, int n, bool dc, uint32_t waitMs) {   // a command
   memset(&t, 0, sizeof(t));
   t.length = n * 8; t.flags = SPI_TRANS_USE_TXDATA; t.user = (void *)2;
   memcpy(t.tx_data, d, n);
-  if (spi_device_polling_start(lcdDev, &t, pdMS_TO_TICKS(waitMs)) != ESP_OK) return false;
+  if (spi_device_polling_start(lcdDev, &t, portMAX_DELAY) != ESP_OK) return false;   // (polling only accepts "wait as long as needed")
   return spi_device_polling_end(lcdDev, pdMS_TO_TICKS(waitMs)) == ESP_OK;
 }
 
