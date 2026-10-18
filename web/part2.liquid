@@ -467,7 +467,7 @@ const crossMax = (M, st = S.style) => M.rect ? Math.floor((M.h - 8) * 0.8) : Mat
 const radiusMax = M => (S.style >= 8 && S.style <= 13) || S.style === 17 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossRipple: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -482,6 +482,7 @@ if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 S.reverse = S.reverse === true;
 if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16].includes(S.crossFill)) S.crossFill = 0;
+if (![0, 1, 2].includes(S.crossRipple)) S.crossRipple = 0;
 if (S.c1 === "#c02ad0" && S.c2 === "#f9c8ff") { S.c1 = PRESETS.Bloom[0]; S.c2 = PRESETS.Bloom[1]; }   // the old pale Bloom colours
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
@@ -1074,6 +1075,21 @@ function woodColor(x, y, ce) {
   const sh = Math.max(0, Math.min(15, Math.round((k - 0.6) / 0.05)));
   return woodPal[Math.max(0, Math.min(63, tone)) * 16 + sh];
 }
+// Ripple (glowing crosses): copies of the outline echo through the inside of the cross, same maths as the board
+const crossRipT = new Uint8Array(128);
+let ripplePh = 0, rippleLastMs = 0;
+function buildCrossRipple(on) {
+  const now = performance.now();
+  if (rippleLastMs) ripplePh = (ripplePh + 0.3 * Math.min(8, (now - rippleLastMs) / 1000) * (S.speed / 0.12)) % 1;
+  rippleLastMs = now;
+  crossRipT.fill(0);
+  if (!on || !S.crossRipple) return;
+  const R = Math.min(S.radius, (TH - 8) * (100 - S.bar) / 100), AW = Math.max(2, R * S.beam / 100), s = R / 149, rw = Math.max(1.5, AW * 0.18), span = AW - rw;
+  for (let j = 0; j < 3; j++) {
+    const ph = (ripplePh + j / 3) % 1, e0 = S.crossRipple === 1 ? AW - ph * span : rw + ph * span, b = 150 * (0.35 + 0.65 * Math.sin(ph * Math.PI));
+    for (let k = 1; k < 128; k++) { const q = (k - 0.5 - e0) / (1.4 * s); crossRipT[k] = Math.trunc(Math.min(255, crossRipT[k] + b * Math.exp(-q * q))); }
+  }
+}
 const max32 = (a, b) => (255 << 24) | Math.max(a & 0xFF0000, b & 0xFF0000) | Math.max(a & 0xFF00, b & 0xFF00) | Math.max(a & 0xFF, b & 0xFF);
 const dim32 = (c, m) => (255 << 24) | ((((c >> 16) & 255) * m >> 8) << 16) | ((((c >> 8) & 255) * m >> 8) << 8) | ((c & 255) * m >> 8);
 // ---------------- cloud skies behind the Wooden cross (fills 8 blue sky, 9 sunset, 10 heavenly light), same maths as the board ----------------
@@ -1284,6 +1300,7 @@ function tftFrame() {
   spaceT += S.speed * 8;
   if (spaceT > 1e7) spaceT = 0;
   const CE = isCross ? crossEdges() : null;
+  buildCrossRipple(isCross && !wood);
   if (wood) {
     woodFrame(out, CE, fill, arms, phase, phase2, tw);
     if (typeof composePreview === "function") composePreview(out);
@@ -1296,7 +1313,7 @@ function tftFrame() {
     spaceFrame(out, fill, isCross ? crossYC : QY);
     if (CE) for (let i = 0; i < out.length; i++) {   // glowing cross outline over the space picture
       const ce = CE[i];
-      if (ce > 0) { const rv = crossRimT[ce]; if (rv > 8) { const a = out[i], b = tftPal[rv]; out[i] = (255 << 24) | (Math.max(a & 0xFF0000, b & 0xFF0000)) | (Math.max(a & 0xFF00, b & 0xFF00)) | Math.max(a & 0xFF, b & 0xFF); } }
+      if (ce > 0) { const rv = Math.max(crossRimT[ce], crossRipT[ce] > 8 ? Math.min(255, crossRipT[ce] + 60) : 0); if (rv > 8) { const a = out[i], b = tftPal[rv]; out[i] = (255 << 24) | (Math.max(a & 0xFF0000, b & 0xFF0000)) | (Math.max(a & 0xFF00, b & 0xFF00)) | Math.max(a & 0xFF, b & 0xFF); } }
       else out[i] = tftPal[Math.max(crossRimT[-ce], crossHaloT[-ce])];
     }
     if (typeof composePreview === "function") composePreview(out);
@@ -1323,7 +1340,7 @@ function tftFrame() {
       if (CE) {                                  // Cross: the chosen style inside, glowing rim along the cross edge
         const ce = CE[p];
         if (ce > 0) {
-          v = styleV(fill, a, r, arms, phase, phase2, tw);
+          v = styleV(fill, a, r, arms, phase, phase2, tw) + crossRipT[ce];   // Ripple rings on top of the fill
           if (crossRimT[ce] > v) v = crossRimT[ce];
         } else {
           const k = -ce; v = Math.max(crossRimT[k], crossHaloT[k]);
