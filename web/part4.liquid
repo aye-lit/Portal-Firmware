@@ -1067,10 +1067,10 @@ $("check-fps").addEventListener("click", async () => {      // the board prints 
   const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "", fps = [];
   const timer = setTimeout(() => reader.cancel().catch(() => {}), 11000);
   try {
-    while (fps.length < 2) { const { value, done } = await reader.read(); if (done) break; text += dec.decode(value); fps = [...text.matchAll(/FPS: ([\d.]+)/g)].map(m => +m[1]); }
+    while (fps.length < 2) { const { value, done } = await reader.read(); if (done) break; text += dec.decode(value); fps = [...text.matchAll(/FPS: ([\d.]+)(?: draw ([\d.]+) ms send ([\d.]+) ms)?/g)].map(m => m.slice(1)); }
   } catch (e) {} finally { clearTimeout(timer); reader.releaseLock(); busy = false; }
   const f = fps.length ? fps[fps.length - 1] : null;
-  say(f == null ? "The board didn't report its speed. Make sure it has the latest install." : `The board draws ${f.toFixed(1)} frames per second.`, f == null ? "warn" : "ok");
+  say(f == null ? "The board didn't report its speed. Make sure it has the latest install." : `The board draws ${(+f[0]).toFixed(1)} frames per second.` + (f[1] ? ` Each frame: ${f[1]} ms working out the picture, ${f[2]} ms sending it to the screen.` : ""), f == null ? "warn" : "ok");
 });
 
 async function sendUsb() {

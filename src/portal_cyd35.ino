@@ -110,7 +110,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x88746357UL;
+const uint32_t BUILD_ID = 0x253A2C5AUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -1707,13 +1707,16 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
 
 // ---------- frame-rate readout (Serial Monitor, 115200 baud) ----------
 uint32_t fpsFrames = 0, fpsSince = 0;
+volatile uint32_t drawUs = 0, sendUs = 0;   // time spent working out the pixels and sending them to the screen
 void countFrame() {
   fpsFrames++;
   uint32_t now = millis();
   if (now - fpsSince >= 5000) {
     Serial.print(F("FPS: "));
-    Serial.println(fpsFrames * 1000.0f / (now - fpsSince), 1);
-    fpsFrames = 0;
+    Serial.print(fpsFrames * 1000.0f / (now - fpsSince), 1);
+    Serial.print(F(" draw ")); Serial.print(drawUs / 1000.0f / fpsFrames, 1);
+    Serial.print(F(" ms send ")); Serial.print(sendUs / 1000.0f / fpsFrames, 1); Serial.println(F(" ms"));
+    fpsFrames = 0; drawUs = 0; sendUs = 0;
     fpsSince = now;
   }
 }
@@ -1727,7 +1730,9 @@ void renderTask(void *) {         // runs on core 0
     frameStart();
     for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
       xSemaphoreTake(freeSem[b], portMAX_DELAY);
+      uint32_t t0 = micros();
       composeStrip(y0, min(STRIP, SCR_H - y0), stripBuf[b]);
+      drawUs += micros() - t0;
       xSemaphoreGive(readySem[b]);
       b ^= 1;
     }
@@ -1838,7 +1843,9 @@ void loop() {
   static uint8_t b = 0;
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
     xSemaphoreTake(readySem[b], portMAX_DELAY);
+    uint32_t t0 = micros();
     sendStrip(stripBuf[b], min(STRIP, SCR_H - y0));
+    sendUs += micros() - t0;
     xSemaphoreGive(freeSem[b]);
     b ^= 1;
     readSerialQuick();                   // new settings get an answer even while a slow frame is drawn
@@ -1847,8 +1854,11 @@ void loop() {
   frameStart();
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
     int rows = min(STRIP, SCR_H - y0);
+    uint32_t t0 = micros();
     composeStrip(y0, rows, stripBuf[0]);
+    uint32_t t1 = micros();
     sendStrip(stripBuf[0], rows);
+    drawUs += t1 - t0; sendUs += micros() - t1;
     readSerialQuick();
   }
   frameEnd();
