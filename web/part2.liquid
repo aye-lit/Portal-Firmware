@@ -125,7 +125,7 @@ const uint32_t PIC_MAGIC = 0x43495056UL;   // "VPIC"
 const uint32_t STAGE_SIZE = 0x30000;       // room for one arriving JPEG (192 KB, enough for high quality on big screens)
 const esp_partition_t *picPart = NULL;
 uint32_t slotSize = 0, stageOff = 0;      // stageOff: where an arriving JPEG waits (last 64 KB)
-uint32_t crossOff = 0, crossSize = 0;     // the cross outline: distance to the edge for every pixel
+uint32_t crossOff = 0, crossSize = 0, crossPlane = 0, woodOff = 0;   // the cross outline (distance to the edge for every pixel) and the wood
 uint8_t  picSlots = 0;
 volatile uint32_t picId[MAX_PICS];        // 0 = empty slot
 volatile bool uploading = false;
@@ -140,8 +140,10 @@ void beginPictures() {
   if (!picPart || picPart->size < 0x80000) { picPart = NULL; return; }
   slotSize = (sizeof(PicHead) + (uint32_t)SCR_W * SCR_H * 2 + 4095) & ~4095UL;
   stageOff = (picPart->size - STAGE_SIZE) & ~4095UL;
-  crossSize = (16 + (uint32_t)SCR_W * SCR_H + 4095) & ~4095UL;   // the cross outline lives just before the staging area
+  crossPlane = (16 + (uint32_t)SCR_W * SCR_H + 4095) & ~4095UL;
+  crossSize = crossPlane * 2;              // the cross outline, then the wood (Wooden cross), just before the staging area
   crossOff = stageOff - crossSize;
+  woodOff = crossOff + crossPlane;
   picSlots = min((uint32_t)MAX_PICS, crossOff / slotSize);
   for (uint8_t i = 0; i < picSlots; i++) {
     PicHead h;
@@ -344,6 +346,13 @@ void prepareCross() {                           // (re)build the outline when th
 }
 
 void readCrossRows(int y0, int rows) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W); }
+void readEdgeRow(int y, int8_t *dst) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y * SCR_W, dst, SCR_W); }
+const uint32_t WOOD_MAGIC = 0x444F4F57UL;  // "WOOD"
+bool woodPlaneReady(uint32_t key) { uint32_t h[4]; esp_partition_read(picPart, woodOff, h, 16); return h[0] == WOOD_MAGIC && h[1] == key; }
+void woodPlaneBegin() { esp_partition_erase_range(picPart, woodOff, crossPlane); }
+void woodPlaneRow(int y, const uint8_t *row) { esp_partition_write(picPart, woodOff + 16 + (uint32_t)y * SCR_W, row, SCR_W); }
+void woodPlaneEnd(uint32_t key) { uint32_t h[4] = { WOOD_MAGIC, key, 0, 0 }; esp_partition_write(picPart, woodOff, h, 16); }
+void readWoodRows(int y0, int rows, uint8_t *dst) { esp_partition_read(picPart, woodOff + 16 + (uint32_t)y0 * SCR_W, dst, (uint32_t)rows * SCR_W); }
 
 const char *pictureCommand(char *line) {
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
@@ -377,6 +386,12 @@ void beginPictures() {}
 bool crossAvailable() { return false; }
 void prepareCross() {}
 void readCrossRows(int y0, int rows) {}
+void readEdgeRow(int y, int8_t *dst) {}
+bool woodPlaneReady(uint32_t key) { return true; }
+void woodPlaneBegin() {}
+void woodPlaneRow(int y, const uint8_t *row) {}
+void woodPlaneEnd(uint32_t key) {}
+void readWoodRows(int y0, int rows, uint8_t *dst) {}
 int  picturesAvailable() { return 0; }
 bool isPicture(uint8_t s) { return false; }
 void readPicture(uint8_t s, int y0, int rows, uint16_t *dst) {}
@@ -467,7 +482,7 @@ const crossMax = (M, st = S.style) => M.rect ? Math.floor((M.h - 8) * 0.8) : Mat
 const radiusMax = M => (S.style >= 8 && S.style <= 13) || S.style === 17 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossRipple: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossRipple: 0, woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -483,6 +498,7 @@ if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 S.reverse = S.reverse === true;
 if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16].includes(S.crossFill)) S.crossFill = 0;
 if (![0, 1, 2].includes(S.crossRipple)) S.crossRipple = 0;
+if (![0, 1, 2].includes(S.woodGrain)) S.woodGrain = 0;
 if (S.c1 === "#c02ad0" && S.c2 === "#f9c8ff") { S.c1 = PRESETS.Bloom[0]; S.c2 = PRESETS.Bloom[1]; }   // the old pale Bloom colours
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
@@ -1027,7 +1043,7 @@ function crossEdges() {
 
 // ---------------- Wooden cross (style 17): carved wood, crossbar joined flush; same maths as the board ----------------
 const woodGT = new Uint8Array(256), woodGlowT = new Uint8Array(128), woodShT = new Uint8Array(128), woodWideT = new Uint8Array(256), woodVigT = new Uint8Array(256);
-const woodWobT = [new Int16Array(1024), new Int16Array(1024)], woodPal = new Uint32Array(64 * 16);
+const woodWobT = [new Int16Array(1024), new Int16Array(1024)];
 const W8 = { AW: 10, HHL: 20, bot: 100, top: 50, s: 1, VS: 51, FS: 384, US: 51, key: "" };
 function woodNoise(x, seed) {
   const i = Math.floor(x); let f = x - i; f = f * f * (3 - 2 * f);
@@ -1036,32 +1052,43 @@ function woodNoise(x, seed) {
 }
 const woodBox = (x, y, cx, cy, hw, hh) => { const dx = Math.abs(x - cx) - hw, dy = Math.abs(y - cy) - hh; return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0); };
 const woodSD = (x, y) => Math.min(woodBox(x, y, 0, (W8.bot - W8.top) / 2, W8.AW, (W8.bot + W8.top) / 2), woodBox(x, y, 0, 0, W8.HHL, W8.AW));
-function prepareWood() {
-  const R = Math.min(S.radius, (TH - 8) * (100 - S.bar) / 100), key = [R, S.crossw, S.beam, S.bar, S.bright, TW, TH].join(",");
-  if (key === W8.key) return;
-  W8.key = key; W8.bot = R; W8.top = R * S.bar / (100 - S.bar);
-  W8.AW = Math.max(2, R * S.beam / 100); W8.HHL = Math.max(W8.AW + 1, Math.min(R * S.crossw / 100, TW / 2 - 2));
-  W8.s = R / 149; W8.VS = Math.round(0.2 / W8.s * 256); W8.FS = Math.round(1.5 / W8.s * 256); W8.US = Math.round(0.2 / W8.s * 256);
-  for (let i = 0; i < 256; i++) woodGT[i] = Math.round(Math.pow(Math.abs(Math.sin(i * Math.PI / 256)), 14) * 255);
-  for (let k = 0; k < 2; k++) for (let u = 0; u < 1024; u++) woodWobT[k][u] = Math.round(woodNoise((u - 512) * 0.008 / W8.s, k ? 11 : 3) * 0.8 * 256);
-  const c0 = [46, 26, 12], c1 = [112, 66, 32], c2 = [176, 120, 66];   // dark walnut -> oak
-  for (let tn = 0; tn < 64; tn++) {
-    const tt = tn / 63, c = [0, 1, 2].map(j => tt < 0.5 ? c0[j] + (c1[j] - c0[j]) * tt * 2 : c1[j] + (c2[j] - c1[j]) * (tt - 0.5) * 2);
-    for (let sh = 0; sh < 16; sh++) {
-      const k = (0.6 + sh * 0.05) * S.bright / 100, q = c.map(v => Math.trunc(Math.min(255, v * k)));
-      const r5 = q[0] & 0xF8, g6 = q[1] & 0xFC, b5 = q[2] & 0xF8;
-      woodPal[tn * 16 + sh] = (255 << 24) | ((b5 | b5 >> 5) << 16) | ((g6 | g6 >> 6) << 8) | (r5 | r5 >> 5);
-    }
-  }
-  for (let k = 0; k < 128; k++) { woodGlowT[k] = Math.trunc(200 * Math.exp(-k / (14 * W8.s))); woodShT[k] = Math.trunc(255 * (1 - 0.8 * Math.exp(-k / 3))); }
-  for (let r = 0; r < 256; r++) { woodWideT[r] = Math.trunc(90 * Math.max(0, 1 - r / (1.3 * W8.bot))); const q = r / (1.3 * W8.bot); woodVigT[r] = Math.trunc(255 * Math.max(0, 1 - q * q)); }
+// Three grains: 0 classic, 1 pine, 2 rustic oak. Worked out once per pixel (one byte: 32 tones x 8 shades), like the board.
+const WOOD_GRAINS = [
+  { early: [222, 176, 118], late: [156, 94, 46], freq: 0.15, arch: 0.10, off: 20, warp: 3.0, l0: 0.50, l1: 0.86, tone: 0.10, pores: 0.008, poreLen: 9, poreDark: 0.85, u0V: 30, u0H: -25 },   // pine
+  { early: [150, 100, 58], late: [88, 54, 30], freq: 0.26, arch: 0.08, off: 22, warp: 2.4, l0: 0.45, l1: 0.82, tone: 0.16, pores: 0.025, poreLen: 8, poreDark: 0.78, u0V: -20, u0H: 60 }    // rustic oak
+];
+const WOOD_SHADE = [0.70, 0.78, 0.86, 0.93, 1.0, 1.08, 1.17, 1.28], woodPal8 = new Uint32Array(256);
+let woodBytes = null, woodPlaneKey = "";
+const woodHash01 = (a, b) => (hash32((Math.imul(a, 73856093) ^ Math.imul(b, 19349663)) >>> 0) & 65535) / 65536;
+function woodNoise2(x, y, seed) {
+  const ix = Math.floor(x), iy = Math.floor(y); let u = x - ix, w = y - iy; u = u * u * (3 - 2 * u); w = w * w * (3 - 2 * w);
+  const L = [0, 1, 2, 3].map(k => (hash32((Math.imul(ix + (k & 1), 73856093) ^ Math.imul(iy + (k >> 1), 19349663) ^ Math.imul(seed, 83492791)) >>> 0) & 1023) / 1023);
+  return (L[0] + (L[1] - L[0]) * u) * (1 - w) + (L[2] + (L[3] - L[2]) * u) * w;
 }
-function woodColor(x, y, ce) {
-  const fx = x + 0.5 - TW / 2, fy = y + 0.5 - crossYC, inH = Math.abs(fy) < W8.AW && Math.abs(fx) < W8.HHL;
-  const u = Math.floor(inH ? fx : fy), v = Math.floor(inH ? fy : fx), seed = inH ? 11 : 3;
-  const ring = (v * W8.VS + woodWobT[inH ? 1 : 0][Math.max(0, Math.min(1023, u + 512))]) & 255;
-  const fi = (v * W8.FS) >> 8, fu = (u * W8.US) >> 8, h = hash32((Math.imul(fi, 7919) + Math.imul(fu, 104729) + seed * 97) >>> 0) & 255;
-  const tone = Math.round((0.66 - woodGT[ring] / 255 * 0.2 + (h - 128) / 256 * 0.05) * 63);
+const woodSst = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+function woodColorOf(grain, tn) {
+  if (grain === 0) { const c0 = [46, 26, 12], c1 = [112, 66, 32], c2 = [176, 120, 66], tt = 0.40 + tn / 31 * 0.36; return [0, 1, 2].map(j => tt < 0.5 ? c0[j] + (c1[j] - c0[j]) * tt * 2 : c1[j] + (c2[j] - c1[j]) * (tt - 0.5) * 2); }
+  const G = WOOD_GRAINS[grain - 1], q = tn / 31 * 1.05;
+  return [0, 1, 2].map(j => { if (q < 0.25) return G.late[j] * 0.55 + (G.late[j] - G.late[j] * 0.55) * q / 0.25; const g = (q - 0.25) / 0.75; return g <= 1 ? G.late[j] + (G.early[j] - G.late[j]) * g : G.early[j] * (1 + (g - 1) * 0.5); });
+}
+function woodByte(x, y, ce, grain) {
+  const fx = x + 0.5 - TW / 2, fy = y + 0.5 - crossYC, inH = Math.abs(fy) < W8.AW && Math.abs(fx) < W8.HHL, seed = inH ? 11 : 3;
+  let idx;
+  if (grain === 0) {
+    const u = Math.floor(inH ? fx : fy), v = Math.floor(inH ? fy : fx);
+    const ring = (v * W8.VS + woodWobT[inH ? 1 : 0][Math.max(0, Math.min(1023, u + 512))]) & 255;
+    const fi = (v * W8.FS) >> 8, fu = (u * W8.US) >> 8, h = hash32((Math.imul(fi, 7919) + Math.imul(fu, 104729) + seed * 97) >>> 0) & 255;
+    idx = Math.round((0.66 - woodGT[ring] / 255 * 0.2 + (h - 128) / 256 * 0.05 - 0.40) / 0.36 * 31);
+  } else {
+    const G = WOOD_GRAINS[grain - 1], uu = (inH ? fx : fy) / W8.s, vv = (inH ? fy : fx) / W8.s;
+    const warp = (woodNoise2(uu * 0.02 + seed, vv * 0.06 + seed * 3, seed) - 0.5) * G.warp + (woodNoise(uu * 0.004 + seed * 7, seed + 101) - 0.5) * G.warp * 2;
+    const cu = (uu - (inH ? G.u0H : G.u0V)) * G.arch, dv = vv + G.off + warp, rc = Math.sqrt(dv * dv + cu * cu) * G.freq, f = rc - Math.floor(rc);
+    const late = woodSst(G.l0, G.l1, f) * (1 - woodSst(0.96, 1, f));
+    const tonef = 1 + (woodNoise(uu * 0.01 + seed * 13, seed + 202) - 0.5) * G.tone;
+    const pore = woodHash01(Math.floor(vv * 1.2) + seed * 131, Math.floor(uu / G.poreLen)) < G.pores ? G.poreDark : 1;
+    const fib = 1 + (woodHash01(Math.floor(vv * 2) + seed * 17, Math.floor(uu * 0.3)) - 0.5) * 0.06;
+    idx = Math.round((0.25 + 0.75 * (1 - late)) * tonef * pore * fib / 1.05 * 31);
+  }
   let k = 1;
   if (ce <= 5) {
     const e = -woodSD(fx, fy), bev = 3.2 * W8.s;
@@ -1072,9 +1099,30 @@ function woodColor(x, y, ce) {
     }
   }
   if (inH ? (Math.abs(fx) < W8.AW + 0.5 && W8.AW - Math.abs(fy) < 1) : (Math.abs(fy) < W8.AW + 1 && Math.abs(fy) >= W8.AW)) k *= 0.86;
-  const sh = Math.max(0, Math.min(15, Math.round((k - 0.6) / 0.05)));
-  return woodPal[Math.max(0, Math.min(63, tone)) * 16 + sh];
+  let sh = 0; for (let i = 1; i < 8; i++) if (Math.abs(WOOD_SHADE[i] - k) < Math.abs(WOOD_SHADE[sh] - k)) sh = i;
+  return (Math.max(0, Math.min(31, idx)) << 3) | sh;
 }
+function prepareWood(CE) {
+  const R = Math.min(S.radius, (TH - 8) * (100 - S.bar) / 100), grain = S.woodGrain | 0, key = [R, S.crossw, S.beam, S.bar, S.bright, TW, TH, grain].join(",");
+  if (key !== W8.key) {
+    W8.key = key; W8.bot = R; W8.top = R * S.bar / (100 - S.bar);
+    W8.AW = Math.max(2, R * S.beam / 100); W8.HHL = Math.max(W8.AW + 1, Math.min(R * S.crossw / 100, TW / 2 - 2));
+    W8.s = R / 149; W8.VS = Math.round(0.2 / W8.s * 256); W8.FS = Math.round(1.5 / W8.s * 256); W8.US = Math.round(0.2 / W8.s * 256);
+    for (let i = 0; i < 256; i++) woodGT[i] = Math.round(Math.pow(Math.abs(Math.sin(i * Math.PI / 256)), 14) * 255);
+    for (let k = 0; k < 2; k++) for (let u = 0; u < 1024; u++) woodWobT[k][u] = Math.round(woodNoise((u - 512) * 0.008 / W8.s, k ? 11 : 3) * 0.8 * 256);
+    for (let tn = 0; tn < 32; tn++) {
+      const c = woodColorOf(grain, tn);
+      for (let sh = 0; sh < 8; sh++) { const k = WOOD_SHADE[sh] * S.bright / 100, q = c.map(v => Math.trunc(Math.min(255, v * k))); woodPal8[tn * 8 + sh] = rgb32(q[0], q[1], q[2]); }
+    }
+    for (let k = 0; k < 128; k++) { woodGlowT[k] = Math.trunc(200 * Math.exp(-k / (14 * W8.s))); woodShT[k] = Math.trunc(255 * (1 - 0.8 * Math.exp(-k / 3))); }
+    for (let r = 0; r < 256; r++) { woodWideT[r] = Math.trunc(90 * Math.max(0, 1 - r / (1.3 * W8.bot))); const q = r / (1.3 * W8.bot); woodVigT[r] = Math.trunc(255 * Math.max(0, 1 - q * q)); }
+  }
+  const pk = [R, S.crossw, S.beam, S.bar, TW, TH, grain, crossYC].join(",");
+  if (pk === woodPlaneKey && woodBytes) return;
+  woodPlaneKey = pk; woodBytes = new Uint8Array(TW * TH);
+  for (let y = 0, i = 0; y < TH; y++) for (let x = 0; x < TW; x++, i++) if (CE[i] > 0) woodBytes[i] = woodByte(x, y, CE[i], grain);
+}
+const woodPx = i => woodPal8[woodBytes[i]];
 // Ripple (glowing crosses): copies of the outline echo through the inside of the cross, same maths as the board
 const crossRipT = new Uint8Array(128);
 let ripplePh = 0, rippleLastMs = 0;
@@ -1097,7 +1145,8 @@ let cloudTex = null, cloudDrift = 0, cloudLastMs = 0, cloudKey = "";
 const cloudDensT = new Uint8Array(512), cloudShT = new Uint8Array(64), cloudGlowT = new Uint8Array(128), cloudRayT = new Uint8Array(256), cloudRayRT = new Uint8Array(256), cloudCol = Array.from({ length: 16 }, () => [0, 0, 0]);
 const CK = { k1: 0, k2: 0, k3: 0 };
 const SKY_TOP = [[38, 96, 190], [58, 38, 110], [140, 178, 236]], SKY_MID = [225, 110, 92], SKY_BOT = [[150, 200, 240], [255, 190, 110], [255, 232, 190]];
-const CL_LIT = [[250, 252, 255], [255, 226, 180], [255, 255, 250]], CL_SH = [[150, 168, 198], [78, 44, 92], [188, 188, 208]], CL_COV = [[0.44, 0.60], [0.45, 0.61], [0.42, 0.59]];
+const CL_LIT = [[250, 252, 255], [255, 226, 180], [255, 255, 250]], CL_SH = [[150, 168, 198], [78, 44, 92], [188, 188, 208]], CL_COV = [[0.44, 0.60], [0.45, 0.61], [0.47, 0.53]];
+const CL_DET = [36, 36, 64], CL_SHADE = [5, 5, 8], CL_GLOW = [0.7, 0.7, 0.35], CL_RAY = [0.55, 0.55, 0.3];   // heavenly light: crisper clouds, softer light
 const cloudLat = (ix, iy, p, o) => { ix &= p - 1; iy &= p - 1; return hash32((Math.imul(ix, 73856093) ^ Math.imul(iy, 19349663) ^ Math.imul(o, 83492791)) >>> 0) & 255; };
 function cloudMemory() {
   if (cloudTex) return;
@@ -1127,9 +1176,9 @@ function prepareClouds(kind) {
   const [c0, c1] = CL_COV[kind];
   for (let i = 0; i < 512; i++) { const x = Math.min(1, Math.max(0, ((i - 128) / 255 - c0) / (c1 - c0))); cloudDensT[i] = Math.trunc(255 * x * x * (3 - 2 * x)); }
   for (let k = 0; k < 64; k++) cloudShT[k] = Math.trunc(255 * (1 - Math.exp(-k / 2.5) * (kind === 2 ? 0.15 : 0.45)));
-  for (let k = 0; k < 128; k++) cloudGlowT[k] = Math.trunc(255 * 0.7 * Math.exp(-k / (10 * W8.s)));
+  for (let k = 0; k < 128; k++) cloudGlowT[k] = Math.trunc(255 * CL_GLOW[kind] * Math.exp(-k / (10 * W8.s)));
   for (let a = 0; a < 256; a++) cloudRayT[a] = Math.trunc(255 * Math.pow(Math.max(0, Math.sin(a * TWO_PI / 256)), 6));
-  for (let r = 0; r < 256; r++) cloudRayRT[r] = Math.trunc(255 * 0.55 * Math.max(0, 1 - r / (1.4 * W8.bot)));
+  for (let r = 0; r < 256; r++) cloudRayRT[r] = Math.trunc(255 * CL_RAY[kind] * Math.max(0, 1 - r / (1.4 * W8.bot)));
   for (let i = 0; i < 16; i++) for (let j = 0; j < 3; j++) cloudCol[i][j] = Math.trunc(CL_SH[kind][j] + (CL_LIT[kind][j] - CL_SH[kind][j]) * i / 15);
   CK.k1 = Math.round(64 / W8.s * 256); CK.k2 = Math.round(64 / W8.s * 256 * 1.7); CK.k3 = Math.round(64 / W8.s * 256 * 3.1);
 }
@@ -1153,7 +1202,7 @@ function cloudFrame(out, CE, fill) {
     for (let x = 0; x < TW; x++, p++) {
       const ce = CE[p];
       if (ce > 0) {
-        let w = woodColor(x, y, ce);
+        let w = woodPx(p);
         if (kind === 1 && ce <= 1) w = max32(w, rgb32(64, 42, 22));
         if (kind === 2 && ce <= 2) w = max32(w, ce === 1 ? rgb32(170, 156, 120) : rgb32(110, 100, 78));
         out[p] = w; continue;
@@ -1161,9 +1210,9 @@ function cloudFrame(out, CE, fill) {
       const k = -ce, X1 = ((x * CK.k1) >> 8) + D1, X2 = ((x * CK.k2) >> 8) + D2, X3 = ((x * CK.k3) >> 8) + D3;
       const n = (cloudAt(X1, Y1) * 205 + cloudAt(X2, Y2) * 51) >> 8;
       const n2 = (cloudAt(X1, Y1 - 768) * 205 + cloudAt(X2, Y2 - 1280) * 51) >> 8;
-      const det = ((cloudAt(X3, Y3) - 128) * 36) >> 8;
+      const det = ((cloudAt(X3, Y3) - 128) * CL_DET[kind]) >> 8;
       const dens = cloudDensT[Math.max(0, Math.min(511, n + det + 128))];
-      const light = Math.max(0, Math.min(255, 158 + (n - n2) * 5 + ((det * 3) >> 1))) >> 4;
+      const light = Math.max(0, Math.min(255, 158 + (n - n2) * CL_SHADE[kind] + ((det * 3) >> 1))) >> 4;
       for (let j = 0; j < 3; j++) c[j] = sky[j] + (((cloudCol[light][j] - sky[j]) * dens) >> 8);
       if (kind === 2) {
         const [r, a] = polarAt(x, y, crossYC);
@@ -1177,20 +1226,20 @@ function cloudFrame(out, CE, fill) {
   }
 }
 function woodFrame(out, CE, fill, arms, phase, phase2, tw) {
-  prepareWood();
+  prepareWood(CE);
   if (fill >= 8 && fill <= 10) { cloudFrame(out, CE, fill); return; }   // a cloud sky behind the cross
   const pulse = Math.trunc(256 * (0.75 + 0.25 * Math.sin(performance.now() / 1000 * 1.3)));
   if (fill === 4 || fill >= 14) {
     spaceFrame(out, fill, crossYC);
     for (let y = 0, i = 0; y < TH; y++) for (let x = 0; x < TW; x++, i++) {
       const ce = CE[i];
-      if (ce > 0) out[i] = woodColor(x, y, ce); else if (-ce < 12) out[i] = dim32(out[i], woodShT[-ce]);
+      if (ce > 0) out[i] = woodPx(i); else if (-ce < 12) out[i] = dim32(out[i], woodShT[-ce]);
     }
     return;
   }
   for (let y = 0, p = 0; y < TH; y++) for (let x = 0; x < TW; x++, p++) {
     const ce = CE[p];
-    if (ce > 0) { let c = woodColor(x, y, ce); if (fill === 7 && ce <= 3) c = max32(c, tftPal[Math.min(255, ((3 - ce) * 60 * pulse) >> 8)]); out[p] = c; continue; }
+    if (ce > 0) { let c = woodPx(p); if (fill === 7 && ce <= 3) c = max32(c, tftPal[Math.min(255, ((3 - ce) * 60 * pulse) >> 8)]); out[p] = c; continue; }
     const k = -ce, [r, a] = polarAt(x, y, crossYC);
     let v;
     if (fill === 7) v = ((woodGlowT[k] + woodWideT[r]) * pulse) >> 8;

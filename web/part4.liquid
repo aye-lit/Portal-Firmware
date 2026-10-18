@@ -389,6 +389,8 @@ function markStyle() {
   $("fill-plain").querySelectorAll("option").forEach(o => { o.hidden = o.disabled = woodSel; });
   if ($("crossfill")) $("crossfill").value = S.crossFill;
   $("crossripple").value = S.crossRipple;
+  $("woodgrain").value = S.woodGrain;
+  $("woodgrain").closest("label").hidden = !cross || !woodSel;
   $("crossripple").closest("label").hidden = !cross || woodSel;   // the Wooden cross has no ripple
   $("cross-row").hidden = !picturesAllowed() && !isCrossStyle(S.style);
   const sc = tft && hasSpaceCols(eff);                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
@@ -413,6 +415,7 @@ function markStyle() {
   if (sl) { sl.querySelector("span").firstChild.nodeValue = met ? "Meteors " : "Sparks "; $("sparks-hint").hidden = !met; }
 }
 $("crossripple").addEventListener("change", e => { S.crossRipple = +e.target.value; changed(true); });
+$("woodgrain").addEventListener("change", e => { S.woodGrain = +e.target.value; changed(true); });
 $("crossfill").addEventListener("change", e => {
   S.crossFill = +e.target.value;
   if (S.crossFill === 16 && S.sparks < 2) S.sparks = 14;
@@ -1040,7 +1043,7 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
 const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${(M.kind === "tft" ? S.reverse : S.drift) ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
-function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${isCrossStyle(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") + " " + S.crossFill + " " + S.crossRipple : hasSpaceCols(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") : ""}`; }   // space colours only when needed, so older boards still accept the rest
+function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${isCrossStyle(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") + " " + S.crossFill + " " + (S.style === 17 ? S.woodGrain : S.crossRipple) : hasSpaceCols(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") : ""}`; }   // space colours only when needed, so older boards still accept the rest
 
 async function readReply(ms) {
   const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "";

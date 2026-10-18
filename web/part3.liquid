@@ -104,7 +104,7 @@ uint8_t  BRIGHTNESS = ${S.bright};     // 10-100 %: dims the portal's colours
 uint8_t  STYLE      = ${S.style};       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy (Hubble-style spiral), 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
                                 // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
                                 // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
-uint8_t  CROSS_RIPPLE = ${S.crossRipple};      // crosses: Ripple, rings echoing the outline inside the cross (0 off, 1 outward, 2 inward)
+uint8_t  CROSS_RIPPLE = ${S.style === 17 ? S.woodGrain : S.crossRipple};      // crosses: Ripple, rings echoing the outline inside the cross (0 off, 1 outward, 2 inward); the Wooden cross: its grain (0 classic, 1 pine, 2 rustic oak)
 uint8_t  CROSS_FILL = ${S.crossFill};       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower, 11 Solid colour; the Wooden cross: what's behind it, 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
 uint32_t SPACE_COLS[4] = { ${S.spaceCols.map(c => "0x" + hex6(c)).join(", ")} };   // Galaxy, Nebula, Wormhole, Meteor Shower: four colours blended together
 uint8_t  CROSS_W    = ${S.crossw};      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
@@ -1018,7 +1018,6 @@ void crossMask(int y0, int rows, uint16_t *strip) {   // glowing cross outline o
 bool     woodOn = false;
 uint8_t  woodGT[256], woodGlowT[128], woodShT[128], woodWideT[256], woodVigT[256];
 uint8_t  woodWobT[2][1024];               // grain sway along each beam
-uint16_t woodPal[64 * 16];                // 64 wood tones x 16 shades (bevel light and shadow)
 float    woodAW = 10, woodHHL = 20, woodBot = 100, woodTop = 50, woodS = 1;
 int      woodVS = 51, woodFS = 384, woodUS = 51, woodPulse = 256;
 uint32_t woodKey = 0;
@@ -1038,45 +1037,71 @@ float woodSD(float x, float y) {               // one solid piece: upright and c
   return fminf(woodBox(x, y, 0, (woodBot - woodTop) / 2, woodAW, (woodBot + woodTop) / 2), woodBox(x, y, 0, 0, woodHHL, woodAW));
 }
 
-void prepareWood() {
-  float R = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100);
-  uint32_t key = 2166136261UL;
-  uint32_t parts[] = { (uint32_t)(R * 16), CROSS_W, BEAM, BAR, BRIGHTNESS, SCR_W, SCR_H, 1 };
-  for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
-  if (key == woodKey) return;
-  woodKey = key;
-  woodBot = R; woodTop = R * BAR / (100.0f - BAR);
-  woodAW = max(2.0f, R * BEAM / 100.0f); woodHHL = max(woodAW + 1, min(R * CROSS_W / 100.0f, SCR_W / 2.0f - 2));
-  woodS = R / 149.0f;
-  woodVS = (int)lroundf(0.2f / woodS * 256); woodFS = (int)lroundf(1.5f / woodS * 256); woodUS = (int)lroundf(0.2f / woodS * 256);
-  for (int i = 0; i < 256; i++) woodGT[i] = (uint8_t)lroundf(powf(fabsf(sinf(i * PI / 256)), 14) * 255);
-  for (int k = 0; k < 2; k++) for (int u = 0; u < 1024; u++) woodWobT[k][u] = (uint8_t)lroundf(woodNoise((u - 512) * 0.008f / woodS, k ? 11 : 3) * 0.8f * 256);
-  const float c0[3] = { 46, 26, 12 }, c1[3] = { 112, 66, 32 }, c2[3] = { 176, 120, 66 };   // dark walnut -> oak
-  for (int tn = 0; tn < 64; tn++) {
-    float tt = tn / 63.0f, c[3];
+// Three grains (CROSS_RIPPLE picks it for the Wooden cross): 0 classic, 1 pine, 2 rustic oak.
+// The wood never moves, so the board works it out once per pixel and keeps it in flash next to the cross outline:
+// one byte per pixel, 32 wood tones x 8 shades, then just looks the colours up while drawing.
+struct WoodGrain { float early[3], late[3], freq, arch, off, warp, l0, l1, tone, pores, poreLen, poreDark, u0V, u0H; };
+const WoodGrain WOOD_GRAINS[2] = {
+  { { 222, 176, 118 }, { 156, 94, 46 }, 0.15f, 0.10f, 20, 3.0f, 0.50f, 0.86f, 0.10f, 0.008f, 9, 0.85f, 30, -25 },   // pine
+  { { 150, 100, 58 }, { 88, 54, 30 }, 0.26f, 0.08f, 22, 2.4f, 0.45f, 0.82f, 0.16f, 0.025f, 8, 0.78f, -20, 60 }     // rustic oak
+};
+const float WOOD_SHADE[8] = { 0.70f, 0.78f, 0.86f, 0.93f, 1.0f, 1.08f, 1.17f, 1.28f };
+uint16_t woodPal8[256];
+uint8_t *woodBuf = NULL;                   // one strip of wood bytes
+uint32_t woodPlaneKey = 0;
+int      woodGrain = 0;
+
+float woodHash01(int a, int b) { return (hash32((uint32_t)(a * 73856093) ^ (uint32_t)(b * 19349663)) & 65535) / 65536.0f; }
+float woodNoise2(float x, float y, uint32_t seed) {
+  int ix = (int)floorf(x), iy = (int)floorf(y);
+  float u = x - ix, w = y - iy; u = u * u * (3 - 2 * u); w = w * w * (3 - 2 * w);
+  float L[4];
+  for (int k = 0; k < 4; k++) L[k] = (hash32((uint32_t)((ix + (k & 1)) * 73856093) ^ (uint32_t)((iy + (k >> 1)) * 19349663) ^ (uint32_t)(seed * 83492791)) & 1023) / 1023.0f;
+  return (L[0] + (L[1] - L[0]) * u) * (1 - w) + (L[2] + (L[3] - L[2]) * u) * w;
+}
+inline float woodSst(float a, float b, float x) { float t = fminf(1, fmaxf(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
+
+void woodColorOf(int grain, int tn, float *c) {            // wood tone tn (0-31) of a grain
+  if (grain == 0) {
+    const float c0[3] = { 46, 26, 12 }, c1[3] = { 112, 66, 32 }, c2[3] = { 176, 120, 66 };   // dark walnut -> oak
+    float tt = 0.40f + tn / 31.0f * 0.36f;
     for (int j = 0; j < 3; j++) c[j] = tt < 0.5f ? c0[j] + (c1[j] - c0[j]) * tt * 2 : c1[j] + (c2[j] - c1[j]) * (tt - 0.5f) * 2;
-    for (int sh = 0; sh < 16; sh++) {
-      float k = (0.6f + sh * 0.05f) * BRIGHTNESS / 100.0f;
-      woodPal[tn * 16 + sh] = to565((uint8_t)min(255.0f, c[0] * k), (uint8_t)min(255.0f, c[1] * k), (uint8_t)min(255.0f, c[2] * k));
+  } else {
+    const WoodGrain &G = WOOD_GRAINS[grain - 1];
+    float q = tn / 31.0f * 1.05f;
+    for (int j = 0; j < 3; j++) {
+      if (q < 0.25f) c[j] = G.late[j] * 0.55f + (G.late[j] - G.late[j] * 0.55f) * q / 0.25f;
+      else { float g = (q - 0.25f) / 0.75f; c[j] = g <= 1 ? G.late[j] + (G.early[j] - G.late[j]) * g : G.early[j] * (1 + (g - 1) * 0.5f); }
     }
-  }
-  for (int k = 0; k < 128; k++) { woodGlowT[k] = (uint8_t)(200 * expf(-k / (14 * woodS))); woodShT[k] = (uint8_t)(255 * (1 - 0.8f * expf(-k / 3.0f))); }
-  for (int r = 0; r < 256; r++) {
-    woodWideT[r] = (uint8_t)(90 * fmaxf(0, 1 - r / (1.3f * woodBot)));
-    float q = r / (1.3f * woodBot); woodVigT[r] = (uint8_t)(255 * fmaxf(0, 1 - q * q));   // a portal behind fades out toward the screen edge
   }
 }
 
-uint16_t woodColor(int x, int y, int ce) {     // the wood at one pixel inside the cross
+uint8_t woodByte(int x, int y, int ce) {                     // one pixel of wood: tone and shade
   float fx = x + 0.5f - SCR_W / 2.0f, fy = y + 0.5f - crossYC;
-  bool inH = fabsf(fy) < woodAW && fabsf(fx) < woodHHL;   // the crossbar (its grain runs across)
-  int u = (int)floorf(inH ? fx : fy), v = (int)floorf(inH ? fy : fx), seed = inH ? 11 : 3;
-  int ring = (v * woodVS + woodWobT[inH][constrain(u + 512, 0, 1023)]) & 255;
-  int fi = (v * woodFS) >> 8, fu = (u * woodUS) >> 8;
-  int h = hash32((uint32_t)(fi * 7919 + fu * 104729 + seed * 97)) & 255;
-  int tone = (int)lroundf((0.66f - woodGT[ring] / 255.0f * 0.2f + (h - 128) / 256.0f * 0.05f) * 63);
+  bool inH = fabsf(fy) < woodAW && fabsf(fx) < woodHHL;      // the crossbar (its grain runs across)
+  int seed = inH ? 11 : 3, idx;
+  if (woodGrain == 0) {                                      // classic: even, straight lines
+    int u = (int)floorf(inH ? fx : fy), v = (int)floorf(inH ? fy : fx);
+    int ring = (v * woodVS + woodWobT[inH][constrain(u + 512, 0, 1023)]) & 255;
+    int fi = (v * woodFS) >> 8, fu = (u * woodUS) >> 8;
+    int h = hash32((uint32_t)(fi * 7919 + fu * 104729 + seed * 97)) & 255;
+    float t = 0.66f - woodGT[ring] / 255.0f * 0.2f + (h - 128) / 256.0f * 0.05f;
+    idx = (int)lroundf((t - 0.40f) / 0.36f * 31);
+  } else {                                                   // pine / rustic oak: growth rings round a pith off the board
+    const WoodGrain &G = WOOD_GRAINS[woodGrain - 1];
+    float uu = (inH ? fx : fy) / woodS, vv = (inH ? fy : fx) / woodS;
+    float warp = (woodNoise2(uu * 0.02f + seed, vv * 0.06f + seed * 3, seed) - 0.5f) * G.warp + (woodNoise(uu * 0.004f + seed * 7, seed + 101) - 0.5f) * G.warp * 2;
+    float cu = (uu - (inH ? G.u0H : G.u0V)) * G.arch, dv = vv + G.off + warp;
+    float rc = sqrtf(dv * dv + cu * cu) * G.freq, f = rc - floorf(rc);
+    float late = woodSst(G.l0, G.l1, f) * (1 - woodSst(0.96f, 1, f));
+    float tonef = 1 + (woodNoise(uu * 0.01f + seed * 13, seed + 202) - 0.5f) * G.tone;
+    float pore = woodHash01((int)floorf(vv * 1.2f) + seed * 131, (int)floorf(uu / G.poreLen)) < G.pores ? G.poreDark : 1;
+    float fib = 1 + (woodHash01((int)floorf(vv * 2) + seed * 17, (int)floorf(uu * 0.3f)) - 0.5f) * 0.06f;
+    float q = (0.25f + 0.75f * (1 - late)) * tonef * pore * fib;
+    idx = (int)lroundf(q / 1.05f * 31);
+  }
   float k = 1;
-  if (ce <= 5) {                               // bevelled edges, lit from the top left
+  if (ce <= 5) {                                             // bevelled edges, lit from the top left
     float e = -woodSD(fx, fy), bev = 3.2f * woodS;
     if (e < bev) {
       float gx = woodSD(fx + 1, fy) - woodSD(fx - 1, fy), gy = woodSD(fx, fy + 1) - woodSD(fx, fy - 1), gl = hypotf(gx, gy);
@@ -1086,9 +1111,59 @@ uint16_t woodColor(int x, int y, int ce) {     // the wood at one pixel inside t
     }
   }
   if (inH ? (fabsf(fx) < woodAW + 0.5f && woodAW - fabsf(fy) < 1) : (fabsf(fy) < woodAW + 1 && fabsf(fy) >= woodAW)) k *= 0.86f;   // faint joint line
-  int sh = constrain((int)lroundf((k - 0.6f) / 0.05f), 0, 15);
-  return woodPal[constrain(tone, 0, 63) * 16 + sh];
+  int sh = 0;
+  for (int i = 1; i < 8; i++) if (fabsf(WOOD_SHADE[i] - k) < fabsf(WOOD_SHADE[sh] - k)) sh = i;
+  return (uint8_t)((constrain(idx, 0, 31) << 3) | sh);
 }
+
+void prepareWood() {
+  float R = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100);
+  woodGrain = CROSS_RIPPLE <= 2 ? CROSS_RIPPLE : 0;
+  uint32_t key = 2166136261UL;
+  uint32_t parts[] = { (uint32_t)(R * 16), CROSS_W, BEAM, BAR, BRIGHTNESS, SCR_W, SCR_H, (uint32_t)woodGrain, 2 };
+  for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
+  if (key != woodKey) {
+    woodKey = key;
+    woodBot = R; woodTop = R * BAR / (100.0f - BAR);
+    woodAW = max(2.0f, R * BEAM / 100.0f); woodHHL = max(woodAW + 1, min(R * CROSS_W / 100.0f, SCR_W / 2.0f - 2));
+    woodS = R / 149.0f;
+    woodVS = (int)lroundf(0.2f / woodS * 256); woodFS = (int)lroundf(1.5f / woodS * 256); woodUS = (int)lroundf(0.2f / woodS * 256);
+    for (int i = 0; i < 256; i++) woodGT[i] = (uint8_t)lroundf(powf(fabsf(sinf(i * PI / 256)), 14) * 255);
+    for (int k = 0; k < 2; k++) for (int u = 0; u < 1024; u++) woodWobT[k][u] = (uint8_t)lroundf(woodNoise((u - 512) * 0.008f / woodS, k ? 11 : 3) * 0.8f * 256);
+    for (int tn = 0; tn < 32; tn++) {
+      float c[3]; woodColorOf(woodGrain, tn, c);
+      for (int sh = 0; sh < 8; sh++) {
+        float k = WOOD_SHADE[sh] * BRIGHTNESS / 100.0f;
+        woodPal8[tn * 8 + sh] = to565((uint8_t)min(255.0f, c[0] * k), (uint8_t)min(255.0f, c[1] * k), (uint8_t)min(255.0f, c[2] * k));
+      }
+    }
+    for (int k = 0; k < 128; k++) { woodGlowT[k] = (uint8_t)(200 * expf(-k / (14 * woodS))); woodShT[k] = (uint8_t)(255 * (1 - 0.8f * expf(-k / 3.0f))); }
+    for (int r = 0; r < 256; r++) {
+      woodWideT[r] = (uint8_t)(90 * fmaxf(0, 1 - r / (1.3f * woodBot)));
+      float q = r / (1.3f * woodBot); woodVigT[r] = (uint8_t)(255 * fmaxf(0, 1 - q * q));   // a portal behind fades out toward the screen edge
+    }
+  }
+  if (!woodBuf) woodBuf = (uint8_t *)malloc(SCR_W * STRIP);
+  uint32_t pk = 2166136261UL;                                // the wood bytes in flash: rebuilt when the shape or grain changes
+  uint32_t pparts[] = { (uint32_t)(R * 16), CROSS_W, BEAM, BAR, SCR_W, SCR_H, (uint32_t)woodGrain, (uint32_t)crossYC, 3 };
+  for (uint32_t v : pparts) pk = (pk ^ v) * 16777619UL;
+  if (pk == woodPlaneKey) return;
+  if (!woodPlaneReady(pk)) {
+    woodPlaneBegin();
+    static int8_t er[SCR_W];
+    static uint8_t row[SCR_W];
+    for (int y = 0; y < SCR_H; y++) {
+      readEdgeRow(y, er);
+      for (int x = 0; x < SCR_W; x++) row[x] = er[x] > 0 ? woodByte(x, y, er[x]) : 0;
+      woodPlaneRow(y, row);
+      if ((y & 7) == 7) delay(1);
+    }
+    woodPlaneEnd(pk);
+  }
+  woodPlaneKey = pk;
+}
+
+inline uint16_t woodPx(int i) { return woodBuf ? woodPal8[woodBuf[i]] : woodPal8[16 * 8 + 4]; }   // (no memory: plain wood)
 
 inline uint16_t dim565(uint16_t c, int m) {    // darken a colour (m: 0-255)
   return ((((c >> 11) * m) >> 8) << 11) | (((((c >> 5) & 63) * m) >> 8) << 5) | (((c & 31) * m) >> 8);
@@ -1102,7 +1177,9 @@ int      cloudK1 = 0, cloudK2 = 0, cloudK3 = 0, cloudKey = -1;
 const uint8_t SKY_TOP[3][3] = { { 38, 96, 190 }, { 58, 38, 110 }, { 140, 178, 236 } }, SKY_MID[3] = { 225, 110, 92 };
 const uint8_t SKY_BOT[3][3] = { { 150, 200, 240 }, { 255, 190, 110 }, { 255, 232, 190 } };
 const uint8_t CL_LIT[3][3] = { { 250, 252, 255 }, { 255, 226, 180 }, { 255, 255, 250 } }, CL_SH[3][3] = { { 150, 168, 198 }, { 78, 44, 92 }, { 188, 188, 208 } };
-const float   CL_COV[3][2] = { { 0.44f, 0.60f }, { 0.45f, 0.61f }, { 0.42f, 0.59f } };
+const float   CL_COV[3][2] = { { 0.44f, 0.60f }, { 0.45f, 0.61f }, { 0.47f, 0.53f } };   // heavenly light: crisper cloud edges
+const int     CL_DET[3] = { 36, 36, 64 }, CL_SHADE[3] = { 5, 5, 8 };                   // edge detail and shading strength
+const float   CL_GLOW[3] = { 0.7f, 0.7f, 0.35f }, CL_RAY[3] = { 0.55f, 0.55f, 0.3f };    // heavenly light: softer glow and rays so the clouds show
 
 uint8_t cloudLat(int ix, int iy, int p, int o) { ix &= p - 1; iy &= p - 1; return hash32((uint32_t)(ix * 73856093) ^ (uint32_t)(iy * 19349663) ^ (uint32_t)(o * 83492791)) & 255; }
 bool cloudMemory() {
@@ -1136,13 +1213,14 @@ void prepareClouds(int kind) {
   float c0 = CL_COV[kind][0], c1 = CL_COV[kind][1];
   for (int i = 0; i < 512; i++) { float x = fminf(1, fmaxf(0, ((i - 128) / 255.0f - c0) / (c1 - c0))); cloudDensT[i] = (uint8_t)(255 * x * x * (3 - 2 * x)); }
   for (int k = 0; k < 64; k++) cloudShT[k] = (uint8_t)(255 * (1 - expf(-k / 2.5f) * (kind == 2 ? 0.15f : 0.45f)));
-  for (int k = 0; k < 128; k++) cloudGlowT[k] = (uint8_t)(255 * 0.7f * expf(-k / (10 * woodS)));
+  for (int k = 0; k < 128; k++) cloudGlowT[k] = (uint8_t)(255 * CL_GLOW[kind] * expf(-k / (10 * woodS)));
   for (int a = 0; a < 256; a++) cloudRayT[a] = (uint8_t)(255 * powf(fmaxf(0, sinf(a * TWO_PI / 256)), 6));
-  for (int r = 0; r < 256; r++) cloudRayRT[r] = (uint8_t)(255 * 0.55f * fmaxf(0, 1 - r / (1.4f * woodBot)));
+  for (int r = 0; r < 256; r++) cloudRayRT[r] = (uint8_t)(255 * CL_RAY[kind] * fmaxf(0, 1 - r / (1.4f * woodBot)));
   for (int i = 0; i < 16; i++) for (int j = 0; j < 3; j++) cloudCol[i][j] = (uint8_t)(CL_SH[kind][j] + (CL_LIT[kind][j] - CL_SH[kind][j]) * i / 15);
   cloudK1 = (int)lroundf(64 / woodS * 256); cloudK2 = (int)lroundf(64 / woodS * 256 * 1.7f); cloudK3 = (int)lroundf(64 / woodS * 256 * 3.1f);
 }
 void renderCloudStrip(int y0, int rows, uint16_t *strip) {
+  if (woodBuf) readWoodRows(y0, rows, woodBuf);
   int kind = look - 8, br = BRIGHTNESS * 256 / 100;
   int D1 = (int)(cloudDrift * 76.8f), D2 = (int)((cloudDrift * 0.3f + 97) * 128), D3 = (int)((cloudDrift * 0.2f + 53) * 128);
   int rayPh = (int)(millis() / 1000.0f * 0.15f * 40.74f);
@@ -1156,7 +1234,7 @@ void renderCloudStrip(int y0, int rows, uint16_t *strip) {
     for (int x = 0; x < SCR_W; x++) {
       int ce = eb[x];
       if (ce > 0) {                                 // the wood, lit a little by the sky on its edges
-        uint16_t c = woodColor(x, y, ce);
+        uint16_t c = woodPx((y - y0) * SCR_W + x);
         if (kind == 1 && ce <= 1) c = max565(c, to565(64, 42, 22));
         if (kind == 2 && ce <= 2) c = max565(c, ce == 1 ? to565(170, 156, 120) : to565(110, 100, 78));
         *p++ = c;
@@ -1165,9 +1243,9 @@ void renderCloudStrip(int y0, int rows, uint16_t *strip) {
       int k = -ce, X1 = ((x * cloudK1) >> 8) + D1, X2 = ((x * cloudK2) >> 8) + D2, X3 = ((x * cloudK3) >> 8) + D3;
       int n  = (cloudAt(X1, Y1) * 205 + cloudAt(X2, Y2) * 51) >> 8;
       int n2 = (cloudAt(X1, Y1 - 768) * 205 + cloudAt(X2, Y2 - 1280) * 51) >> 8;   // a little higher up: light comes from above
-      int det = ((cloudAt(X3, Y3) - 128) * 36) >> 8;                                // crisp, puffy edges
+      int det = ((cloudAt(X3, Y3) - 128) * CL_DET[kind]) >> 8;                      // crisp, puffy edges
       int dens = cloudDensT[constrain(n + det + 128, 0, 511)];
-      int light = constrain(158 + (n - n2) * 5 + ((det * 3) >> 1), 0, 255) >> 4;
+      int light = constrain(158 + (n - n2) * CL_SHADE[kind] + ((det * 3) >> 1), 0, 255) >> 4;
       int c[3];
       for (int j = 0; j < 3; j++) c[j] = sky[j] + (((cloudCol[light][j] - sky[j]) * dens) >> 8);
       if (kind == 2) {                              // heavenly light: rays and a glow from behind the cross
@@ -1184,11 +1262,12 @@ void renderCloudStrip(int y0, int rows, uint16_t *strip) {
 
 void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase2) {
   if (look >= 8 && look <= 10) { renderCloudStrip(y0, rows, strip); return; }   // a cloud sky behind the cross
+  if (woodBuf) readWoodRows(y0, rows, woodBuf);
   if (look == 4 || look >= 14) {                 // a space picture behind the cross
     renderSpaceStrip(y0, rows, strip);
     for (int y = y0, i = 0; y < y0 + rows; y++) for (int x = 0; x < SCR_W; x++, i++) {
       int ce = edgeBuf[i];
-      if (ce > 0) strip[i] = woodColor(x, y, ce);
+      if (ce > 0) strip[i] = woodPx(i);
       else if (-ce < 12) strip[i] = dim565(strip[i], woodShT[-ce]);
     }
     return;
@@ -1199,7 +1278,7 @@ void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase2) {
     for (int x = 0; x < SCR_W; x++) {
       int ce = eb[x];
       if (ce > 0) {
-        uint16_t c = woodColor(x, y, ce);
+        uint16_t c = woodPx((y - y0) * SCR_W + x);
         if (look == 7 && ce <= 3) c = max565(c, pal[min(255, ((3 - ce) * 60 * woodPulse) >> 8)]);   // warm light on the edge
         *p++ = c;
         continue;
