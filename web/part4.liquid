@@ -1060,7 +1060,7 @@ async function readReply(ms) {
   return text;
 }
 
-$("fps").addEventListener("click", async () => {      // the board prints "FPS: n" every 5 seconds
+$("check-fps").addEventListener("click", async () => {      // the board prints "FPS: n" every 5 seconds
   if (!port) { say("Connect over USB first, then check the speed.", "warn"); return; }
   if (busy) return;
   busy = true; say("Measuring how fast the board draws (takes up to 11 seconds)…");
