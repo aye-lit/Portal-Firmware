@@ -116,6 +116,7 @@ function pictureBlock() { return `
 // gives the most room. Commands: INFO, IMG slot bytes id, D base64..., END.
 // (HAS_PICS and the JPEG decoder are set up with the other #includes at the top)
 bool    crossReady = false;               // cross outline ready to read (styles 8-13)
+extern uint32_t woodPlaneKey;
 int8_t *edgeBuf = NULL;                   // one strip of the cross outline
 uint8_t crossRimT[128], crossHaloT[128];  // rim and outer glow, sized to the beam
 
@@ -141,9 +142,9 @@ void beginPictures() {
   slotSize = (sizeof(PicHead) + (uint32_t)SCR_W * SCR_H * 2 + 4095) & ~4095UL;
   stageOff = (picPart->size - STAGE_SIZE) & ~4095UL;
   crossPlane = (16 + (uint32_t)SCR_W * SCR_H + 4095) & ~4095UL;
-  crossSize = crossPlane * 2;              // the cross outline, then the wood (Wooden cross), just before the staging area
+  crossSize = crossPlane;                  // the cross outline lives just before the staging area
   crossOff = stageOff - crossSize;
-  woodOff = crossOff + crossPlane;
+  woodOff = stageOff;                      // the wood (Wooden cross) borrows the staging area; it's worked out again after a picture arrives
   picSlots = min((uint32_t)MAX_PICS, crossOff / slotSize);
   for (uint8_t i = 0; i < picSlots; i++) {
     PicHead h;
@@ -368,6 +369,7 @@ const char *pictureCommand(char *line) {
     upSlot = slot; upLen = len; upId = id; upPos = 0;
     esp_partition_erase_range(picPart, stageOff, (len + 4095) & ~4095UL);   // only what this picture needs
     uploading = true; upLast = millis();
+    woodPlaneKey = 0;                            // the wood shares this space: work it out again afterwards
     return "READY";
   }
   if (line[0] == 'D' && line[1] == ' ' && uploading) {   // a piece of the JPEG, in base64

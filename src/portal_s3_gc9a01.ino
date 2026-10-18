@@ -109,7 +109,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x6D335A71UL;
+const uint32_t BUILD_ID = 0x1CB85613UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -122,8 +122,8 @@ uint8_t  depthT[256], coreT[256], haloT[256], rimT[64], centerT[256];
 uint8_t  sbGlowT[256], sbRingT[256], sbOuterT[256], ripCrestT[256], ripTroughT[256];
 uint8_t  spCoreT[256], bhRingT[256], bhDiskT[256], bhStarT[256];
 uint16_t galFadeT[256];
-uint8_t  warpOn[768];
-float    warpRR[768], warpLen[768], warpB[768];
+uint8_t *warpOn = NULL;                 // Hyperspace stars: made when Hyperspace is first shown (saves memory otherwise)
+float   *warpRR = NULL, *warpLen = NULL, *warpB = NULL;
 int      bhHole = 20, twinkle = 0;
 int16_t  linT[256];
 uint16_t pal[256];
@@ -418,6 +418,7 @@ void clampSettings(Saved &s) {
 // gives the most room. Commands: INFO, IMG slot bytes id, D base64..., END.
 // (HAS_PICS and the JPEG decoder are set up with the other #includes at the top)
 bool    crossReady = false;               // cross outline ready to read (styles 8-13)
+extern uint32_t woodPlaneKey;
 int8_t *edgeBuf = NULL;                   // one strip of the cross outline
 uint8_t crossRimT[128], crossHaloT[128];  // rim and outer glow, sized to the beam
 
@@ -443,9 +444,9 @@ void beginPictures() {
   slotSize = (sizeof(PicHead) + (uint32_t)SCR_W * SCR_H * 2 + 4095) & ~4095UL;
   stageOff = (picPart->size - STAGE_SIZE) & ~4095UL;
   crossPlane = (16 + (uint32_t)SCR_W * SCR_H + 4095) & ~4095UL;
-  crossSize = crossPlane * 2;              // the cross outline, then the wood (Wooden cross), just before the staging area
+  crossSize = crossPlane;                  // the cross outline lives just before the staging area
   crossOff = stageOff - crossSize;
-  woodOff = crossOff + crossPlane;
+  woodOff = stageOff;                      // the wood (Wooden cross) borrows the staging area; it's worked out again after a picture arrives
   picSlots = min((uint32_t)MAX_PICS, crossOff / slotSize);
   for (uint8_t i = 0; i < picSlots; i++) {
     PicHead h;
@@ -670,6 +671,7 @@ const char *pictureCommand(char *line) {
     upSlot = slot; upLen = len; upId = id; upPos = 0;
     esp_partition_erase_range(picPart, stageOff, (len + 4095) & ~4095UL);   // only what this picture needs
     uploading = true; upLast = millis();
+    woodPlaneKey = 0;                            // the wood shares this space: work it out again afterwards
     return "READY";
   }
   if (line[0] == 'D' && line[1] == ' ' && uploading) {   // a piece of the JPEG, in base64
@@ -1227,6 +1229,10 @@ void frameStart() {
   // Hyperspace: where each streaking star is this frame (3 layers x 256 directions)
   bhHole = (int)(0.22f * RADIUS);
   twinkle = (int)(t * 25);
+  if (look == 3 && !warpB) {
+    warpOn = (uint8_t *)malloc(768); warpRR = (float *)malloc(768 * 4); warpLen = (float *)malloc(768 * 4); warpB = (float *)malloc(768 * 4);
+    if (!warpOn || !warpRR || !warpLen || !warpB) { free(warpOn); free(warpRR); free(warpLen); free(warpB); warpOn = NULL; warpRR = warpLen = warpB = NULL; look = 0; }   // no room: the Vortex
+  }
   if (look == 3) {
     for (int L = 0; L < 3; L++) {
       for (int a = 0; a < 256; a++) {
@@ -1360,7 +1366,7 @@ void crossMask(int y0, int rows, uint16_t *strip) {   // glowing cross outline o
 // Behind it (CROSS_FILL): 7 = a warm glow in the main colours, otherwise any portal or space style.
 bool     woodOn = false;
 uint8_t  woodGT[256], woodGlowT[128], woodShT[128], woodWideT[256], woodVigT[256];
-uint8_t  woodWobT[2][1024];               // grain sway along each beam
+uint8_t (*woodWobT)[1024] = NULL;          // grain sway along each beam (made when the Wooden cross is first shown)
 float    woodAW = 10, woodHHL = 20, woodBot = 100, woodTop = 50, woodS = 1;
 int      woodVS = 51, woodFS = 384, woodUS = 51, woodPulse = 256;
 uint32_t woodKey = 0;
@@ -1465,6 +1471,7 @@ void prepareWood() {
   uint32_t key = 2166136261UL;
   uint32_t parts[] = { (uint32_t)(R * 16), CROSS_W, BEAM, BAR, BRIGHTNESS, SCR_W, SCR_H, (uint32_t)woodGrain, 2 };
   for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
+  if (!woodWobT) { woodWobT = (uint8_t (*)[1024])malloc(2 * 1024); if (!woodWobT) return; }
   if (key != woodKey) {
     woodKey = key;
     woodBot = R; woodTop = R * BAR / (100.0f - BAR);
@@ -1492,9 +1499,9 @@ void prepareWood() {
   for (uint32_t v : pparts) pk = (pk ^ v) * 16777619UL;
   if (pk == woodPlaneKey) return;
   if (!woodPlaneReady(pk)) {
+    int8_t *er = (int8_t *)malloc(SCR_W); uint8_t *row = (uint8_t *)malloc(SCR_W);
+    if (!er || !row) { free(er); free(row); return; }
     woodPlaneBegin();
-    static int8_t er[SCR_W];
-    static uint8_t row[SCR_W];
     for (int y = 0; y < SCR_H; y++) {
       readEdgeRow(y, er);
       for (int x = 0; x < SCR_W; x++) row[x] = er[x] > 0 ? woodByte(x, y, er[x]) : 0;
@@ -1502,6 +1509,7 @@ void prepareWood() {
       if ((y & 7) == 7) delay(1);
     }
     woodPlaneEnd(pk);
+    free(er); free(row);
   }
   woodPlaneKey = pk;
 }
@@ -1763,6 +1771,7 @@ void setup() {
 #endif
   beginPictures();
   if (!allocBuffers()) {
+    tft.setTextColor(0xFFFF); tft.setTextSize(2); tft.setCursor(10, SCR_H / 2 - 8); tft.print(F("Not enough memory"));   // say so on the screen too
     for (;;) { Serial.println(F("[portal] not enough memory for this screen")); delay(2000); }
   }
 #if defined(ESP32)
