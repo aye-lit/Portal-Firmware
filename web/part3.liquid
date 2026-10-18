@@ -104,7 +104,7 @@ uint8_t  BRIGHTNESS = ${S.bright};     // 10-100 %: dims the portal's colours
 uint8_t  STYLE      = ${S.style};       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy (Hubble-style spiral), 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
                                 // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
                                 // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
-uint8_t  CROSS_FILL = ${S.crossFill};       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower; the Wooden cross: what's behind it, 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
+uint8_t  CROSS_FILL = ${S.crossFill};       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower, 11 Solid colour; the Wooden cross: what's behind it, 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
 uint32_t SPACE_COLS[4] = { ${S.spaceCols.map(c => "0x" + hex6(c)).join(", ")} };   // Galaxy, Nebula, Wormhole, Meteor Shower: four colours blended together
 uint8_t  CROSS_W    = ${S.crossw};      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
 uint8_t  BEAM       = ${S.beam};      // crosses: beam thickness, % of the portal size (5-30)
@@ -343,7 +343,7 @@ void updateSparks() {
 }
 
 // ---------- saved settings (EEPROM) ----------
-bool validFill(uint8_t f) { return f <= 10 || (f >= 14 && f <= 16); }   // styles that can go inside a cross (Wooden cross only: 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
+bool validFill(uint8_t f) { return f <= 11 || (f >= 14 && f <= 16); }   // styles that can go inside a cross (Wooden cross only: 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
 
 bool validScenes(const Saved &s) {
   if (s.sceneCount > 8 || !(s.holdSecs >= 1 && s.holdSecs <= 3600) || !(s.sceneFade >= 0 && s.sceneFade <= 600)) return false;
@@ -861,6 +861,7 @@ void frameStart() {
   woodOn = crossOn && STYLE == 17;
   look = crossOn ? CROSS_FILL : isCross ? 0 : STYLE;   // crosses: the chosen style is drawn inside (the Wooden cross: behind)
   if (crossOn && look >= 7 && look <= 10 && !woodOn) look = 0;   // the warm glow and the skies are only for the Wooden cross
+  if (woodOn && look == 11) look = 7;                            // solid colour is for the glowing crosses
   if (woodOn) { prepareWood(); woodPulse = (int)(256 * (0.75f + 0.25f * sinf(millis() / 1000.0f * 1.3f))); }
   if (woodOn && look >= 8 && look <= 10) { if (cloudMemory()) prepareClouds(look - 8); else look = 7; }   // no room: the warm glow
   spCY = crossOn ? crossYC : QY;
@@ -925,6 +926,7 @@ inline int cartoonV(int a, int r, int phase) {   // blobby flat-shaded swirl
 
 inline int styleV(int look, int a, int r, int phase, int phase2) {   // brightness (0-255) inside the portal for one style
   int v;
+  if (look == 11) return 110;                   // Solid colour (crosses): the inner colour, flat
   if (look == 7 || look == 6) return cartoonV(a, r, phase);
   if (look == 0) {                              // Vortex
     int s  = sinT[(a * ARMS + twistT[r] + phase) & 255];
@@ -1236,6 +1238,7 @@ void renderStrip(int y0, int rows, uint16_t *strip) {
     }
   }
   for (uint8_t i = 0; i < NUM_SPARKS; i++) {           // sparks in this strip
+    if (look == 11) break;                             // a solid-colour cross has no sparks
     if (look == 5 && sparks[i].r < bhHole) continue;  // they vanish into the black hole
     for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
       int xx = sparkX[i] + dx, yy = sparkY[i] + dy;

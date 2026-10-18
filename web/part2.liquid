@@ -481,7 +481,7 @@ if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
 if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 S.reverse = S.reverse === true;
-if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 15, 16].includes(S.crossFill)) S.crossFill = 0;
+if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16].includes(S.crossFill)) S.crossFill = 0;
 if (S.c1 === "#c02ad0" && S.c2 === "#f9c8ff") { S.c1 = PRESETS.Bloom[0]; S.c2 = PRESETS.Bloom[1]; }   // the old pale Bloom colours
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
@@ -1191,6 +1191,7 @@ function woodFrame(out, CE, fill, arms, phase, phase2, tw) {
 let tftImg = null;
 function styleV(look, a, r, arms, phase, phase2, tw) {   // brightness (0-255) inside the portal for one style
   let v;
+  if (look === 11) return 110;            // Solid colour (crosses): the inner colour, flat
   if (look === 7 || look === 6) return cartoonV(a, r, arms, phase);
   if (look === 0) {                       // Vortex
     const s = sinT[(a * arms + twistT[r] + phase) & 255];
@@ -1251,6 +1252,7 @@ function tftFrame() {
   const isCross = (style >= 8 && style <= 13) || style === 17, wood = style === 17;
   let fill = isCross ? S.crossFill : style;               // crosses: the chosen style is drawn inside (the Wooden cross: behind)
   if (isCross && fill >= 7 && fill <= 10 && !wood) fill = 0;   // the warm glow and the skies are only for the Wooden cross
+  if (wood && fill === 11) fill = 7;                            // solid colour is for the glowing crosses
   const phase = Math.trunc(t * 1.5 * 40.74), phase2 = Math.trunc(-t * 40.74);
   for (let a = 0; a < 256; a++) {
     const ang = a * TWO_PI / 256;
@@ -1341,6 +1343,7 @@ function tftFrame() {
     }
   }
   for (let i = 0; i < S.sparks; i++) {
+    if (fill === 11) break;                               // a solid-colour cross has no sparks
     if (fill === 5 && sparks[i].r < bhHole) continue;   // sparks vanish into the black hole
     const sx = Math.floor(QX + Math.cos(sparks[i].a) * sparks[i].r * S.oval), sy = Math.floor((isCross ? crossYC : QY) + Math.sin(sparks[i].a) * sparks[i].r);
     if (CE && !(sx >= 0 && sx < TW && sy >= 0 && sy < TH && CE[sy * TW + sx] > 0)) continue;   // sparks stay inside the cross
