@@ -1017,8 +1017,8 @@ if (isCrossStyle(S.style)) {
   const m = MODELS[S.model]; if (m && !m.rect && S.radius === rmax(m) - 9) S.radius = crossMax(m);   // round: crosses grew to fill the circle
 }
 delete S.wideCross;
-if (S.model === "st7796" && !S.halfRes) { S.radius = Math.max(6, Math.round(S.radius / 2)); if (S.portalR) S.portalR = Math.round(S.portalR / 2); }   // the 3.5″ screen is now drawn at half size
-S.halfRes = 1;
+if (S.model === "st7796" && S.halfRes === 1) { S.radius = Math.round(S.radius * 2); if (S.portalR) S.portalR = Math.round(S.portalR * 2); }   // the 3.5″ screen is back to full size
+S.halfRes = 2;
 selectModel(S.model, false);
 countPlugged();
 requestAnimationFrame(loop);
@@ -1059,6 +1059,19 @@ async function readReply(ms) {
   } catch (e) {} finally { clearTimeout(timer); reader.releaseLock(); }
   return text;
 }
+
+$("fps").addEventListener("click", async () => {      // the board prints "FPS: n" every 5 seconds
+  if (!port) { say("Connect over USB first, then check the speed.", "warn"); return; }
+  if (busy) return;
+  busy = true; say("Measuring how fast the board draws (takes up to 11 seconds)…");
+  const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "", fps = [];
+  const timer = setTimeout(() => reader.cancel().catch(() => {}), 11000);
+  try {
+    while (fps.length < 2) { const { value, done } = await reader.read(); if (done) break; text += dec.decode(value); fps = [...text.matchAll(/FPS: ([\d.]+)/g)].map(m => +m[1]); }
+  } catch (e) {} finally { clearTimeout(timer); reader.releaseLock(); busy = false; }
+  const f = fps.length ? fps[fps.length - 1] : null;
+  say(f == null ? "The board didn't report its speed. Make sure it has the latest install." : `The board draws ${f.toFixed(1)} frames per second.`, f == null ? "warn" : "ok");
+});
 
 async function sendUsb() {
   if (!("serial" in navigator)) {

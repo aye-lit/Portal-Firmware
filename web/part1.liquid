@@ -301,6 +301,7 @@
                 <button class="b" id="vps-ble" type="button" hidden>Connect over Bluetooth</button>
                 <button class="b" id="vps-send" type="button">Connect over USB</button>
                 <button class="b ghost" id="vps-reboot" type="button">Restart board</button>
+                <button class="b ghost" id="vps-fps" type="button">Check speed</button>
                 <label style="display:flex;align-items:center;gap:6px;font-size:13px" for="vps-live"><input id="vps-live" type="checkbox" checked> Send every change</label>
               </div>
               <div class="status" id="vps-serial-status" role="status"></div>
@@ -461,7 +462,7 @@ const BOARDS = {
     spi: { sck: 18, mosi: 23, cs: 5, dc: 16, rst: 17 }, i2c: { sda: 21, scl: 22 },
     ide: "Boards Manager → install “esp32 by Espressif Systems”. Then Tools → Board → ESP32 Dev Module.",
     fpsTft: "about 30–40 fps (two cores)" },
-  cyd35: { name: "3.5″ ESP32 display board (Hosyond / LCDwiki E32R35T, screen built in)", family: "ESP32", ram: 320, volt: 3.3, hz: 40,
+  cyd35: { name: "3.5″ ESP32 display board (Hosyond / LCDwiki E32R35T, screen built in)", family: "ESP32", ram: 320, volt: 3.3, hz: 80,
     screen: "st7796", builtin: true,
     spi: { sck: 14, mosi: 13, cs: 15, dc: 2, rst: -1 }, i2c: { sda: 21, scl: 22 },
     extra: "  // Board extras: backlight on, touch chip off the shared SPI bus, speaker and RGB LED off\n  pinMode(27, OUTPUT); digitalWrite(27, HIGH);\n  pinMode(33, OUTPUT); digitalWrite(33, HIGH);\n  pinMode(4, OUTPUT);  digitalWrite(4, HIGH);\n  pinMode(22, OUTPUT); digitalWrite(22, HIGH);\n  pinMode(16, OUTPUT); digitalWrite(16, HIGH);\n  pinMode(17, OUTPUT); digitalWrite(17, HIGH);\n",

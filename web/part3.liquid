@@ -29,7 +29,7 @@ const hex6 = h => h.slice(1).toUpperCase();
 function tftSketch() {
 const B = boardOf();
 const rot = M.rect && M.w !== M.h ? (M.w > M.h ? 1 : 0) : 0;
-const hz = M.driver === "st7735" ? Math.min(B.hz, 27) : M.driver === "ili9341" ? Math.min(B.hz, 40) : M.driver === "st7796" ? Math.min(B.hz, 40) : B.hz;
+const hz = M.driver === "st7735" ? Math.min(B.hz, 27) : M.driver === "ili9341" ? Math.min(B.hz, 40) : M.driver === "st7796" ? Math.min(B.hz, 80) : B.hz;
 const DISP = {
   gc9a01:  { inc: "Adafruit_GC9A01A.h", decl: "Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);", begin: "  tft.begin(SPI_HZ);" },
   st7789:  { inc: "Adafruit_ST7789.h", decl: "Adafruit_ST7789 tft(PIN_CS, PIN_DC, PIN_RST);",
