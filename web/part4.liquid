@@ -406,6 +406,9 @@ function markStyle() {
     $("twist-hint").textContent = gal ? "How tightly the arms wind: low is open and loose, high wraps them around the core" : "How much the tunnel walls spiral: 0 is straight, high is a tight corkscrew";
   }
   $("reverse-wrap").hidden = !wh;
+  const sky = tft && S.style === 17 && S.crossFill >= 8 && S.crossFill <= 10;   // Wooden cross with a cloud sky: the speed slider moves the clouds
+  $("speed").closest("label").querySelector("span").firstChild.nodeValue = sky ? "Cloud speed " : "Spin speed ";
+  $("speed-hint").hidden = !sky;
   const sl = $("sparks").closest("label");                   // Meteor Shower: the Sparks setting is the number of meteors
   if (sl) { sl.querySelector("span").firstChild.nodeValue = met ? "Meteors " : "Sparks "; $("sparks-hint").hidden = !met; }
 }
