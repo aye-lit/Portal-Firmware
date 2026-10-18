@@ -281,7 +281,7 @@
             <div class="pbar-track" role="progressbar" aria-labelledby="fw-stage" aria-valuemin="0" aria-valuemax="100" id="vps-fw-track"><div class="pbar-fill" id="vps-fw-fill"></div></div>
           </div>
           <div class="status" id="vps-fw-status" role="status"></div>
-          <p class="note" style="margin:8px 0 0">Then send your style and colours with step 3. Prefer Arduino? Use steps 1 and 2 instead.</p>
+          <p class="note" style="margin:8px 0 0">Then send your style and colours with step 2. Prefer Arduino? Install the libraries in step 1, then copy the sketch at the bottom of the page.</p>
         </div>
         <ol class="steps">
           <li>
@@ -289,14 +289,6 @@
               <h3>Install the libraries</h3>
               <p>In the Arduino IDE, open Library Manager, search <code id="vps-lib"></code> and install it. Choose “Install all” so Adafruit GFX comes along.</p>
               <p id="vps-lib-note">This screen needs an ESP32. If you haven't set one up yet: open Boards Manager, search <code>esp32</code>, install “esp32 by Espressif Systems”, then pick your board under Tools → Board.</p>
-            </div>
-          </li>
-          <li>
-            <div>
-              <h3>Upload the sketch</h3>
-              <p>Copy the sketch below, paste it into a new sketch (File → New), pick your board and port, then click Upload. Your current model and settings are baked in. This first upload needs a computer; after that you can change everything from your phone (step 3).</p>
-              <div class="btns"><button class="b" id="vps-copy" type="button">Copy sketch</button></div>
-              <div class="status" id="vps-copy-status" role="status"></div>
             </div>
           </li>
           <li>
@@ -435,7 +427,12 @@
       </section>
 
       <section class="card" aria-label="Sketch">
-        <h2>VortexPortal.ino</h2>
+        <div class="card-head">
+          <h2>VortexPortal.ino</h2>
+          <button class="b" id="vps-copy" type="button">Copy sketch</button>
+        </div>
+        <p class="note" style="margin:0 0 10px">Using Arduino instead of Quick install? Copy this sketch, paste it into a new sketch (File → New), pick your board and port, then click Upload. Your current model and settings are baked in.</p>
+        <div class="status" id="vps-copy-status" role="status"></div>
         <pre id="vps-code" tabindex="0"></pre>
       </section>
     </div>
