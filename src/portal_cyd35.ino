@@ -118,7 +118,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x28D7CB88UL;
+const uint32_t BUILD_ID = 0x7B43BAABUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -1682,6 +1682,10 @@ uint8_t cloudLat(int ix, int iy, int p, int o) { ix &= p - 1; iy &= p - 1; retur
 bool cloudMemory() {
   if (cloudTex) return true;
   cloudTex = (uint8_t *)malloc(128 * 128);
+  if (!cloudTex && picBuf2) {            // memory is in pieces: hand over core 1's fade buffer (crosses don't use it) and try again
+    free(picBuf2); picBuf2 = NULL;
+    cloudTex = (uint8_t *)malloc(128 * 128);
+  }
   if (!cloudTex) return false;
   const int per[4] = { 4, 8, 16, 32 };
   const float amp[4] = { 0.52f, 0.27f, 0.14f, 0.05f };
@@ -1975,7 +1979,10 @@ bool shareable(uint8_t s, int L, bool cross) {   // one scene: can both cores dr
 
 bool canShare() {                        // styles whose drawing can be split between the two cores
   if (sceneMix > 0 && sceneA != sceneB)                 // fading: both scenes on both cores (each core has its own fade buffer)
+  {
+    if (!picBuf2 && picBuf && STYLE != 17) picBuf2 = (uint16_t *)malloc(SCR_WMAX * STRIP * 2);   // (given back to the clouds earlier: take it again if there's room)
     return picBuf && picBuf2 && shareable(sceneA, lookA, crossA) && shareable(sceneB, lookB, crossB);
+  }
   bool useB = sceneMix >= 128;
   uint8_t s = useB ? sceneB : sceneA;
   if (s != PORTAL && !isStyleScene(s)) return false;   // pictures
