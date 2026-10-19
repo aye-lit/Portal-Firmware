@@ -118,6 +118,8 @@ function pictureBlock() { return `
 bool    crossReady = false;               // cross outline ready to read (styles 8-13)
 extern uint32_t woodPlaneKey;
 int8_t *edgeBuf = NULL;                   // one strip of the cross outline
+int8_t *edgeBuf1 = NULL;                  // core 1's own (so both cores can draw the crosses)
+int8_t *myEdge();
 uint8_t crossRimT[128], crossHaloT[128];  // rim and outer glow, sized to the beam
 
 #if HAS_PICS
@@ -199,6 +201,14 @@ UINT jpgIn(JDEC *jd, BYTE *buf, UINT n) {        // JPEG bytes come from the sta
 
 UINT jpgOut(JDEC *jd, void *bmp, JRECT *r) {     // one block of pixels: collect a band, then store it
   BYTE *c = (BYTE *)bmp;
+  if (!band) {                                   // no room for a band: each block's rows go straight to flash (a little slower)
+    uint16_t line[32]; int w = r->right - r->left + 1;
+    for (int y = r->top; y <= r->bottom; y++) {
+      for (int x = 0; x < w; x++, c += 3) line[x] = to565(c[0], c[1], c[2]);
+      esp_partition_write(picPart, upSlot * slotSize + sizeof(PicHead) + ((uint32_t)y * SCR_W + r->left) * 2, line, w * 2);
+    }
+    return 1;
+  }
   for (int y = r->top; y <= r->bottom; y++)
     for (int x = r->left; x <= r->right; x++, c += 3)
       band[(y - bandTop) * SCR_W + x] = to565(c[0], c[1], c[2]);
@@ -218,8 +228,7 @@ const char *finishPicture() {
   jpgPos = 0;
   if (jd_prepare(&jd, jpgIn, pool, sizeof(pool), NULL) != JDR_OK) return "ERR jpeg";
   if (jd.width != SCR_W || jd.height != SCR_H) return "ERR size";
-  band = (uint16_t *)malloc(SCR_W * 16 * 2);
-  if (!band) return "ERR memory";
+  band = (uint16_t *)malloc(SCR_W * 16 * 2);       // (if there's no room, the blocks are stored one by one)
   esp_partition_erase_range(picPart, upSlot * slotSize, slotSize);
   bandTop = 0;
   JRESULT r = jd_decomp(&jd, jpgOut, 0);
@@ -349,7 +358,7 @@ void prepareCross() {                           // (re)build the outline when th
   crossReady = true;
 }
 
-void readCrossRows(int y0, int rows) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W); }
+void readCrossRows(int y0, int rows) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, myEdge(), (uint32_t)rows * SCR_W); }
 void readEdgeRow(int y, int8_t *dst) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y * SCR_W, dst, SCR_W); }
 const uint32_t WOOD_MAGIC = 0x444F4F57UL;  // "WOOD"
 bool woodPlaneReady(uint32_t key) { uint32_t h[4]; esp_partition_read(picPart, woodOff, h, 16); return h[0] == WOOD_MAGIC && h[1] == key; }

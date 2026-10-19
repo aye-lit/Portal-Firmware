@@ -118,7 +118,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x7B43BAABUL;
+const uint32_t BUILD_ID = 0x2E12562CUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -160,6 +160,9 @@ uint16_t *picBuf2 = NULL;              // core 1's own, so both cores can draw d
 #endif
 struct SceneLook { uint8_t look; bool cross, wood; int spCY; float spU, spExt; };
 SceneLook lk[2];                        // what each core is drawing right now (both cores can draw different styles at once)
+extern int8_t *edgeBuf, *edgeBuf1; extern uint8_t *woodBuf, *woodBuf1;
+int8_t  *myEdge() { return CORE_ID() && edgeBuf1 ? edgeBuf1 : edgeBuf; }   // this core's strip of the cross outline
+uint8_t *myWood() { return CORE_ID() && woodBuf1 ? woodBuf1 : woodBuf; }   // and of the wood
 int      crossYC = QY;                 // crosses: row of the crossing (the cross is centred, so this sits above the middle)
 bool     crossOn = false;               // a cross is being drawn (its outline is ready)
 int      spCY = QY;                     // centre row for the space styles (the crossing when inside a cross)
@@ -478,6 +481,8 @@ void clampSettings(Saved &s) {
 bool    crossReady = false;               // cross outline ready to read (styles 8-13)
 extern uint32_t woodPlaneKey;
 int8_t *edgeBuf = NULL;                   // one strip of the cross outline
+int8_t *edgeBuf1 = NULL;                  // core 1's own (so both cores can draw the crosses)
+int8_t *myEdge();
 uint8_t crossRimT[128], crossHaloT[128];  // rim and outer glow, sized to the beam
 
 #if HAS_PICS
@@ -559,6 +564,14 @@ UINT jpgIn(JDEC *jd, BYTE *buf, UINT n) {        // JPEG bytes come from the sta
 
 UINT jpgOut(JDEC *jd, void *bmp, JRECT *r) {     // one block of pixels: collect a band, then store it
   BYTE *c = (BYTE *)bmp;
+  if (!band) {                                   // no room for a band: each block's rows go straight to flash (a little slower)
+    uint16_t line[32]; int w = r->right - r->left + 1;
+    for (int y = r->top; y <= r->bottom; y++) {
+      for (int x = 0; x < w; x++, c += 3) line[x] = to565(c[0], c[1], c[2]);
+      esp_partition_write(picPart, upSlot * slotSize + sizeof(PicHead) + ((uint32_t)y * SCR_W + r->left) * 2, line, w * 2);
+    }
+    return 1;
+  }
   for (int y = r->top; y <= r->bottom; y++)
     for (int x = r->left; x <= r->right; x++, c += 3)
       band[(y - bandTop) * SCR_W + x] = to565(c[0], c[1], c[2]);
@@ -578,8 +591,7 @@ const char *finishPicture() {
   jpgPos = 0;
   if (jd_prepare(&jd, jpgIn, pool, sizeof(pool), NULL) != JDR_OK) return "ERR jpeg";
   if (jd.width != SCR_W || jd.height != SCR_H) return "ERR size";
-  band = (uint16_t *)malloc(SCR_W * 16 * 2);
-  if (!band) return "ERR memory";
+  band = (uint16_t *)malloc(SCR_W * 16 * 2);       // (if there's no room, the blocks are stored one by one)
   esp_partition_erase_range(picPart, upSlot * slotSize, slotSize);
   bandTop = 0;
   JRESULT r = jd_decomp(&jd, jpgOut, 0);
@@ -709,7 +721,7 @@ void prepareCross() {                           // (re)build the outline when th
   crossReady = true;
 }
 
-void readCrossRows(int y0, int rows) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W); }
+void readCrossRows(int y0, int rows) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, myEdge(), (uint32_t)rows * SCR_W); }
 void readEdgeRow(int y, int8_t *dst) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y * SCR_W, dst, SCR_W); }
 const uint32_t WOOD_MAGIC = 0x444F4F57UL;  // "WOOD"
 bool woodPlaneReady(uint32_t key) { uint32_t h[4]; esp_partition_read(picPart, woodOff, h, 16); return h[0] == WOOD_MAGIC && h[1] == key; }
@@ -1501,6 +1513,7 @@ void buildCrossRipple() {
 }
 
 void crossMask(int y0, int rows, uint16_t *strip) {   // glowing cross outline over a space picture
+  const int8_t *edgeBuf = myEdge();
   for (int i = 0; i < rows * SCR_W; i++) {
     int ce = edgeBuf[i];
     if (ce > 0) { int rv = max((int)crossRimT[ce], crossRipT[ce] > 8 ? min(255, crossRipT[ce] + 60) : 0); if (rv > 8) strip[i] = max565(strip[i], pal[rv]); }
@@ -1543,6 +1556,7 @@ const WoodGrain WOOD_GRAINS[2] = {
 const float WOOD_SHADE[8] = { 0.70f, 0.78f, 0.86f, 0.93f, 1.0f, 1.08f, 1.17f, 1.28f };
 uint16_t woodPal8[256];
 uint8_t *woodBuf = NULL;                   // one strip of wood bytes
+uint8_t *woodBuf1 = NULL;                  // core 1's own
 uint32_t woodPlaneKey = 0;
 int      woodGrain = 0;
 
@@ -1660,7 +1674,7 @@ void prepareWood() {
   woodPlaneKey = pk;
 }
 
-inline uint16_t woodPx(int i) { return woodBuf ? woodPal8[woodBuf[i]] : woodPal8[16 * 8 + 4]; }   // (no memory: plain wood)
+#define woodPx(i) (woodBuf ? woodPal8[woodBuf[i]] : woodPal8[16 * 8 + 4])   // (no memory: plain wood; woodBuf is the drawing core's own)
 
 inline uint16_t dim565(uint16_t c, int m) {    // darken a colour (m: 0-255)
   return ((((c >> 11) * m) >> 8) << 11) | (((((c >> 5) & 63) * m) >> 8) << 5) | (((c & 31) * m) >> 8);
@@ -1682,10 +1696,6 @@ uint8_t cloudLat(int ix, int iy, int p, int o) { ix &= p - 1; iy &= p - 1; retur
 bool cloudMemory() {
   if (cloudTex) return true;
   cloudTex = (uint8_t *)malloc(128 * 128);
-  if (!cloudTex && picBuf2) {            // memory is in pieces: hand over core 1's fade buffer (crosses don't use it) and try again
-    free(picBuf2); picBuf2 = NULL;
-    cloudTex = (uint8_t *)malloc(128 * 128);
-  }
   if (!cloudTex) return false;
   const int per[4] = { 4, 8, 16, 32 };
   const float amp[4] = { 0.52f, 0.27f, 0.14f, 0.05f };
@@ -1721,6 +1731,7 @@ void prepareClouds(int kind) {
   cloudK1 = (int)lroundf(64 / woodS * 256); cloudK2 = (int)lroundf(64 / woodS * 256 * 1.7f); cloudK3 = (int)lroundf(64 / woodS * 256 * 3.1f);
 }
 void renderCloudStrip(int y0, int rows, uint16_t *strip) {
+  const int8_t *edgeBuf = myEdge(); uint8_t *woodBuf = myWood(); const uint8_t look = lk[CORE_ID()].look;   // this core's buffers and style
   if (woodBuf) readWoodRows(y0, rows, woodBuf);
   int kind = look - 8, br = BRIGHTNESS * 256 / 100;
   int D1 = (int)(cloudDrift * 76.8f), D2 = (int)((cloudDrift * 0.3f + 97) * 128), D3 = (int)((cloudDrift * 0.2f + 53) * 128);
@@ -1762,7 +1773,9 @@ void renderCloudStrip(int y0, int rows, uint16_t *strip) {
 }
 
 void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase2) {
+  const uint8_t look = lk[CORE_ID()].look;
   if (look >= 8 && look <= 10) { renderCloudStrip(y0, rows, strip); return; }   // a cloud sky behind the cross
+  const int8_t *edgeBuf = myEdge(); uint8_t *woodBuf = myWood();
   if (woodBuf) readWoodRows(y0, rows, woodBuf);
   if (look == 4 || look >= 14) {                 // a space picture behind the cross
     renderSpaceStrip(y0, rows, strip);
@@ -1811,6 +1824,7 @@ void useLook(int L, bool cross) {        // the style and cross a scene draws wi
 
 void renderStrip(int y0, int rows, uint16_t *strip) {
   const SceneLook &LKc = lk[CORE_ID()]; const uint8_t look = LKc.look; const bool crossOn = LKc.cross, woodOn = LKc.wood;   // this core's style
+  const int8_t *edgeBuf = myEdge();
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);
   uint16_t *p = strip;
   bool cross = crossOn;
@@ -1972,23 +1986,24 @@ volatile float helpShare = 0.3f;                       // part of each strip cor
 volatile bool sharing = false;
 
 bool shareable(uint8_t s, int L, bool cross) {   // one scene: can both cores draw it at once?
-  if (cross || isFramed(s)) return false;               // crosses and portal-around-a-picture keep one strip buffer
+  if (isFramed(s)) return false;                        // portal around a picture keeps one strip buffer
+  if (cross && !(edgeBuf1 && (STYLE != 17 || woodBuf1))) return false;   // crosses: core 1 needs its own outline (and wood) strip
   if (isPicture(s)) return true;
   return spX1 || !(L == 4 || L == 14 || L == 16);       // Galaxy, Nebula and Meteor Shower need core 1's own gas grid
 }
 
 bool canShare() {                        // styles whose drawing can be split between the two cores
+  edgeBuf1 = NULL; woodBuf1 = NULL;
   if (sceneMix > 0 && sceneA != sceneB)                 // fading: both scenes on both cores (each core has its own fade buffer)
-  {
-    if (!picBuf2 && picBuf && STYLE != 17) picBuf2 = (uint16_t *)malloc(SCR_WMAX * STRIP * 2);   // (given back to the clouds earlier: take it again if there's room)
     return picBuf && picBuf2 && shareable(sceneA, lookA, crossA) && shareable(sceneB, lookB, crossB);
+  if (picBuf2) {                                        // not fading: core 1's fade buffer holds its strips of the cross outline and the wood
+    edgeBuf1 = (int8_t *)picBuf2;
+    woodBuf1 = (uint8_t *)picBuf2 + SCR_WMAX * STRIP;
   }
   bool useB = sceneMix >= 128;
   uint8_t s = useB ? sceneB : sceneA;
   if (s != PORTAL && !isStyleScene(s)) return false;   // pictures
-  if (useB ? crossB : crossA) return false;             // crosses
-  int L = useB ? lookB : lookA;
-  return spX1 || !(L == 4 || L == 14 || L == 16);       // Galaxy, Nebula and Meteor Shower need core 1's own gas grid
+  return shareable(s, useB ? lookB : lookA, useB ? crossB : crossA);
 }
 
 inline void swapBytes565(uint16_t *p, int n) {   // DMA: the screen wants each pixel's high byte first
@@ -2095,8 +2110,12 @@ void setup() {
   beginPictures();
   bool bufsOk = allocBuffers();
 #if DUAL_CORE
-  if (bufsOk && picBuf) picBuf2 = (uint16_t *)malloc(SCR_WMAX * STRIP * 2);   // optional: smoother fades
+  if (bufsOk && picBuf) picBuf2 = (uint16_t *)malloc(SCR_WMAX * STRIP * 2);   // optional: core 1's own strip (smoother fades and crosses)
 #endif
+  if (bufsOk && crossAvailable()) {                // the Wooden cross's cloud texture and wood strip: reserved now, while memory is in one piece
+    cloudMemory();
+    if (!woodBuf) woodBuf = (uint8_t *)malloc(SCR_WMAX * STRIP);
+  }
   if (!bufsOk) {
     tft.setTextColor(0xFFFF); tft.setTextSize(2); tft.setCursor(10, SCR_H * PX / 2 - 8); tft.print(F("Not enough memory"));   // say so on the screen too
     for (;;) { Serial.println(F("[portal] not enough memory for this screen")); delay(2000); }
