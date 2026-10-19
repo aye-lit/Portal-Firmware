@@ -354,7 +354,12 @@ void updateColourFade() {             // fade through the colour sets in order, 
 }
 
 // ---------- space helpers ----------
-uint32_t hash32(uint32_t n) {
+#if defined(ESP32)
+  #define HOT IRAM_ATTR                  // the drawing loops run from the chip's own fast memory, not through the flash cache
+#else
+  #define HOT
+#endif
+HOT uint32_t hash32(uint32_t n) {
   n = (n ^ 61) ^ (n >> 16);
   n *= 9;
   n ^= n >> 4;
@@ -620,7 +625,7 @@ void framePicture(uint8_t pic, float age, int y0, int rows, uint16_t *dst) {
   }
 }
 
-void blendStrip(uint16_t *a, const uint16_t *b, int n, int m) {   // a = a + (b - a) * m / 256
+HOT void blendStrip(uint16_t *a, const uint16_t *b, int n, int m) {   // a = a + (b - a) * m / 256
   for (int i = 0; i < n; i++) a[i] = mix565(a[i], b[i], m);
 }
 
@@ -629,14 +634,14 @@ void useLook(int L, bool cross);
 int  lookA = 0, lookB = 0;               // the style each scene draws (another style, or the main one)
 bool crossA = false, crossB = false;     // and whether it's the main cross
 
-void drawScene(uint8_t s, float age, int y0, int rows, uint16_t *dst, int L, bool cross) {
+HOT void drawScene(uint8_t s, float age, int y0, int rows, uint16_t *dst, int L, bool cross) {
   if (isPicture(s)) { readPicture(s, y0, rows, dst); return; }
   useLook(L, cross);
   renderStrip(y0, rows, dst);
   if (isFramed(s)) framePicture(s - 128, age, y0, rows, dst);
 }
 
-void composeStrip(int y0, int rows, uint16_t *dst) {
+HOT void composeStrip(int y0, int rows, uint16_t *dst) {
   bool fading = sceneMix > 0 && sceneA != sceneB;
   if (!fading || !picBuf) { if (sceneMix >= 128) drawScene(sceneB, ageB, y0, rows, dst, lookB, crossB); else drawScene(sceneA, ageA, y0, rows, dst, lookA, crossA); return; }
   drawScene(sceneA, ageA, y0, rows, dst, lookA, crossA);
@@ -681,6 +686,8 @@ float    gax = 1, gbx = 0, gay = 0, gby = 1, galK = 9;   // galK: how tightly th
 #define  GT_R  64
 #define  GT_DR 1.65f
 uint8_t  *gtH = NULL, *gtV = NULL, *gtX = NULL;
+uint32_t galFlashKey = 0;                // the galaxy picture kept in flash (when there's no room for it in memory)
+bool     gtInFlash = false;
 int      gtA = 0;
 float    gtK = -1, gpx = 1, gqx = 0, gpy = 0, gqy = 1, gRot = 0;
 bool     gtReady = false;
@@ -718,7 +725,7 @@ bool spaceMemory() {                    // reserved at startup (allocBuffers), s
 
 inline float smf(float x) { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); }
 
-float vn(float x, float y) {            // smooth noise, 0..1, repeats every 64 units
+HOT float vn(float x, float y) {            // smooth noise, 0..1, repeats every 64 units
   float xf = floorf(x), yf = floorf(y);
   int xi = (int)xf, yi = (int)yf;
   float fx = x - xf, fy = y - yf;
@@ -754,7 +761,7 @@ void galaxyNode(float xr, float yr, uint8_t &h, uint8_t &v, uint8_t &a8) {   // 
   h = to8(hue / 2); v = to8(lv); a8 = to8(arm * edge * (1 - dust));
 }
 
-float fastAtan2(float y, float x) {     // quick angle, good to about 0.1 degree
+HOT float fastAtan2(float y, float x) {     // quick angle, good to about 0.1 degree
   float ax = fabsf(x), ay = fabsf(y), mx = max(ax, ay), mn = min(ax, ay);
   if (mx == 0) return 0;
   float a = mn / mx, q = a * a;
@@ -764,14 +771,16 @@ float fastAtan2(float y, float x) {     // quick angle, good to about 0.1 degree
   return y < 0 ? -r : r;
 }
 
+bool galaxyTexFlash();
 bool galaxyTex() {                      // build the galaxy picture once per Spiral setting
+  if (gtInFlash) return galaxyTexFlash();
   if (!gtH) {
     for (int a = 256; a >= 128 && !gtH; a /= 2) {
       gtH = (uint8_t *)malloc(GT_R * a); gtV = (uint8_t *)malloc(GT_R * a); gtX = (uint8_t *)malloc(GT_R * a);
       if (gtH && gtV && gtX) gtA = a;
       else { free(gtH); free(gtV); free(gtX); gtH = gtV = gtX = NULL; }
     }
-    if (!gtH) return false;             // no room: the galaxy is worked out every frame instead
+    if (!gtH) { gtInFlash = true; return galaxyTexFlash(); }   // no room in memory: keep it in flash (read through the cache)
     gtK = -1;
   }
   if (gtK == galK) return true;
@@ -785,7 +794,42 @@ bool galaxyTex() {                      // build the galaxy picture once per Spi
   return true;
 }
 
-void spaceNode(float X, float Y, uint8_t &h, uint8_t &v, uint8_t &x8) {   // gas and dust at one point
+#if HAS_PICS
+bool galaxyTexFlash() {                 // the galaxy picture in the end of the staging area, mapped like the cross and the wood
+  if (!planeMap) return false;
+  const uint32_t GAL_MAGIC = 0x4C414756UL;   // "VGAL"
+  uint32_t off = stageOff + crossPlane, room = STAGE_SIZE - crossPlane - 16;
+  int a = 3UL * GT_R * 256 <= room ? 256 : 128;
+  if (3UL * GT_R * a > room) return false;
+  uint32_t key = (uint32_t)lroundf(galK * 1000) * 1024 + a + 1;
+  const uint8_t *base = planeMap + (off - crossOff);
+  if (galFlashKey != key) {
+    const uint32_t *h = (const uint32_t *)base;
+    if (!(h[0] == GAL_MAGIC && h[1] == key)) {   // not there yet (or the Spiral setting changed): work it out once and store it
+      esp_partition_erase_range(picPart, off, (16 + 3UL * GT_R * a + 4095) & ~4095UL);
+      static uint8_t row[3][256];
+      for (int ri = 0; ri < GT_R; ri++) {
+        for (int ai = 0; ai < a; ai++) {
+          float gr = ri * GT_DR, an = ai * TWO_PI / a;
+          galaxyNode(gr * cosf(an), gr * sinf(an), row[0][ai], row[1][ai], row[2][ai]);
+        }
+        for (int k = 0; k < 3; k++) esp_partition_write(picPart, off + 16 + (uint32_t)k * GT_R * a + (uint32_t)ri * a, row[k], a);
+        if ((ri & 7) == 7) delay(1);
+      }
+      uint32_t hd[4] = { GAL_MAGIC, key, 0, 0 };
+      esp_partition_write(picPart, off, hd, 16);
+    }
+    galFlashKey = key;
+  }
+  gtA = a;
+  gtH = (uint8_t *)(base + 16); gtV = gtH + GT_R * a; gtX = gtV + GT_R * a;   // (read only)
+  return true;
+}
+#else
+bool galaxyTexFlash() { return false; }
+#endif
+
+HOT void spaceNode(float X, float Y, uint8_t &h, uint8_t &v, uint8_t &x8) {   // gas and dust at one point
   const SceneLook &L = lk[CORE_ID()]; const uint8_t look = L.look; const float spExt = L.spExt;   // this core's style
   if (look == 4) {
     if (!gtReady) { galaxyNode(gax * X + gbx * Y, gay * X + gby * Y, h, v, x8); return; }
@@ -874,7 +918,7 @@ void prepareSpace() {                   // once per frame
   }
 }
 
-void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
+HOT void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
   const SceneLook &L = lk[CORE_ID()]; const uint8_t look = L.look; const int spCY = L.spCY; const float spU = L.spU;   // this core's style
   uint16_t *p = strip;
   if (look == 15) {                     // Wormhole
@@ -918,19 +962,28 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
       spaceNode((gx * C + 0.5f - QX) * spU, (gy * C + 0.5f - spCY) * spU, gH[i], gV[i], gX[i]);
     }
   int dens = (look == 14 ? 7 : look == 4 ? 4 : 10) * STARS / 3, densBand = 22 * STARS / 3;
+  static int16_t colHc[2][SCR_WMAX / 3 + 3], colVc[2][SCR_WMAX / 3 + 3], colXc[2][SCR_WMAX / 3 + 3];   // one row of the grid, blended down to this pixel row (one set per core)
+  const int core = CORE_ID();
+  int16_t *colH = colHc[core], *colV = colVc[core], *colX = colXc[core];
   for (int y = y0; y < y0 + rows; y++) {
     int gy = y / C - gy0, fy = y % C;
     float Y = (y + 0.5f - spCY) * spU;
     const int cy = C - fy;
-    for (int x = 0, ic = gy * GC, fx = 0; x < SCR_W; x++) {
-      const int i = ic, cx = C - fx, w00 = cx * cy, w01 = fx * cy, w10 = cx * fy, w11 = fx * fy;
+    const uint8_t *tH = gH + gy * GC, *tV = gV + gy * GC, *tX = gX + gy * GC;
+    for (int g = 0; g < GC; g++) {                   // blend between the grid rows once per row, then only across
+      colH[g] = tH[g] * cy + tH[g + GC] * fy; colV[g] = tV[g] * cy + tV[g + GC] * fy;
+      colX[g] = tX[g] * cy + tX[g + GC] * fy;
+    }
+    for (int x = 0, ic = 0, fx = 0; x < SCR_W; x++) {
+      const int g = ic, cx = C - fx, f = fx;
       if (++fx == C) { fx = 0; ic++; }
-      int h = (((gH[i] * cx + gH[i + 1] * (C - cx)) * cy + (gH[i + GC] * cx + gH[i + GC + 1] * (C - cx)) * fy) * WM) >> 16;
-      int v = (((gV[i] * cx + gV[i + 1] * (C - cx)) * cy + (gV[i + GC] * cx + gV[i + GC + 1] * (C - cx)) * fy) * WM) >> 16;
+      int h = ((colH[g] * cx + colH[g + 1] * f) * WM) >> 16;
+      int v = ((colV[g] * cx + colV[g + 1] * f) * WM) >> 16;
       int hi = (h >> 1) & 63, vi = v >> 2, shi, svi;
       uint32_t pix = (uint32_t)(y * SCR_W + x);
+      const int i = gy * GC + g;
       if (look == 4) {
-        int am = (gX[i] > 90 || gX[i + 1] > 90 || gX[i + GC] > 90 || gX[i + GC + 1] > 90) ? ((gX[i] * w00 + gX[i + 1] * w01 + gX[i + GC] * w10 + gX[i + GC + 1] * w11) * WM) >> 16 : 0;
+        int am = ((colX[g] * cx + colX[g + 1] * f) * WM) >> 16;
         if (am > 90) {                                   // knots on the arms: pink star nurseries, blue clusters
           float X = (x + 0.5f - QX) * spU, xr = gax * X + gbx * Y, yr = gay * X + gby * Y;
           int kx = (int)floorf(xr / 4), ky = (int)floorf(yr / 4);
@@ -1157,7 +1210,7 @@ void buildCrossRipple() {
   }
 }
 
-void crossMask(int y0, int rows, uint16_t *strip) {   // glowing cross outline over a space picture
+HOT void crossMask(int y0, int rows, uint16_t *strip) {   // glowing cross outline over a space picture
   const int8_t *edgeBuf = edgeRows(y0);
   for (int i = 0; i < rows * SCR_W; i++) {
     int ce = edgeBuf[i];
@@ -1384,7 +1437,7 @@ void prepareClouds(int kind) {
 #define CGH (9600 / SCR_WMAX / CG + 3)
 uint8_t cgRc[2][CGH][CGW], cgGc[2][CGH][CGW], cgBc[2][CGH][CGW], cgQc[2][CGH][CGW];   // sky + cloud colour and the heavenly rays at each grid point (one set per core)
 uint16_t lrc[2][CGW], lgc[2][CGW], lbc[2][CGW], lqc[2][CGW];
-void renderCloudStrip(int y0, int rows, uint16_t *strip) {
+HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
   if (woodBuf) readWoodRows(y0, rows, woodBuf);
   const int core = CORE_ID();
   const int8_t *edgeBuf = edgeRows(y0); const uint8_t *woodBuf = woodRows(y0); const uint8_t look = lk[core].look;   // this core's strip and style
@@ -1448,7 +1501,7 @@ void renderCloudStrip(int y0, int rows, uint16_t *strip) {
   }
 }
 
-void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase2) {
+HOT void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase2) {
   const uint8_t look = lk[CORE_ID()].look;
   if (look >= 8 && look <= 10) { renderCloudStrip(y0, rows, strip); return; }   // a cloud sky behind the cross
   if (woodBuf) readWoodRows(y0, rows, woodBuf);
@@ -1487,7 +1540,7 @@ void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase2) {
   }
 }
 
-void useLook(int L, bool cross) {        // the style and cross a scene draws with (set before each scene's strip)
+HOT void useLook(int L, bool cross) {        // the style and cross a scene draws with (set before each scene's strip)
   look = L;
   crossOn = cross;
   woodOn = cross && STYLE == 17;
@@ -1498,7 +1551,7 @@ void useLook(int L, bool cross) {        // the style and cross a scene draws wi
   k.look = L; k.cross = cross; k.wood = woodOn; k.spCY = spCY; k.spU = spU; k.spExt = spExt;
 }
 
-void renderStrip(int y0, int rows, uint16_t *strip) {
+HOT void renderStrip(int y0, int rows, uint16_t *strip) {
   const SceneLook &LKc = lk[CORE_ID()]; const uint8_t look = LKc.look; const bool crossOn = LKc.cross, woodOn = LKc.wood;   // this core's style
   const int8_t *edgeBuf = edgeRows(y0);
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);

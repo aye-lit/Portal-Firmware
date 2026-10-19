@@ -116,7 +116,7 @@ function pictureBlock() { return `
 // gives the most room. Commands: INFO, IMG slot bytes id, D base64..., END.
 // (HAS_PICS and the JPEG decoder are set up with the other #includes at the top)
 bool    crossReady = false;               // cross outline ready to read (styles 8-13)
-extern uint32_t woodPlaneKey;
+extern uint32_t woodPlaneKey, galFlashKey;
 int8_t *edgeBuf = NULL;                   // one strip of the cross outline
 uint8_t crossRimT[128], crossHaloT[128];  // rim and outer glow, sized to the beam
 
@@ -355,7 +355,7 @@ const uint8_t *planeMap = NULL;           // the cross outline and the wood, map
 esp_partition_mmap_handle_t planeH;
 void mapPlanes() {
   const void *ptr;
-  if (!planeMap && esp_partition_mmap(picPart, crossOff, stageOff + crossPlane - crossOff, ESP_PARTITION_MMAP_DATA, &ptr, &planeH) == ESP_OK) planeMap = (const uint8_t *)ptr;
+  if (!planeMap && esp_partition_mmap(picPart, crossOff, stageOff + STAGE_SIZE - crossOff, ESP_PARTITION_MMAP_DATA, &ptr, &planeH) == ESP_OK) planeMap = (const uint8_t *)ptr;   // (the staging area too: the galaxy picture sits at its end)
 }
 void readCrossRows(int y0, int rows) {   // (mapped: nothing to copy, edgeRows() points straight at it)
   if (!planeMap) esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W);
@@ -388,6 +388,7 @@ const char *pictureCommand(char *line) {
     esp_partition_erase_range(picPart, stageOff, (len + 4095) & ~4095UL);   // only what this picture needs
     uploading = true; upLast = millis();
     woodPlaneKey = 0;                            // the wood shares this space: work it out again afterwards
+    galFlashKey = 0;                             // and so does the galaxy picture
     return "READY";
   }
   if (line[0] == 'D' && line[1] == ' ' && uploading) {   // a piece of the JPEG, in base64
