@@ -176,6 +176,14 @@ int16_t  linT[256];
 uint16_t pal[256];
 uint16_t *stripBuf[2];                 // two strips: one is drawn while the other is sent (allocated in setup)
 uint16_t *picBuf = NULL;               // a third strip, for fading between scenes
+uint16_t *picBuf2 = NULL;              // core 1's own, so both cores can draw during a fade
+#if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
+  #define CORE_ID() (xPortGetCoreID() & 1)
+#else
+  #define CORE_ID() 0
+#endif
+struct SceneLook { uint8_t look; bool cross, wood; int spCY; float spU, spExt; };
+SceneLook lk[2];                        // what each core is drawing right now (both cores can draw different styles at once)
 int      crossYC = QY;                 // crosses: row of the crossing (the cross is centred, so this sits above the middle)
 bool     crossOn = false;               // a cross is being drawn (its outline is ready)
 int      spCY = QY;                     // centre row for the space styles (the crossing when inside a cross)
@@ -631,8 +639,9 @@ void composeStrip(int y0, int rows, uint16_t *dst) {
   bool fading = sceneMix > 0 && sceneA != sceneB;
   if (!fading || !picBuf) { if (sceneMix >= 128) drawScene(sceneB, ageB, y0, rows, dst, lookB, crossB); else drawScene(sceneA, ageA, y0, rows, dst, lookA, crossA); return; }
   drawScene(sceneA, ageA, y0, rows, dst, lookA, crossA);
-  drawScene(sceneB, ageB, y0, rows, picBuf, lookB, crossB);
-  blendStrip(dst, picBuf, rows * SCR_W, sceneMix);
+  uint16_t *fb = CORE_ID() && picBuf2 ? picBuf2 : picBuf;   // each core fades in its own buffer
+  drawScene(sceneB, ageB, y0, rows, fb, lookB, crossB);
+  blendStrip(dst, fb, rows * SCR_W, sceneMix);
 }
 
 // ---------- one frame ----------
@@ -776,6 +785,7 @@ bool galaxyTex() {                      // build the galaxy picture once per Spi
 }
 
 void spaceNode(float X, float Y, uint8_t &h, uint8_t &v, uint8_t &x8) {   // gas and dust at one point
+  const SceneLook &L = lk[CORE_ID()]; const uint8_t look = L.look; const float spExt = L.spExt;   // this core's style
   if (look == 4) {
     if (!gtReady) { galaxyNode(gax * X + gbx * Y, gay * X + gby * Y, h, v, x8); return; }
     float px = gpx * X + gqx * Y, py = gpy * X + gqy * Y;                 // look the galaxy up, turned
@@ -864,6 +874,7 @@ void prepareSpace() {                   // once per frame
 }
 
 void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
+  const SceneLook &L = lk[CORE_ID()]; const uint8_t look = L.look; const int spCY = L.spCY; const float spU = L.spU;   // this core's style
   uint16_t *p = strip;
   if (look == 15) {                     // Wormhole
     for (int y = y0; y < y0 + rows; y++) {
@@ -1446,9 +1457,12 @@ void useLook(int L, bool cross) {        // the style and cross a scene draws wi
   spCY = cross ? crossYC : QY;
   spU = L == 15 ? 118.0f / SP_EXT : 236.0f / min(SCR_W, SCR_H);
   spExt = SP_EXT * spU;
+  SceneLook &k = lk[CORE_ID()];          // and this core's own copy
+  k.look = L; k.cross = cross; k.wood = woodOn; k.spCY = spCY; k.spU = spU; k.spExt = spExt;
 }
 
 void renderStrip(int y0, int rows, uint16_t *strip) {
+  const SceneLook &LKc = lk[CORE_ID()]; const uint8_t look = LKc.look; const bool crossOn = LKc.cross, woodOn = LKc.wood;   // this core's style
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);
   uint16_t *p = strip;
   bool cross = crossOn;
@@ -1609,8 +1623,15 @@ volatile uint32_t wait0Us = 0, wait1Us = 0;           // time each core spent wa
 volatile float helpShare = 0.3f;                       // part of each strip core 1 draws, balanced every frame
 volatile bool sharing = false;
 
+bool shareable(uint8_t s, int L, bool cross) {   // one scene: can both cores draw it at once?
+  if (cross || isFramed(s)) return false;               // crosses and portal-around-a-picture keep one strip buffer
+  if (isPicture(s)) return true;
+  return spX1 || !(L == 4 || L == 14 || L == 16);       // Galaxy, Nebula and Meteor Shower need core 1's own gas grid
+}
+
 bool canShare() {                        // styles whose drawing can be split between the two cores
-  if (sceneMix > 0 && sceneA != sceneB) return false;  // fading between scenes
+  if (sceneMix > 0 && sceneA != sceneB)                 // fading: both scenes on both cores (each core has its own fade buffer)
+    return picBuf && picBuf2 && shareable(sceneA, lookA, crossA) && shareable(sceneB, lookB, crossB);
   bool useB = sceneMix >= 128;
   uint8_t s = useB ? sceneB : sceneA;
   if (s != PORTAL && !isStyleScene(s)) return false;   // pictures
@@ -1710,7 +1731,11 @@ ${DISP.begin}
   Serial.println(F("[portal] bluetooth ready"));
 #endif
   beginPictures();
-  if (!allocBuffers()) {
+  bool bufsOk = allocBuffers();
+#if DUAL_CORE
+  if (bufsOk && picBuf) picBuf2 = (uint16_t *)malloc(SCR_WMAX * STRIP * 2);   // optional: smoother fades
+#endif
+  if (!bufsOk) {
     tft.setTextColor(0xFFFF); tft.setTextSize(2); tft.setCursor(10, SCR_H * PX / 2 - 8); tft.print(F("Not enough memory"));   // say so on the screen too
     for (;;) { Serial.println(F("[portal] not enough memory for this screen")); delay(2000); }
   }
