@@ -118,7 +118,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x5401C2DCUL;
+const uint32_t BUILD_ID = 0x28D7CB88UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -266,6 +266,7 @@ void buildTone() {
   for (int i = 0; i < 256; i++) toneT[i] = (uint8_t)lroundf(255 * powf(i / 255.0f, g));
 }
 uint16_t to565(uint8_t r, uint8_t g, uint8_t b) { r = toneT[r]; g = toneT[g]; b = toneT[b]; return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
+uint16_t to565raw(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }   // without the colour curve (the wood: dark browns would lose their grain)
 
 uint32_t mixColor(uint32_t x, uint32_t y, float f) {   // blend two 0xRRGGBB colours
   uint32_t out = 0;
@@ -1629,7 +1630,7 @@ void prepareWood() {
       float c[3]; woodColorOf(woodGrain, tn, c);
       for (int sh = 0; sh < 8; sh++) {
         float k = WOOD_SHADE[sh] * BRIGHTNESS / 100.0f;
-        woodPal8[tn * 8 + sh] = to565((uint8_t)min(255.0f, c[0] * k), (uint8_t)min(255.0f, c[1] * k), (uint8_t)min(255.0f, c[2] * k));
+        woodPal8[tn * 8 + sh] = to565raw((uint8_t)min(255.0f, c[0] * k), (uint8_t)min(255.0f, c[1] * k), (uint8_t)min(255.0f, c[2] * k));
       }
     }
     for (int k = 0; k < 128; k++) { woodGlowT[k] = (uint8_t)(200 * expf(-k / (14 * woodS))); woodShT[k] = (uint8_t)(255 * (1 - 0.8f * expf(-k / 3.0f))); }
@@ -1731,8 +1732,8 @@ void renderCloudStrip(int y0, int rows, uint16_t *strip) {
       int ce = eb[x];
       if (ce > 0) {                                 // the wood, lit a little by the sky on its edges
         uint16_t c = woodPx((y - y0) * SCR_W + x);
-        if (kind == 1 && ce <= 1) c = max565(c, to565(64, 42, 22));
-        if (kind == 2 && ce <= 2) c = max565(c, ce == 1 ? to565(170, 156, 120) : to565(110, 100, 78));
+        if (kind == 1 && ce <= 1) c = max565(c, to565raw(64, 42, 22));
+        if (kind == 2 && ce <= 2) c = max565(c, ce == 1 ? to565raw(170, 156, 120) : to565raw(110, 100, 78));
         *p++ = c;
         continue;
       }
