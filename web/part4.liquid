@@ -1101,8 +1101,50 @@ $("check-fps").addEventListener("click", async () => {      // the board prints 
   say(f == null ? "The board didn't report its speed. Make sure it has the latest install." : `The board draws ${(+f[0]).toFixed(1)} frames per second.` + (f[1] ? ` Each frame: ${f[1]} ms working out the picture, ${f[2]} ms sending it to the screen.` : ""), f == null ? "warn" : "ok");
 });
 
+function phoneUsb() {                               // Android phones: CH340 boards (like the 3.5" board) over WebUSB, the same way as Install
+  const fw = FIRMWARE[S.board + "|" + S.model];
+  return IS_ANDROID && !!navigator.usb && !!(fw && fw.phone);
+}
+async function loadEsptool() {                      // the installer also carries the phone USB driver
+  if (!esptool) {
+    try {
+      const code = await (await fetch(FW_BASE + "esptool.js")).text();
+      const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+      try { esptool = await import(url); } finally { URL.revokeObjectURL(url); }
+    } catch (_) { esptool = await import(FW_BASE + "esptool.js"); }
+  }
+  return esptool;
+}
+function serialLike(dev) {                          // makes the phone USB driver behave like a Web Serial port
+  return {
+    get readable() { if (!dev.readLoopRunning && dev.usbDevice.opened) dev.createStreams(); return dev.readable; },   // a new stream after a timed-out read
+    get writable() { return dev.writable; },
+    open: o => dev.open(o), close: () => dev.close(), getInfo: () => dev.getInfo(),
+  };
+}
 async function sendUsb() {
-  if (!("serial" in navigator)) {
+  if (!port && phoneUsb()) {                        // phone: pick the board from the USB list, then carry on as normal
+    if (busy) { pending = true; return; }
+    busy = true;
+    try {
+      const et = await loadEsptool();
+      const dev = await et.WebUSBSerialPort.requestPort();
+      setConn("busy", "Connecting over USB…");
+      const p = serialLike(dev);
+      await p.open({ baudRate: 115200 });
+      port = p;
+      say("Connected. Waiting for the board…");
+      await sleep(1200);
+    } catch (e) {
+      busy = false;
+      if (e && e.name === "NotFoundError") say("No board selected.");
+      else say("Couldn't open the board over USB: " + ((e && e.message) || e) + ". Unplug it, plug it back in and try again.", "warn");
+      port = null; refreshConn();
+      return;
+    }
+    busy = false;
+  }
+  if (!port && !("serial" in navigator)) {
     say("This browser can't talk to USB boards. Use Chrome or Edge on a computer, or Chrome on an Android phone (update Chrome if it's old). iPhone and iPad browsers can't do this.", "warn");
     return;
   }
