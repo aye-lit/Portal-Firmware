@@ -118,7 +118,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x7B43BAABUL;
+const uint32_t BUILD_ID = 0xB2C40C4DUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -496,6 +496,7 @@ uint8_t  upSlot = 0;
 uint16_t *band = NULL;
 int      bandTop = 0;
 
+void mapPlanes();
 void beginPictures() {
   picPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
   if (!picPart) picPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, NULL);
@@ -514,6 +515,7 @@ void beginPictures() {
     picId[i] = ok ? h.id : 0;
     picW[i] = h.w;
   }
+  mapPlanes();                             // the cross and wood strips are read through the flash cache
 }
 
 int  picturesAvailable() { return picSlots; }
@@ -709,14 +711,26 @@ void prepareCross() {                           // (re)build the outline when th
   crossReady = true;
 }
 
-void readCrossRows(int y0, int rows) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W); }
+const uint8_t *planeMap = NULL;           // the cross outline and the wood, mapped into memory: read through the fast flash cache
+esp_partition_mmap_handle_t planeH;
+void mapPlanes() {
+  const void *ptr;
+  if (!planeMap && esp_partition_mmap(picPart, crossOff, stageOff + crossPlane - crossOff, ESP_PARTITION_MMAP_DATA, &ptr, &planeH) == ESP_OK) planeMap = (const uint8_t *)ptr;
+}
+void readCrossRows(int y0, int rows) {
+  if (planeMap) memcpy(edgeBuf, planeMap + 16 + (uint32_t)y0 * SCR_W, (uint32_t)rows * SCR_W);
+  else esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W);
+}
 void readEdgeRow(int y, int8_t *dst) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y * SCR_W, dst, SCR_W); }
 const uint32_t WOOD_MAGIC = 0x444F4F57UL;  // "WOOD"
 bool woodPlaneReady(uint32_t key) { uint32_t h[4]; esp_partition_read(picPart, woodOff, h, 16); return h[0] == WOOD_MAGIC && h[1] == key; }
 void woodPlaneBegin() { esp_partition_erase_range(picPart, woodOff, crossPlane); }
 void woodPlaneRow(int y, const uint8_t *row) { esp_partition_write(picPart, woodOff + 16 + (uint32_t)y * SCR_W, row, SCR_W); }
 void woodPlaneEnd(uint32_t key) { uint32_t h[4] = { WOOD_MAGIC, key, 0, 0 }; esp_partition_write(picPart, woodOff, h, 16); }
-void readWoodRows(int y0, int rows, uint8_t *dst) { esp_partition_read(picPart, woodOff + 16 + (uint32_t)y0 * SCR_W, dst, (uint32_t)rows * SCR_W); }
+void readWoodRows(int y0, int rows, uint8_t *dst) {
+  if (planeMap) memcpy(dst, planeMap + (woodOff - crossOff) + 16 + (uint32_t)y0 * SCR_W, (uint32_t)rows * SCR_W);
+  else esp_partition_read(picPart, woodOff + 16 + (uint32_t)y0 * SCR_W, dst, (uint32_t)rows * SCR_W);
+}
 
 const char *pictureCommand(char *line) {
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
@@ -1720,17 +1734,49 @@ void prepareClouds(int kind) {
   for (int i = 0; i < 16; i++) for (int j = 0; j < 3; j++) cloudCol[i][j] = (uint8_t)(CL_SH[kind][j] + (CL_LIT[kind][j] - CL_SH[kind][j]) * i / 15);
   cloudK1 = (int)lroundf(64 / woodS * 256); cloudK2 = (int)lroundf(64 / woodS * 256 * 1.7f); cloudK3 = (int)lroundf(64 / woodS * 256 * 3.1f);
 }
+// Clouds are soft, so they're worked out every 4 pixels and blended in between (16 times less work); the wood stays sharp
+#define CG 4
+#define CGW (SCR_WMAX / CG + 2)
+#define CGH (64 / CG + 3)
+uint8_t cgR[CGH][CGW], cgG[CGH][CGW], cgB[CGH][CGW], cgQ[CGH][CGW];   // sky + cloud colour, and the heavenly rays, at each grid point
 void renderCloudStrip(int y0, int rows, uint16_t *strip) {
   if (woodBuf) readWoodRows(y0, rows, woodBuf);
   int kind = look - 8, br = BRIGHTNESS * 256 / 100;
   int D1 = (int)(cloudDrift * 76.8f), D2 = (int)((cloudDrift * 0.3f + 97) * 128), D3 = (int)((cloudDrift * 0.2f + 53) * 128);
   int rayPh = (int)(millis() / 1000.0f * 0.15f * 40.74f);
-  uint16_t *p = strip;
-  for (int y = y0; y < y0 + rows; y++) {
-    float fy = (float)y / SCR_H; int sky[3];
+  const int gy0 = y0 / CG, gy1 = (y0 + rows - 1) / CG + 1, gw = SCR_W / CG + 1;
+  for (int gy = gy0; gy <= gy1 && gy - gy0 < CGH; gy++) {          // the grid points this strip needs
+    int y = gy * CG;
+    float fy = (float)y / SCR_H; if (fy > 1) fy = 1;
+    int sky[3];
     for (int j = 0; j < 3; j++) sky[j] = kind == 1 ? (int)(fy < 0.55f ? SKY_TOP[1][j] + (SKY_MID[j] - SKY_TOP[1][j]) * fy / 0.55f : SKY_MID[j] + (SKY_BOT[1][j] - SKY_MID[j]) * (fy - 0.55f) / 0.45f)
                                                  : (int)(SKY_TOP[kind][j] + (SKY_BOT[kind][j] - SKY_TOP[kind][j]) * fy);
     int Y1 = (y * cloudK1) >> 8, Y2 = ((y * cloudK2) >> 8) + 31 * 128, Y3 = ((y * cloudK3) >> 8) + 11 * 128;
+    const int r0 = gy - gy0;
+    for (int gx = 0; gx <= gw; gx++) {
+      int x = gx * CG;
+      int X1 = ((x * cloudK1) >> 8) + D1, X2 = ((x * cloudK2) >> 8) + D2, X3 = ((x * cloudK3) >> 8) + D3;
+      int n  = (cloudAt(X1, Y1) * 205 + cloudAt(X2, Y2) * 51) >> 8;
+      int n2 = (cloudAt(X1, Y1 - 768) * 205 + cloudAt(X2, Y2 - 1280) * 51) >> 8;   // a little higher up: light comes from above
+      int det = ((cloudAt(X3, Y3) - 128) * CL_DET[kind]) >> 8;                      // crisp, puffy edges
+      int dens = cloudDensT[constrain(n + det + 128, 0, 511)];
+      int light = constrain(158 + (n - n2) * CL_SHADE[kind] + ((det * 3) >> 1), 0, 255) >> 4;
+      cgR[r0][gx] = (uint8_t)(sky[0] + (((cloudCol[light][0] - sky[0]) * dens) >> 8));
+      cgG[r0][gx] = (uint8_t)(sky[1] + (((cloudCol[light][1] - sky[1]) * dens) >> 8));
+      cgB[r0][gx] = (uint8_t)(sky[2] + (((cloudCol[light][2] - sky[2]) * dens) >> 8));
+      int q = 0;
+      if (kind == 2) { int r, a; polarAt(min(x, SCR_W - 1), min(y, SCR_H - 1), crossYC, r, a); q = (cloudRayT[(a * 9 + rayPh) & 255] * cloudRayRT[r]) >> 8; }   // heavenly rays
+      cgQ[r0][gx] = (uint8_t)q;
+    }
+  }
+  static uint16_t lr[SCR_WMAX / CG + 2], lg[SCR_WMAX / CG + 2], lb[SCR_WMAX / CG + 2], lq[SCR_WMAX / CG + 2];   // one row, blended between grid rows (x4)
+  uint16_t *p = strip;
+  for (int y = y0; y < y0 + rows; y++) {
+    const int r0 = y / CG - gy0, fy = y % CG, wy = CG - fy;
+    for (int gx = 0; gx <= gw; gx++) {
+      lr[gx] = cgR[r0][gx] * wy + cgR[r0 + 1][gx] * fy; lg[gx] = cgG[r0][gx] * wy + cgG[r0 + 1][gx] * fy;
+      lb[gx] = cgB[r0][gx] * wy + cgB[r0 + 1][gx] * fy; lq[gx] = cgQ[r0][gx] * wy + cgQ[r0 + 1][gx] * fy;
+    }
     const int8_t *eb = edgeBuf + (y - y0) * SCR_W;
     for (int x = 0; x < SCR_W; x++) {
       int ce = eb[x];
@@ -1741,22 +1787,15 @@ void renderCloudStrip(int y0, int rows, uint16_t *strip) {
         *p++ = c;
         continue;
       }
-      int k = -ce, X1 = ((x * cloudK1) >> 8) + D1, X2 = ((x * cloudK2) >> 8) + D2, X3 = ((x * cloudK3) >> 8) + D3;
-      int n  = (cloudAt(X1, Y1) * 205 + cloudAt(X2, Y2) * 51) >> 8;
-      int n2 = (cloudAt(X1, Y1 - 768) * 205 + cloudAt(X2, Y2 - 1280) * 51) >> 8;   // a little higher up: light comes from above
-      int det = ((cloudAt(X3, Y3) - 128) * CL_DET[kind]) >> 8;                      // crisp, puffy edges
-      int dens = cloudDensT[constrain(n + det + 128, 0, 511)];
-      int light = constrain(158 + (n - n2) * CL_SHADE[kind] + ((det * 3) >> 1), 0, 255) >> 4;
-      int c[3];
-      for (int j = 0; j < 3; j++) c[j] = sky[j] + (((cloudCol[light][j] - sky[j]) * dens) >> 8);
+      const int gx = x / CG, fx = x % CG, wx = CG - fx, k = -ce;
+      int c0 = (lr[gx] * wx + lr[gx + 1] * fx) >> 4, c1 = (lg[gx] * wx + lg[gx + 1] * fx) >> 4, c2 = (lb[gx] * wx + lb[gx + 1] * fx) >> 4;   // (CG * CG = 16)
       if (kind == 2) {                              // heavenly light: rays and a glow from behind the cross
-        int r, a; polarAt(x, y, crossYC, r, a);
-        int q = ((cloudRayT[(a * 9 + rayPh) & 255] * cloudRayRT[r]) >> 8) + cloudGlowT[k > 127 ? 127 : k];
+        int q = ((lq[gx] * wx + lq[gx + 1] * fx) >> 4) + cloudGlowT[k > 127 ? 127 : k];
         if (q > 255) q = 255;
-        c[0] += ((255 - c[0]) * q) >> 8; c[1] += ((248 - c[1]) * q) >> 8; c[2] += ((225 - c[2]) * q) >> 8;
+        c0 += ((255 - c0) * q) >> 8; c1 += ((248 - c1) * q) >> 8; c2 += ((225 - c2) * q) >> 8;
       }
       int m = (cloudShT[k > 63 ? 63 : k] * br) >> 8;  // soft shadow round the wood, and the brightness setting
-      *p++ = to565((c[0] * m) >> 8, (c[1] * m) >> 8, (c[2] * m) >> 8);
+      *p++ = to565((c0 * m) >> 8, (c1 * m) >> 8, (c2 * m) >> 8);
     }
   }
 }
