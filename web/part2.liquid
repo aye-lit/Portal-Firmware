@@ -357,10 +357,10 @@ void mapPlanes() {
   const void *ptr;
   if (!planeMap && esp_partition_mmap(picPart, crossOff, stageOff + crossPlane - crossOff, ESP_PARTITION_MMAP_DATA, &ptr, &planeH) == ESP_OK) planeMap = (const uint8_t *)ptr;
 }
-void readCrossRows(int y0, int rows) {
-  if (planeMap) memcpy(edgeBuf, planeMap + 16 + (uint32_t)y0 * SCR_W, (uint32_t)rows * SCR_W);
-  else esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W);
+void readCrossRows(int y0, int rows) {   // (mapped: nothing to copy, edgeRows() points straight at it)
+  if (!planeMap) esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W);
 }
+const int8_t *edgeRows(int y0) { return planeMap ? (const int8_t *)(planeMap + 16 + (uint32_t)y0 * SCR_W) : edgeBuf; }   // a strip of the cross outline (either core)
 void readEdgeRow(int y, int8_t *dst) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y * SCR_W, dst, SCR_W); }
 const uint32_t WOOD_MAGIC = 0x444F4F57UL;  // "WOOD"
 bool woodPlaneReady(uint32_t key) { uint32_t h[4]; esp_partition_read(picPart, woodOff, h, 16); return h[0] == WOOD_MAGIC && h[1] == key; }
@@ -368,9 +368,10 @@ void woodPlaneBegin() { esp_partition_erase_range(picPart, woodOff, crossPlane);
 void woodPlaneRow(int y, const uint8_t *row) { esp_partition_write(picPart, woodOff + 16 + (uint32_t)y * SCR_W, row, SCR_W); }
 void woodPlaneEnd(uint32_t key) { uint32_t h[4] = { WOOD_MAGIC, key, 0, 0 }; esp_partition_write(picPart, woodOff, h, 16); }
 void readWoodRows(int y0, int rows, uint8_t *dst) {
-  if (planeMap) memcpy(dst, planeMap + (woodOff - crossOff) + 16 + (uint32_t)y0 * SCR_W, (uint32_t)rows * SCR_W);
-  else esp_partition_read(picPart, woodOff + 16 + (uint32_t)y0 * SCR_W, dst, (uint32_t)rows * SCR_W);
+  if (!planeMap) esp_partition_read(picPart, woodOff + 16 + (uint32_t)y0 * SCR_W, dst, (uint32_t)rows * SCR_W);
 }
+extern uint8_t *woodBuf;
+const uint8_t *woodRows(int y0) { return planeMap ? planeMap + (woodOff - crossOff) + 16 + (uint32_t)y0 * SCR_W : woodBuf; }   // a strip of the wood (either core)
 
 const char *pictureCommand(char *line) {
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
@@ -405,6 +406,10 @@ void beginPictures() {}
 bool crossAvailable() { return false; }
 void prepareCross() {}
 void readCrossRows(int y0, int rows) {}
+const uint8_t *planeMap = NULL;
+const int8_t *edgeRows(int y0) { return edgeBuf; }
+extern uint8_t *woodBuf;
+const uint8_t *woodRows(int y0) { return woodBuf; }
 void readEdgeRow(int y, int8_t *dst) {}
 bool woodPlaneReady(uint32_t key) { return true; }
 void woodPlaneBegin() {}

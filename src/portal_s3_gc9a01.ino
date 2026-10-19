@@ -113,7 +113,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xB2C40C4DUL;
+const uint32_t BUILD_ID = 0x10E62E06UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -698,10 +698,10 @@ void mapPlanes() {
   const void *ptr;
   if (!planeMap && esp_partition_mmap(picPart, crossOff, stageOff + crossPlane - crossOff, ESP_PARTITION_MMAP_DATA, &ptr, &planeH) == ESP_OK) planeMap = (const uint8_t *)ptr;
 }
-void readCrossRows(int y0, int rows) {
-  if (planeMap) memcpy(edgeBuf, planeMap + 16 + (uint32_t)y0 * SCR_W, (uint32_t)rows * SCR_W);
-  else esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W);
+void readCrossRows(int y0, int rows) {   // (mapped: nothing to copy, edgeRows() points straight at it)
+  if (!planeMap) esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W);
 }
+const int8_t *edgeRows(int y0) { return planeMap ? (const int8_t *)(planeMap + 16 + (uint32_t)y0 * SCR_W) : edgeBuf; }   // a strip of the cross outline (either core)
 void readEdgeRow(int y, int8_t *dst) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y * SCR_W, dst, SCR_W); }
 const uint32_t WOOD_MAGIC = 0x444F4F57UL;  // "WOOD"
 bool woodPlaneReady(uint32_t key) { uint32_t h[4]; esp_partition_read(picPart, woodOff, h, 16); return h[0] == WOOD_MAGIC && h[1] == key; }
@@ -709,9 +709,10 @@ void woodPlaneBegin() { esp_partition_erase_range(picPart, woodOff, crossPlane);
 void woodPlaneRow(int y, const uint8_t *row) { esp_partition_write(picPart, woodOff + 16 + (uint32_t)y * SCR_W, row, SCR_W); }
 void woodPlaneEnd(uint32_t key) { uint32_t h[4] = { WOOD_MAGIC, key, 0, 0 }; esp_partition_write(picPart, woodOff, h, 16); }
 void readWoodRows(int y0, int rows, uint8_t *dst) {
-  if (planeMap) memcpy(dst, planeMap + (woodOff - crossOff) + 16 + (uint32_t)y0 * SCR_W, (uint32_t)rows * SCR_W);
-  else esp_partition_read(picPart, woodOff + 16 + (uint32_t)y0 * SCR_W, dst, (uint32_t)rows * SCR_W);
+  if (!planeMap) esp_partition_read(picPart, woodOff + 16 + (uint32_t)y0 * SCR_W, dst, (uint32_t)rows * SCR_W);
 }
+extern uint8_t *woodBuf;
+const uint8_t *woodRows(int y0) { return planeMap ? planeMap + (woodOff - crossOff) + 16 + (uint32_t)y0 * SCR_W : woodBuf; }   // a strip of the wood (either core)
 
 const char *pictureCommand(char *line) {
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
@@ -746,6 +747,10 @@ void beginPictures() {}
 bool crossAvailable() { return false; }
 void prepareCross() {}
 void readCrossRows(int y0, int rows) {}
+const uint8_t *planeMap = NULL;
+const int8_t *edgeRows(int y0) { return edgeBuf; }
+extern uint8_t *woodBuf;
+const uint8_t *woodRows(int y0) { return woodBuf; }
 void readEdgeRow(int y, int8_t *dst) {}
 bool woodPlaneReady(uint32_t key) { return true; }
 void woodPlaneBegin() {}
@@ -1496,6 +1501,7 @@ void buildCrossRipple() {
 }
 
 void crossMask(int y0, int rows, uint16_t *strip) {   // glowing cross outline over a space picture
+  const int8_t *edgeBuf = edgeRows(y0);
   for (int i = 0; i < rows * SCR_W; i++) {
     int ce = edgeBuf[i];
     if (ce > 0) { int rv = max((int)crossRimT[ce], crossRipT[ce] > 8 ? min(255, crossRipT[ce] + 60) : 0); if (rv > 8) strip[i] = max565(strip[i], pal[rv]); }
@@ -1634,7 +1640,7 @@ void prepareWood() {
       float q = r / (1.3f * woodBot); woodVigT[r] = (uint8_t)(255 * fmaxf(0, 1 - q * q));   // a portal behind fades out toward the screen edge
     }
   }
-  if (!woodBuf) woodBuf = (uint8_t *)malloc(SCR_WMAX * STRIP);
+  if (!woodBuf && !planeMap) woodBuf = (uint8_t *)malloc(SCR_WMAX * STRIP);   // (mapped flash needs no copy)
   uint32_t pk = 2166136261UL;                                // the wood bytes in flash: rebuilt when the shape or grain changes
   uint32_t pparts[] = { (uint32_t)(R * 16), CROSS_W, BEAM, BAR, SCR_W, SCR_H, (uint32_t)woodGrain, (uint32_t)crossYC, 3 };
   for (uint32_t v : pparts) pk = (pk ^ v) * 16777619UL;
@@ -1655,7 +1661,7 @@ void prepareWood() {
   woodPlaneKey = pk;
 }
 
-inline uint16_t woodPx(int i) { return woodBuf ? woodPal8[woodBuf[i]] : woodPal8[16 * 8 + 4]; }   // (no memory: plain wood)
+#define woodPx(i) (woodBuf ? woodPal8[woodBuf[i]] : woodPal8[16 * 8 + 4])   // (woodBuf: the strip in the drawing function; none: plain wood)
 
 inline uint16_t dim565(uint16_t c, int m) {    // darken a colour (m: 0-255)
   return ((((c >> 11) * m) >> 8) << 11) | (((((c >> 5) & 63) * m) >> 8) << 5) | (((c & 31) * m) >> 8);
@@ -1718,10 +1724,15 @@ void prepareClouds(int kind) {
 // Clouds are soft, so they're worked out every 4 pixels and blended in between (16 times less work); the wood stays sharp
 #define CG 4
 #define CGW (SCR_WMAX / CG + 2)
-#define CGH (64 / CG + 3)
-uint8_t cgR[CGH][CGW], cgG[CGH][CGW], cgB[CGH][CGW], cgQ[CGH][CGW];   // sky + cloud colour, and the heavenly rays, at each grid point
+#define CGH (9600 / SCR_WMAX / CG + 3)
+uint8_t cgRc[2][CGH][CGW], cgGc[2][CGH][CGW], cgBc[2][CGH][CGW], cgQc[2][CGH][CGW];   // sky + cloud colour and the heavenly rays at each grid point (one set per core)
+uint16_t lrc[2][CGW], lgc[2][CGW], lbc[2][CGW], lqc[2][CGW];
 void renderCloudStrip(int y0, int rows, uint16_t *strip) {
   if (woodBuf) readWoodRows(y0, rows, woodBuf);
+  const int core = CORE_ID();
+  const int8_t *edgeBuf = edgeRows(y0); const uint8_t *woodBuf = woodRows(y0); const uint8_t look = lk[core].look;   // this core's strip and style
+  uint8_t (*cgR)[CGW] = cgRc[core], (*cgG)[CGW] = cgGc[core], (*cgB)[CGW] = cgBc[core], (*cgQ)[CGW] = cgQc[core];
+  uint16_t *lr = lrc[core], *lg = lgc[core], *lb = lbc[core], *lq = lqc[core];
   int kind = look - 8, br = BRIGHTNESS * 256 / 100;
   int D1 = (int)(cloudDrift * 76.8f), D2 = (int)((cloudDrift * 0.3f + 97) * 128), D3 = (int)((cloudDrift * 0.2f + 53) * 128);
   int rayPh = (int)(millis() / 1000.0f * 0.15f * 40.74f);
@@ -1750,7 +1761,6 @@ void renderCloudStrip(int y0, int rows, uint16_t *strip) {
       cgQ[r0][gx] = (uint8_t)q;
     }
   }
-  static uint16_t lr[SCR_WMAX / CG + 2], lg[SCR_WMAX / CG + 2], lb[SCR_WMAX / CG + 2], lq[SCR_WMAX / CG + 2];   // one row, blended between grid rows (x4)
   uint16_t *p = strip;
   for (int y = y0; y < y0 + rows; y++) {
     const int r0 = y / CG - gy0, fy = y % CG, wy = CG - fy;
@@ -1782,8 +1792,10 @@ void renderCloudStrip(int y0, int rows, uint16_t *strip) {
 }
 
 void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase2) {
+  const uint8_t look = lk[CORE_ID()].look;
   if (look >= 8 && look <= 10) { renderCloudStrip(y0, rows, strip); return; }   // a cloud sky behind the cross
   if (woodBuf) readWoodRows(y0, rows, woodBuf);
+  const int8_t *edgeBuf = edgeRows(y0); const uint8_t *woodBuf = woodRows(y0);
   if (look == 4 || look >= 14) {                 // a space picture behind the cross
     renderSpaceStrip(y0, rows, strip);
     for (int y = y0, i = 0; y < y0 + rows; y++) for (int x = 0; x < SCR_W; x++, i++) {
@@ -1831,6 +1843,7 @@ void useLook(int L, bool cross) {        // the style and cross a scene draws wi
 
 void renderStrip(int y0, int rows, uint16_t *strip) {
   const SceneLook &LKc = lk[CORE_ID()]; const uint8_t look = LKc.look; const bool crossOn = LKc.cross, woodOn = LKc.wood;   // this core's style
+  const int8_t *edgeBuf = edgeRows(y0);
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);
   uint16_t *p = strip;
   bool cross = crossOn;
@@ -1992,7 +2005,8 @@ volatile float helpShare = 0.3f;                       // part of each strip cor
 volatile bool sharing = false;
 
 bool shareable(uint8_t s, int L, bool cross) {   // one scene: can both cores draw it at once?
-  if (cross || isFramed(s)) return false;               // crosses and portal-around-a-picture keep one strip buffer
+  if (isFramed(s)) return false;                        // portal around a picture keeps one strip buffer
+  if (cross && !planeMap) return false;                 // crosses: both cores read the outline and wood straight from mapped flash
   if (isPicture(s)) return true;
   return spX1 || !(L == 4 || L == 14 || L == 16);       // Galaxy, Nebula and Meteor Shower need core 1's own gas grid
 }
@@ -2006,9 +2020,7 @@ bool canShare() {                        // styles whose drawing can be split be
   bool useB = sceneMix >= 128;
   uint8_t s = useB ? sceneB : sceneA;
   if (s != PORTAL && !isStyleScene(s)) return false;   // pictures
-  if (useB ? crossB : crossA) return false;             // crosses
-  int L = useB ? lookB : lookA;
-  return spX1 || !(L == 4 || L == 14 || L == 16);       // Galaxy, Nebula and Meteor Shower need core 1's own gas grid
+  return shareable(s, useB ? lookB : lookA, useB ? crossB : crossA);
 }
 
 inline void swapBytes565(uint16_t *p, int n) {   // DMA: the screen wants each pixel's high byte first
