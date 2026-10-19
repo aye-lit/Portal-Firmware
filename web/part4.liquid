@@ -393,7 +393,7 @@ function markStyle() {
   $("woodgrain").closest("label").hidden = !cross || !woodSel;
   $("crossripple").closest("label").hidden = !cross || woodSel;   // the Wooden cross has no ripple
   $("cross-row").hidden = !picturesAllowed() && !isCrossStyle(S.style);
-  const sc = tft && hasSpaceCols(eff);                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
+  const sc = tft && (hasSpaceCols(eff) || sceneList().some(c => c >= 200 && c < 255 && hasSpaceCols(c - 200)));                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
   const scOnly = sc && !cross;                               // a cross still uses the main colours for its glowing outline
   $("space-colors").hidden = !sc;
   if (tft) { $("rgb-colors").hidden = scOnly; $("fade-wrap").hidden = scOnly; $("rimsmooth-wrap").hidden = sc; }
@@ -688,25 +688,25 @@ function sceneNow() {                               // same timing as the board 
   if (w >= S.holdsec && S.scenefade > 0) { let f = (w - S.holdsec) / S.scenefade; f = f * f * (3 - 2 * f); mix = Math.trunc(f * 256); }
   return { a: L[i], b: L[(i + 1) % n], mix, ageA: w + S.scenefade, ageB: Math.max(0, w - S.holdsec) };
 }
-function sceneLayer(code, age) {
-  if (code === 255) return { kind: 0 };
+function sceneLayer(code, age, buf) {                // buf: the style this layer shows (drawn already)
+  if (code === 255 || code >= 200) return { kind: 0, buf };
   if (code < 128) return { kind: 1, pix: picPixels(code) };
   const pix = picPixels(code - 128);
-  if (!pix) return { kind: 0 };
+  if (!pix) return { kind: 0, buf };
   const close = S.scenefade + 1.5;
   let k = Math.min(1, age / close); k = k * k * (3 - 2 * k);
   const hole = S.radius * (1 - S.frame / 100 * k), alpha = new Int16Array(256);
   for (let r = 0; r < 256; r++) { const a = (hole + 4 - r) / 8; alpha[r] = a <= 0 ? 0 : a >= 1 ? 256 : Math.trunc(a * 256); }
-  return { kind: 2, pix, alpha };
+  return { kind: 2, pix, alpha, buf };
 }
 const mixABGR = (x, y, m) => { const n = 256 - m; return (255 << 24) | ((((x >> 16) & 255) * n + ((y >> 16) & 255) * m) >> 8 << 16) | ((((x >> 8) & 255) * n + ((y >> 8) & 255) * m) >> 8 << 8) | (((x & 255) * n + (y & 255) * m) >> 8); };
-function composePreview(out) {
+function composePreview(out, out2) {                 // out: the style of the scene showing now; out2: the one it fades into (if different)
   const sc = sceneNow(); if (!sc) return;
-  let A = sceneLayer(sc.a, sc.ageA), B = sc.mix > 0 && sc.b !== sc.a ? sceneLayer(sc.b, sc.ageB) : null, m = sc.mix;
-  if (!B && m >= 128) A = sceneLayer(sc.b, sc.ageB);
+  let A = sceneLayer(sc.a, sc.ageA, out), B = sc.mix > 0 && sc.b !== sc.a ? sceneLayer(sc.b, sc.ageB, out2 || out) : null, m = sc.mix;
+  if (!B && m >= 128) A = sceneLayer(sc.b, sc.ageB, out);
   if (!B) m = 0;
-  if (A.kind === 0 && (!B || B.kind === 0)) return;
-  const color = (L, k, r) => L.kind === 0 ? out[k] : L.kind === 1 ? (L.pix ? L.pix[k] : 0xFF000000) : (L.alpha[r] ? (L.alpha[r] === 256 ? L.pix[k] : mixABGR(out[k], L.pix[k], L.alpha[r])) : out[k]);
+  if (A.kind === 0 && (!B || (B.kind === 0 && B.buf === out))) return;
+  const color = (L, k, r) => L.kind === 0 ? L.buf[k] : L.kind === 1 ? (L.pix ? L.pix[k] : 0xFF000000) : (L.alpha[r] ? (L.alpha[r] === 256 ? L.pix[k] : mixABGR(L.buf[k], L.pix[k], L.alpha[r])) : L.buf[k]);
   const needR = A.kind === 2 || (B && B.kind === 2);
   for (let y = 0, k = 0; y < TH; y++) {
     const qy = y < QY ? QY - 1 - y : y - QY;
@@ -717,7 +717,7 @@ function composePreview(out) {
     }
   }
 }
-function thumb(c, pic, size, framed) {              // small picture of a scene
+function thumb(c, pic, size, framed, st = S.style) {   // small picture of a scene
   const k = size / Math.max(M.w, M.h);
   c.width = Math.round(M.w * k); c.height = Math.round(M.h * k);
   const x = c.getContext("2d");
@@ -729,9 +729,10 @@ function thumb(c, pic, size, framed) {              // small picture of a scene
     x.drawImage(src, 0, 0, c.width, c.height); x.restore();
     return;
   }
-  if (!pic) {                                       // the portal
+  if (!pic) {                                       // the portal (or another style)
     const gr = x.createRadialGradient(c.width / 2, c.height / 2, 1, c.width / 2, c.height / 2, Math.min(c.width, c.height) / 2);
-    gr.addColorStop(0, "#fff"); gr.addColorStop(0.25, S.c1); gr.addColorStop(0.8, S.c2); gr.addColorStop(1, "#000");
+    const sp = hasSpaceCols(st), k1 = sp ? S.spaceCols[1] : S.c1, k2 = sp ? S.spaceCols[2] : S.c2;
+    gr.addColorStop(0, sp ? S.spaceCols[3] : "#fff"); gr.addColorStop(0.25, k1); gr.addColorStop(0.8, k2); gr.addColorStop(1, "#000");
     x.fillStyle = "#000"; x.fillRect(0, 0, c.width, c.height); x.fillStyle = gr; x.fillRect(0, 0, c.width, c.height);
     return;
   }
@@ -765,13 +766,14 @@ function renderScenes() {
   const box = $("scenes"); box.innerHTML = "";
   S.scenes.forEach((sc, i) => {
     const row = document.createElement("div"); row.className = "scene" + (round ? " round" : "");
-    const opts = [`<option value="-1"${sc === -1 ? " selected" : ""}>Portal</option>`]
+    const opts = [`<option value="-1"${sc === -1 ? " selected" : ""}>Main style (${STYLES[S.style].name})</option>`]
+      .concat(SCENE_STYLES.map(k => `<option value="${200 + k}"${sc === 200 + k ? " selected" : ""}>Style: ${STYLES[k].name}</option>`))
       .concat(S.pics.map((_, k) => `<option value="${k}"${sc === k ? " selected" : ""}>Picture ${k + 1}</option>`))
       .concat(S.pics.map((_, k) => `<option value="${100 + k}"${sc === 100 + k ? " selected" : ""}>Portal around picture ${k + 1}</option>`)).join("");
     row.innerHTML = `<span class="snum">${i + 1}</span><canvas></canvas>
       <select aria-label="Scene ${i + 1}">${opts}</select>
       <span class="sgap"><button type="button" data-up aria-label="Move scene ${i + 1} earlier">▲</button><button type="button" data-down aria-label="Move scene ${i + 1} later">▼</button><button type="button" data-del aria-label="Remove scene ${i + 1}">Remove</button></span>`;
-    thumb(row.querySelector("canvas"), sc >= 0 ? S.pics[sc % 100] : null, 34, sc >= 100);
+    thumb(row.querySelector("canvas"), sc >= 0 && sc < 200 ? S.pics[sc % 100] : null, 34, sc >= 100 && sc < 200, sc >= 200 ? sc - 200 : S.style);
     row.querySelector("select").addEventListener("change", e => { S.scenes[i] = +e.target.value; renderScenes(); changed(); });
     const move = d => { const j = i + d; if (j < 0 || j >= S.scenes.length) return; [S.scenes[i], S.scenes[j]] = [S.scenes[j], S.scenes[i]]; renderScenes(); changed(); };
     row.querySelector("[data-up]").addEventListener("click", () => move(-1));
@@ -780,14 +782,15 @@ function renderScenes() {
     box.appendChild(row);
   });
   $("scene-add").hidden = S.scenes.length >= 8;
+  $("style-add").disabled = S.scenes.length >= 8; $("style-add").style.opacity = S.scenes.length >= 8 ? .5 : 1;
   $("hold-min").value = Math.floor(S.holdsec / 60); $("hold-sec").value = S.holdsec % 60;
   $("scene-fade").value = S.scenefade;
-  $("frame-wrap").hidden = !S.scenes.some(x => x >= 100);
+  $("frame-wrap").hidden = !S.scenes.some(x => x >= 100 && x < 200);
   $("frame").value = S.frame; $("o-frame").textContent = S.frame + "%";
 }
 function removePic(i) {
   S.pics.splice(i, 1);
-  S.scenes = S.scenes.filter(x => x !== i && x !== 100 + i).map(x => (x >= 100 ? x - 100 : x) > i ? x - 1 : x);
+  S.scenes = S.scenes.filter(x => x !== i && x !== 100 + i).map(x => x < 0 || x >= 200 ? x : (x >= 100 ? x - 100 : x) > i ? x - 1 : x);
   savePics(); renderPics(); changed();
 }
 async function addPictures(files) {
@@ -810,6 +813,13 @@ async function addPictures(files) {
   savePics(); renderPics(); changed();
 }
 $("pic-file").addEventListener("change", e => { addPictures([...e.target.files]); e.target.value = ""; });
+$("style-add").addEventListener("click", () => {      // another style to fade into
+  if (S.scenes.length >= 8) return;
+  const used = new Set(S.scenes), next = SCENE_STYLES.find(k => k !== S.style && !used.has(200 + k));
+  if (next == null) return;
+  if (!S.scenes.length) S.scenes = [-1];                // start with the main style
+  S.scenes.push(200 + next); renderScenes(); markStyle(); changed();
+});
 $("scene-add").addEventListener("click", () => {
   if (S.scenes.length >= 8) return;
   const used = new Set(S.scenes), next = S.pics.findIndex((_, k) => !used.has(k));
@@ -929,12 +939,12 @@ const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa18
 const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/main/";   // always the latest firmware
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
   "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true },
 };
 const IS_ANDROID = /Android/i.test(navigator.userAgent);
 function firmwareFor() {
   const fw = FIRMWARE[S.board + "|" + S.model];
-  return fw && !(M.rect && S.portrait && M.w !== M.h) ? fw : null;
+  return fw && (fw.turns || !(M.rect && S.portrait && M.w !== M.h)) ? fw : null;   // boards that turn: portrait is set over USB after installing
 }
 function showFirmware() {
   const fw = firmwareFor();
@@ -1045,7 +1055,13 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
 const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${(M.kind === "tft" ? S.reverse : S.drift) ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
-function sceneArgs() { const L = sceneList(); return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${isCrossStyle(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") + " " + S.crossFill + " " + (S.style === 17 ? S.woodGrain : S.crossRipple) : hasSpaceCols(S.style) ? " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ") : ""}`; }   // space colours only when needed, so older boards still accept the rest
+function sceneArgs() {
+  const L = sceneList(), cols = " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" "), rip = S.style === 17 ? S.woodGrain : S.crossRipple;
+  const space = hasSpaceCols(S.style) || L.some(c => c >= 200 && c < 255 && hasSpaceCols(c - 200));
+  const tail = turns(M) ? `${cols} ${S.crossFill} ${rip} ${S.portrait ? 1 : 0}`   // screens that turn: everything, then portrait / landscape
+    : isCrossStyle(S.style) ? `${cols} ${S.crossFill} ${rip}` : space ? cols : "";
+  return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${tail}`;
+}   // space colours only when needed, so older boards still accept the rest
 
 async function readReply(ms) {
   const reader = port.readable.getReader(), dec = new TextDecoder(); let text = "";
@@ -1060,6 +1076,18 @@ async function readReply(ms) {
   return text;
 }
 
+$("turn").addEventListener("click", async () => {     // turn the screen while connected over USB
+  if (!port || !turns(M)) return;
+  S.portrait = !S.portrait;
+  selectModel(S.model, false);                          // the preview, sizes and sketch follow
+  save(); refreshCode(); refreshConn();
+  say(S.portrait ? "Turning the screen to portrait…" : "Turning the screen to landscape…");
+  while (busy) await sleep(50);
+  await sendUsb();
+  const usesPics = sceneList().some(c => c < 200 && c !== 255);
+  if (usesPics && S.pics.length) { await sleep(500); await sendPictures(); }   // pictures are cropped again for the new shape
+  else say(S.portrait ? "The screen is now portrait." : "The screen is now landscape.", "ok");
+});
 $("check-fps").addEventListener("click", async () => {      // the board prints "FPS: n" every 5 seconds
   if (!port) { say("Connect over USB first, then check the speed.", "warn"); return; }
   if (busy) return;

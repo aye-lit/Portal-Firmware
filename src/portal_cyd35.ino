@@ -60,17 +60,24 @@ void beginBus() {
 #define SPI_HZ    80000000UL   // turbo: if the picture glitches or stays dark, change to 40000000UL
 
 #define PX         1            // one drawn pixel per screen pixel
-#define SCR_W      480          // drawing width and height (the screen is PX times bigger)
-#define SCR_H      320
-#define QX         240          // centre of the screen
-#define QY         160
+#define TURNS      1                     // the screen can be turned (portrait / landscape) live from the Studio
+#define SCR_WMAX   480          // the long side
+#define SCR_SHORT  320
+int      SCR_W = 480, SCR_H = 320;   // drawing width and height (swapped when the screen is turned)
+int      QX = 240, QY = 160;   // centre of the screen
+bool     PORTRAIT = false, wantPortrait = false;
+volatile bool turnPending = false;       // the screen itself still has to be told
+#define ROT_LANDSCAPE    1
+#define ROT_PORTRAIT     0
+#define MADCTL_LANDSCAPE 0x28                    // (DMA screens: the panel's own codes for the same two directions)
+#define MADCTL_PORTRAIT  0x48
 #define TQX        (SCR_W - QX)
 #define TQY        (SCR_H - QY)
-int      STRIP = 9600 / SCR_W;          // rows drawn per chunk (fewer if memory is tight)
+int      STRIP = 9600 / SCR_WMAX;          // rows drawn per chunk (fewer if memory is tight)
 #define MAX_SPARKS 30
 #define MAX_PICS   8                     // picture slots
 #define PORTAL     255                   // scene number for the portal itself
-#define RADIUS_MAX 249
+#define RADIUS_MAX 377
 #define SP_EXT     288          // space styles: distance from the centre to the edge of the picture area
 
 // ---------- Settings baked in from the Studio ----------
@@ -111,13 +118,13 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x8E12509AUL;
+const uint32_t BUILD_ID = 0x8753059CUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
 // Lookup tables: distance and angle for one quarter of the screen (mirrored for the rest)
 uint8_t  *rT, *aT;                     // TQX x TQY each, allocated in setup()
-uint8_t  colMap[SCR_W];
+uint8_t  colMap[SCR_WMAX];
 int8_t   sinT[256];
 int16_t  twistT[256], twist2T[256], edgeT[256];
 uint8_t  depthT[256], coreT[256], haloT[256], rimT[64], centerT[256];
@@ -158,7 +165,7 @@ Spark sparks[MAX_SPARKS];
 int16_t sparkX[MAX_SPARKS], sparkY[MAX_SPARKS];
 float t = 0;
 
-struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill, crossRipple; };
+struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill, crossRipple, portrait; };
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // ---------- tables ----------
@@ -339,6 +346,9 @@ void updateSparks() {
 // ---------- saved settings (EEPROM) ----------
 bool validFill(uint8_t f) { return f <= 11 || (f >= 14 && f <= 16); }   // styles that can go inside a cross (Wooden cross only: 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
 
+inline bool isStyleScene(uint8_t c) { return c >= 200 && c <= 216 && (c - 200 <= 7 || c - 200 >= 14); }   // 200 + style: another style to fade into
+inline bool validScene(uint8_t c) { return c == PORTAL || c < MAX_PICS || (c >= 128 && c < 128 + MAX_PICS) || isStyleScene(c); }
+
 bool validScenes(const Saved &s) {
   if (s.sceneCount > 8 || !(s.holdSecs >= 1 && s.holdSecs <= 3600) || !(s.sceneFade >= 0 && s.sceneFade <= 600)) return false;
   if (s.framePct < 10 || s.framePct > 95) return false;
@@ -347,8 +357,7 @@ bool validScenes(const Saved &s) {
   if (!validFill(s.crossFill)) return false;
   if (s.crossRipple > 2) return false;
   for (uint8_t i = 0; i < s.sceneCount; i++) {
-    uint8_t c = s.scenes[i];
-    if (c != PORTAL && c >= MAX_PICS && (c < 128 || c >= 128 + MAX_PICS)) return false;
+    if (!validScene(s.scenes[i])) return false;
   }
   return true;
 }
@@ -375,6 +384,9 @@ void apply(const Saved &s) {
   for (int k = 0; k < 4; k++) SPACE_COLS[k] = s.spaceCols[k];
   CROSS_FILL = s.crossFill;
   CROSS_RIPPLE = s.crossRipple;
+#if TURNS
+  wantPortrait = s.portrait == 1;        // turned at the start of the next frame
+#endif
 }
 
 void loadSettings() {
@@ -397,6 +409,7 @@ void saveSettings() {
   for (int k = 0; k < 4; k++) s.spaceCols[k] = SPACE_COLS[k];
   s.crossFill = CROSS_FILL;
   s.crossRipple = CROSS_RIPPLE;
+  s.portrait = wantPortrait ? 1 : 0;
   EEPROM.put(0, s);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
   EEPROM.commit();
@@ -419,9 +432,10 @@ void clampSettings(Saved &s) {
   if (s.sceneCount > 8) s.sceneCount = 8;
   s.holdSecs = clampf(s.holdSecs, 1, 3600); s.sceneFade = clampf(s.sceneFade, 0, 600); s.framePct = clampb(s.framePct, 10, 95);
   s.crossW = clampb(s.crossW, 25, 100); s.beam = clampb(s.beam, 5, 30); s.bar = clampb(s.bar, 20, 50);
-  for (int k = 0; k < 8; k++) { uint8_t c = s.scenes[k]; if (c != PORTAL && c >= MAX_PICS && (c < 128 || c >= 128 + MAX_PICS)) s.scenes[k] = PORTAL; }
+  for (int k = 0; k < 8; k++) if (!validScene(s.scenes[k])) s.scenes[k] = PORTAL;
   if (!validFill(s.crossFill)) s.crossFill = 0;
   if (s.crossRipple > 2) s.crossRipple = 0;
+  if (s.portrait > 1) s.portrait = 0;
 }
 
 // ---------- pictures (ESP32 boards: kept in the flash "spiffs" partition) ----------
@@ -443,6 +457,7 @@ uint32_t slotSize = 0, stageOff = 0;      // stageOff: where an arriving JPEG wa
 uint32_t crossOff = 0, crossSize = 0, crossPlane = 0, woodOff = 0;   // the cross outline (distance to the edge for every pixel) and the wood
 uint8_t  picSlots = 0;
 volatile uint32_t picId[MAX_PICS];        // 0 = empty slot
+uint16_t picW[MAX_PICS];                  // the width each picture was made for (the screen may have been turned since)
 volatile bool uploading = false;
 uint32_t upLen = 0, upPos = 0, upId = 0, upLast = 0, jpgPos = 0;
 uint8_t  upSlot = 0;
@@ -463,13 +478,14 @@ void beginPictures() {
   for (uint8_t i = 0; i < picSlots; i++) {
     PicHead h;
     esp_partition_read(picPart, i * slotSize, &h, sizeof(h));
-    bool ok = h.magic == PIC_MAGIC && h.w == SCR_W && h.h == SCR_H && h.id && h.check == (h.id ^ 0xA5A5A5A5UL);
+    bool ok = h.magic == PIC_MAGIC && (uint32_t)h.w * h.h == (uint32_t)SCR_W * SCR_H && h.id && h.check == (h.id ^ 0xA5A5A5A5UL);
     picId[i] = ok ? h.id : 0;
+    picW[i] = h.w;
   }
 }
 
 int  picturesAvailable() { return picSlots; }
-bool isPicture(uint8_t s) { return s < picSlots && picId[s] != 0; }
+bool isPicture(uint8_t s) { return s < picSlots && picId[s] != 0 && picW[s] == SCR_W; }
 
 void readPicture(uint8_t s, int y0, int rows, uint16_t *dst) {
   esp_partition_read(picPart, s * slotSize + sizeof(PicHead) + (uint32_t)y0 * SCR_W * 2, dst, (uint32_t)rows * SCR_W * 2);
@@ -540,6 +556,7 @@ const char *finishPicture() {
   PicHead h = { PIC_MAGIC, SCR_W, SCR_H, upId, upId ^ 0xA5A5A5A5UL };
   esp_partition_write(picPart, upSlot * slotSize, &h, sizeof(h));
   picId[upSlot] = upId;
+  picW[upSlot] = SCR_W;
   return "OK";
 }
 
@@ -641,7 +658,7 @@ void prepareCross() {                           // (re)build the outline when th
   if (head[0] != CROSS_MAGIC || head[1] != key) {
     crossShapes();
     esp_partition_erase_range(picPart, crossOff, crossSize);
-    static int8_t row[SCR_W];
+    static int8_t row[SCR_WMAX];
     for (int y = 0; y < SCR_H; y++) {
       float fy = y + 0.5f - crossYC;            // relative to the crossing
       for (int x = 0; x < SCR_W; x++) {
@@ -673,7 +690,7 @@ const char *pictureCommand(char *line) {
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
     static char info[128];
     int n = snprintf(info, sizeof(info), "PICS %u %u %u", picSlots, SCR_W, SCR_H);
-    for (uint8_t i = 0; i < picSlots; i++) n += snprintf(info + n, sizeof(info) - n, " %lx", (unsigned long)picId[i]);
+    for (uint8_t i = 0; i < picSlots; i++) n += snprintf(info + n, sizeof(info) - n, " %lx", (unsigned long)(picW[i] == SCR_W ? picId[i] : 0));   // made the other way round: send again
     return info;
   }
   if (strncasecmp(line, "IMG ", 4) == 0) {       // start a picture: slot, JPEG size, picture id
@@ -717,7 +734,8 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 
 // ---------- live tuning over USB serial (and Bluetooth below) ----------
 // Command: SET radius oval arms twist speed sparks drift core rim brightness style ripples ripspeed glow stars fade count core2 rim2 core3 rim3 core4 rim4 fadesecs rimsmooth
-//              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar [space1..space4 [crossfill [ripple]]]]]]   (reply: OK or ERR)
+//              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar [space1..space4 [crossfill [ripple [portrait]]]]]]]   (reply: OK or ERR)
+//          scenes: 255 the portal, 0-7 pictures, 128-135 portal around a picture, 200-216 another style (200 + style number)
 // Pictures: INFO, then IMG slot bytes id / D base64... / END   (see "pictures" above)
 char cmd[384];
 uint16_t cmdLen = 0;
@@ -726,11 +744,11 @@ uint32_t rebootAt = 0;                   // set by the REBOOT command
 
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strncasecmp(line, "SET ", 4) == 0) {
-    float v[46];
+    float v[47];
     uint8_t n = 0;
     char *p = strtok(line + 4, " ");
-    while (p && n < 46) { v[n++] = atof(p); p = strtok(NULL, " "); }
-    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46) {
+    while (p && n < 47) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46 || n == 47) {
       Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
       for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
       s.fadeSecs = v[23];
@@ -741,6 +759,7 @@ const char* handleCommand(char *line) {   // returns the reply to send back
       for (int k = 0; k < 4; k++) s.spaceCols[k] = n >= 44 ? (uint32_t)v[40 + k] : SPACE_COLS[k];
       s.crossFill = n >= 45 ? (uint8_t)v[44] : CROSS_FILL;
       s.crossRipple = n >= 46 ? (uint8_t)v[45] : CROSS_RIPPLE;
+      s.portrait = n >= 47 ? (uint8_t)v[46] : (wantPortrait ? 1 : 0);   // portrait / landscape (screens that can turn)
       if (n >= 36) {
         s.sceneCount = (uint8_t)v[25];
         for (int k = 0; k < 8; k++) s.scenes[k] = (uint8_t)v[26 + k];
@@ -893,7 +912,7 @@ inline uint16_t mix565(uint16_t x, uint16_t y, int m) {
 }
 
 void framePicture(uint8_t pic, float age, int y0, int rows, uint16_t *dst) {
-  static uint16_t line[SCR_W];
+  static uint16_t line[SCR_WMAX];
   float close = SCENE_FADE + 1.5f;                            // seconds to close in (keeps going after the fade)
   float k = min(1.0f, age / close); k = k * k * (3 - 2 * k);
   float hole = RADIUS * (1.0f - FRAME_PCT / 100.0f * k);      // radius where the picture shows
@@ -916,18 +935,22 @@ void blendStrip(uint16_t *a, const uint16_t *b, int n, int m) {   // a = a + (b 
 }
 
 void renderStrip(int y0, int rows, uint16_t *strip);
+void useLook(int L, bool cross);
+int  lookA = 0, lookB = 0;               // the style each scene draws (another style, or the main one)
+bool crossA = false, crossB = false;     // and whether it's the main cross
 
-void drawScene(uint8_t s, float age, int y0, int rows, uint16_t *dst) {
+void drawScene(uint8_t s, float age, int y0, int rows, uint16_t *dst, int L, bool cross) {
   if (isPicture(s)) { readPicture(s, y0, rows, dst); return; }
+  useLook(L, cross);
   renderStrip(y0, rows, dst);
   if (isFramed(s)) framePicture(s - 128, age, y0, rows, dst);
 }
 
 void composeStrip(int y0, int rows, uint16_t *dst) {
   bool fading = sceneMix > 0 && sceneA != sceneB;
-  if (!fading || !picBuf) { if (sceneMix >= 128) drawScene(sceneB, ageB, y0, rows, dst); else drawScene(sceneA, ageA, y0, rows, dst); return; }
-  drawScene(sceneA, ageA, y0, rows, dst);
-  drawScene(sceneB, ageB, y0, rows, picBuf);
+  if (!fading || !picBuf) { if (sceneMix >= 128) drawScene(sceneB, ageB, y0, rows, dst, lookB, crossB); else drawScene(sceneA, ageA, y0, rows, dst, lookA, crossA); return; }
+  drawScene(sceneA, ageA, y0, rows, dst, lookA, crossA);
+  drawScene(sceneB, ageB, y0, rows, picBuf, lookB, crossB);
   blendStrip(dst, picBuf, rows * SCR_W, sceneMix);
 }
 
@@ -955,7 +978,7 @@ double   spaceT = 0;                    // space clock (runs on its own so it ne
 float    spU = 1, spExt = 118;          // space units per pixel, edge of the picture in space units
 float    nbCa = 1, nbSa = 0, nbO1 = 0, nbO2 = 0, nbO3 = 0;
 int      spTw = 0, whPh = 0;
-#define SP_GRID ((SCR_W / 2 + 2) * (STRIP / 2 + 3))   // gas worked out every 2 or 4 pixels, smoothed in between (one strip at a time)
+#define SP_GRID ((SCR_WMAX / 2 + 2) * (STRIP / 2 + 3))   // gas worked out every 2 or 4 pixels, smoothed in between (one strip at a time)
 uint8_t  *spH = NULL, *spV = NULL, *spX = NULL;
 uint8_t  *spH1 = NULL, *spV1 = NULL, *spX1 = NULL;   // a second gas grid, so core 1 can draw space styles at the same time
 // Galaxy: a Hubble-style spiral (like M51, M100, NGC 4414)
@@ -1243,6 +1266,29 @@ void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
   }
 }
 
+#if TURNS
+void buildGeometry(); void buildParams(); void resetSparks();
+#if DUAL_CORE
+extern SemaphoreHandle_t freeSem[2];
+#endif
+void setSize(bool p) {                   // portrait: the short side across
+  PORTRAIT = p;
+  SCR_W = p ? SCR_SHORT : SCR_WMAX; SCR_H = p ? SCR_WMAX : SCR_SHORT;
+  QX = SCR_W >> 1; QY = SCR_H >> 1;
+}
+void turnScreen(bool p) {                // between frames, on the drawing core
+#if DUAL_CORE
+  for (int i = 0; i < 2; i++) xSemaphoreTake(freeSem[i], portMAX_DELAY);   // wait until the last frame has gone out
+  for (int i = 0; i < 2; i++) xSemaphoreGive(freeSem[i]);
+#endif
+  setSize(p);
+  buildGeometry();
+  buildParams();
+  resetSparks();
+  turnPending = true;                    // the screen gets the new direction before the next frame is sent
+}
+#endif
+
 void frameStart() {
   updateScene();
   if (havePending) {
@@ -1253,6 +1299,9 @@ void frameStart() {
     resetSparks();
     havePending = false;
   }
+#if TURNS
+  if (wantPortrait != PORTRAIT) turnScreen(wantPortrait);
+#endif
   bool isCross = (STYLE >= 8 && STYLE <= 13) || STYLE == 17;   // 17: Wooden cross
   if (isCross && crossAvailable() && edgeBuf) prepareCross();
   crossOn = isCross && crossReady;
@@ -1263,8 +1312,20 @@ void frameStart() {
   if (woodOn) { prepareWood(); woodPulse = (int)(256 * (0.75f + 0.25f * sinf(millis() / 1000.0f * 1.3f))); }
   if (crossOn && !woodOn) buildCrossRipple(); else memset(crossRipT, 0, sizeof(crossRipT));
   if (woodOn && look >= 8 && look <= 10) { if (cloudMemory()) prepareClouds(look - 8); else look = 7; }   // no room: the warm glow
+  bool baseCross = crossOn;
+  int baseLook = look;
+  lookA = isStyleScene(sceneA) ? sceneA - 200 : baseLook; crossA = !isStyleScene(sceneA) && baseCross;
+  lookB = isStyleScene(sceneB) ? sceneB - 200 : baseLook; crossB = !isStyleScene(sceneB) && baseCross;
+  bool needB = sceneMix > 0 && sceneA != sceneB;
+  for (int k = 0; k < 2; k++) {                       // space styles: worked out per frame (no room: show the Vortex)
+    int &L = k ? lookB : lookA;
+    if (k && !needB && sceneMix < 128) break;
+    if (L == 4 || (L >= 14 && L <= 16)) { look = L; if (spaceMemory()) prepareSpace(); else L = 0; }
+  }
+  if (!needB && sceneMix < 128) lookB = lookA;
+  look = lookA;
+  crossOn = baseCross;
   spCY = crossOn ? crossYC : QY;
-  if (look == 4 || look >= 14) { if (spaceMemory()) prepareSpace(); else look = 0; }   // no room: show the Vortex
   updateColourFade();
   updateSparks();
   for (int a = 0; a < 256; a++) {                     // wobbly rim edge for this frame
@@ -1275,11 +1336,11 @@ void frameStart() {
   // Hyperspace: where each streaking star is this frame (3 layers x 256 directions)
   bhHole = (int)(0.22f * RADIUS);
   twinkle = (int)(t * 25);
-  if (look == 3 && !warpB) {
+  if ((lookA == 3 || lookB == 3) && !warpB) {
     warpOn = (uint8_t *)malloc(768); warpRR = (float *)malloc(768 * 4); warpLen = (float *)malloc(768 * 4); warpB = (float *)malloc(768 * 4);
-    if (!warpOn || !warpRR || !warpLen || !warpB) { free(warpOn); free(warpRR); free(warpLen); free(warpB); warpOn = NULL; warpRR = warpLen = warpB = NULL; look = 0; }   // no room: the Vortex
+    if (!warpOn || !warpRR || !warpLen || !warpB) { free(warpOn); free(warpRR); free(warpLen); free(warpB); warpOn = NULL; warpRR = warpLen = warpB = NULL; if (lookA == 3) lookA = 0; if (lookB == 3) lookB = 0; }   // no room: the Vortex
   }
-  if (look == 3) {
+  if (lookA == 3 || lookB == 3) {
     for (int L = 0; L < 3; L++) {
       for (int a = 0; a < 256; a++) {
         uint32_t h = hash32((uint32_t)(a * 3 + L * 7919));
@@ -1296,7 +1357,7 @@ void frameStart() {
   // Starburst ripples: rings expanding outward, precomputed per distance for this frame
   memset(ripCrestT, 0, sizeof(ripCrestT));
   memset(ripTroughT, 0, sizeof(ripTroughT));
-  if (look == 2) {
+  if (lookA == 2 || lookB == 2) {
     for (uint8_t i = 0; i < RIPPLES; i++) {
       float pr = fmodf(t * RIP_SPEED + (float)i / RIPPLES, 1.0f);
       float rr = 0.16f + pr * 0.62f, w = 0.04f + pr * 0.04f, fade = powf(1 - pr, 1.1f);
@@ -1540,7 +1601,7 @@ void prepareWood() {
       float q = r / (1.3f * woodBot); woodVigT[r] = (uint8_t)(255 * fmaxf(0, 1 - q * q));   // a portal behind fades out toward the screen edge
     }
   }
-  if (!woodBuf) woodBuf = (uint8_t *)malloc(SCR_W * STRIP);
+  if (!woodBuf) woodBuf = (uint8_t *)malloc(SCR_WMAX * STRIP);
   uint32_t pk = 2166136261UL;                                // the wood bytes in flash: rebuilt when the shape or grain changes
   uint32_t pparts[] = { (uint32_t)(R * 16), CROSS_W, BEAM, BAR, SCR_W, SCR_H, (uint32_t)woodGrain, (uint32_t)crossYC, 3 };
   for (uint32_t v : pparts) pk = (pk ^ v) * 16777619UL;
@@ -1695,6 +1756,15 @@ void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase2) {
   }
 }
 
+void useLook(int L, bool cross) {        // the style and cross a scene draws with (set before each scene's strip)
+  look = L;
+  crossOn = cross;
+  woodOn = cross && STYLE == 17;
+  spCY = cross ? crossYC : QY;
+  spU = L == 15 ? 118.0f / SP_EXT : 236.0f / min(SCR_W, SCR_H);
+  spExt = SP_EXT * spU;
+}
+
 void renderStrip(int y0, int rows, uint16_t *strip) {
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);
   uint16_t *p = strip;
@@ -1832,7 +1902,7 @@ bool beginDma() {                        // after the screen is set up: move its
   spi_bus_config_t bc;
   memset(&bc, 0, sizeof(bc));
   bc.mosi_io_num = PIN_MOSI; bc.miso_io_num = -1; bc.sclk_io_num = PIN_SCK; bc.quadwp_io_num = -1; bc.quadhd_io_num = -1;
-  bc.max_transfer_sz = SCR_W * STRIP * 2;
+  bc.max_transfer_sz = SCR_WMAX * STRIP * 2;
   if (spi_bus_initialize(SPI2_HOST, &bc, SPI_DMA_CH_AUTO) != ESP_OK) return false;
   spi_device_interface_config_t dc;
   memset(&dc, 0, sizeof(dc));
@@ -1841,7 +1911,7 @@ bool beginDma() {                        // after the screen is set up: move its
   if (spi_bus_add_device(SPI2_HOST, &dc, &lcdDev) != ESP_OK) { spi_bus_free(SPI2_HOST); return false; }
   pinMode(PIN_CS, OUTPUT); digitalWrite(PIN_CS, LOW);   // the screen is the only thing listening on these pins
   if (!lcdWindow(100)) return false;
-  memset(stripBuf[0], 0, SCR_W * STRIP * 2);
+  memset(stripBuf[0], 0, SCR_WMAX * STRIP * 2);
   if (!lcdQueue(0, STRIP, 100) || !lcdFinish(0, 300)) return false;   // one strip of black: the DMA really runs
   sendUs = 0;
   return true;
@@ -1857,10 +1927,13 @@ volatile float helpShare = 0.3f;                       // part of each strip cor
 volatile bool sharing = false;
 
 bool canShare() {                        // styles whose drawing can be split between the two cores
-  if (crossOn) return false;
   if (sceneMix > 0 && sceneA != sceneB) return false;  // fading between scenes
-  if ((sceneMix >= 128 ? sceneB : sceneA) != PORTAL) return false;   // pictures
-  return spX1 || !(look == 4 || look == 14 || look == 16);   // Galaxy, Nebula and Meteor Shower need core 1's own gas grid
+  bool useB = sceneMix >= 128;
+  uint8_t s = useB ? sceneB : sceneA;
+  if (s != PORTAL && !isStyleScene(s)) return false;   // pictures
+  if (useB ? crossB : crossA) return false;             // crosses
+  int L = useB ? lookB : lookA;
+  return spX1 || !(L == 4 || L == 14 || L == 16);       // Galaxy, Nebula and Meteor Shower need core 1's own gas grid
 }
 
 inline void swapBytes565(uint16_t *p, int n) {   // DMA: the screen wants each pixel's high byte first
@@ -1920,14 +1993,14 @@ bool allocBuffers() {
   for (int withSpace = 1; withSpace >= 0; withSpace--) {   // try to make room for the space styles too, then without
     for (STRIP = first; STRIP >= (withSpace ? 4 : 2); STRIP /= 2) {   // smaller strips if memory is tight
 #if USE_DMA
-      stripBuf[0] = (uint16_t *)heap_caps_malloc(SCR_W * STRIP * 2, MALLOC_CAP_DMA);
-      stripBuf[1] = (uint16_t *)heap_caps_malloc(SCR_W * STRIP * 2, MALLOC_CAP_DMA);
+      stripBuf[0] = (uint16_t *)heap_caps_malloc(SCR_WMAX * STRIP * 2, MALLOC_CAP_DMA);
+      stripBuf[1] = (uint16_t *)heap_caps_malloc(SCR_WMAX * STRIP * 2, MALLOC_CAP_DMA);
 #else
-      stripBuf[0] = (uint16_t *)malloc(SCR_W * STRIP * 2);
-      stripBuf[1] = (uint16_t *)malloc(SCR_W * STRIP * 2);
+      stripBuf[0] = (uint16_t *)malloc(SCR_WMAX * STRIP * 2);
+      stripBuf[1] = (uint16_t *)malloc(SCR_WMAX * STRIP * 2);
 #endif
-      picBuf = picturesAvailable() ? (uint16_t *)malloc(SCR_W * STRIP * 2) : NULL;   // for fades with pictures
-      edgeBuf = crossAvailable() ? (int8_t *)malloc(SCR_W * STRIP) : NULL;            // for the cross styles
+      picBuf = picturesAvailable() ? (uint16_t *)malloc(SCR_WMAX * STRIP * 2) : NULL;   // for fades (pictures and other styles)
+      edgeBuf = crossAvailable() ? (int8_t *)malloc(SCR_WMAX * STRIP) : NULL;            // for the cross styles
       bool space = !withSpace || spaceMemory();                                        // Galaxy, Nebula, Wormhole, Meteor Shower
       if (stripBuf[0] && stripBuf[1] && (picBuf || !picturesAvailable()) && (edgeBuf || !crossAvailable()) && space) return true;
       free(stripBuf[0]); free(stripBuf[1]); free(picBuf); free(edgeBuf); picBuf = NULL; edgeBuf = NULL;
@@ -1972,6 +2045,13 @@ void setup() {
   Serial.printf("[portal] memory ok, %u bytes free, %d rows per strip, room for %d pictures, space styles %s\n", (unsigned)ESP.getFreeHeap(), STRIP, picturesAvailable(), spaceLUT ? "ready" : "off (not enough memory)");
 #endif
   loadSettings();
+#if TURNS
+  if (wantPortrait != PORTRAIT) {        // saved the other way round
+    setSize(wantPortrait);
+    tft.setRotation(PORTRAIT ? ROT_PORTRAIT : ROT_LANDSCAPE);
+    tft.fillScreen(0);
+  }
+#endif
   randomSeed(micros());
   buildGeometry();
   buildParams();
@@ -1997,7 +2077,7 @@ void setup() {
 }
 
 #if PX > 1
-uint16_t pxLine[SCR_W * PX];                // one screen row, each drawn pixel repeated PX times
+uint16_t pxLine[SCR_WMAX * PX];                // one screen row, each drawn pixel repeated PX times
 void sendStrip(uint16_t *buf, int rows) {
   for (int r = 0; r < rows; r++) {
     const uint16_t *src = buf + r * SCR_W;
@@ -2023,14 +2103,25 @@ void loop() {
 #if DUAL_CORE
   static uint8_t b = 0;
   uint32_t frameT0 = micros();
-#if USE_DMA
-  if (lcdDma) lcdWindow(1000); else
-#endif
-  { tft.startWrite(); tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX); }
   int pending = -1;
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
     xSemaphoreTake(goSem[b], portMAX_DELAY);
     int rows = stripRows[b], help = stripHelp[b];
+    if (y0 == 0) {                       // a new frame: its size is settled now
+#if TURNS
+      if (turnPending) {                 // the screen was turned: tell the panel
+#if USE_DMA
+        if (lcdDma) { uint8_t c = 0x36, m = PORTRAIT ? MADCTL_PORTRAIT : MADCTL_LANDSCAPE; lcdSend(&c, 1, false, 1000); lcdSend(&m, 1, true, 1000); } else
+#endif
+        tft.setRotation(PORTRAIT ? ROT_PORTRAIT : ROT_LANDSCAPE);
+        turnPending = false;
+      }
+#endif
+#if USE_DMA
+      if (lcdDma) lcdWindow(1000); else
+#endif
+      { tft.startWrite(); tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX); }
+    }
     if (help) {                          // core 1's share of the drawing: the bottom rows
       uint16_t *dst = stripBuf[b] + (rows - help) * SCR_W;
       composeStrip(stripY0[b] + rows - help, help, dst);
@@ -2065,9 +2156,12 @@ void loop() {
   balanceCores(micros() - frameT0);
   return;
 #else
+  frameStart();
+#if TURNS
+  if (turnPending) { tft.setRotation(PORTRAIT ? ROT_PORTRAIT : ROT_LANDSCAPE); turnPending = false; }
+#endif
   tft.startWrite();
   tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX);
-  frameStart();
   for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
     int rows = min(STRIP, SCR_H - y0);
     uint32_t t0 = micros();

@@ -129,6 +129,7 @@ uint32_t slotSize = 0, stageOff = 0;      // stageOff: where an arriving JPEG wa
 uint32_t crossOff = 0, crossSize = 0, crossPlane = 0, woodOff = 0;   // the cross outline (distance to the edge for every pixel) and the wood
 uint8_t  picSlots = 0;
 volatile uint32_t picId[MAX_PICS];        // 0 = empty slot
+uint16_t picW[MAX_PICS];                  // the width each picture was made for (the screen may have been turned since)
 volatile bool uploading = false;
 uint32_t upLen = 0, upPos = 0, upId = 0, upLast = 0, jpgPos = 0;
 uint8_t  upSlot = 0;
@@ -149,13 +150,14 @@ void beginPictures() {
   for (uint8_t i = 0; i < picSlots; i++) {
     PicHead h;
     esp_partition_read(picPart, i * slotSize, &h, sizeof(h));
-    bool ok = h.magic == PIC_MAGIC && h.w == SCR_W && h.h == SCR_H && h.id && h.check == (h.id ^ 0xA5A5A5A5UL);
+    bool ok = h.magic == PIC_MAGIC && (uint32_t)h.w * h.h == (uint32_t)SCR_W * SCR_H && h.id && h.check == (h.id ^ 0xA5A5A5A5UL);
     picId[i] = ok ? h.id : 0;
+    picW[i] = h.w;
   }
 }
 
 int  picturesAvailable() { return picSlots; }
-bool isPicture(uint8_t s) { return s < picSlots && picId[s] != 0; }
+bool isPicture(uint8_t s) { return s < picSlots && picId[s] != 0 && picW[s] == SCR_W; }
 
 void readPicture(uint8_t s, int y0, int rows, uint16_t *dst) {
   esp_partition_read(picPart, s * slotSize + sizeof(PicHead) + (uint32_t)y0 * SCR_W * 2, dst, (uint32_t)rows * SCR_W * 2);
@@ -226,6 +228,7 @@ const char *finishPicture() {
   PicHead h = { PIC_MAGIC, SCR_W, SCR_H, upId, upId ^ 0xA5A5A5A5UL };
   esp_partition_write(picPart, upSlot * slotSize, &h, sizeof(h));
   picId[upSlot] = upId;
+  picW[upSlot] = SCR_W;
   return "OK";
 }
 
@@ -327,7 +330,7 @@ void prepareCross() {                           // (re)build the outline when th
   if (head[0] != CROSS_MAGIC || head[1] != key) {
     crossShapes();
     esp_partition_erase_range(picPart, crossOff, crossSize);
-    static int8_t row[SCR_W];
+    static int8_t row[SCR_WMAX];
     for (int y = 0; y < SCR_H; y++) {
       float fy = y + 0.5f - crossYC;            // relative to the crossing
       for (int x = 0; x < SCR_W; x++) {
@@ -359,7 +362,7 @@ const char *pictureCommand(char *line) {
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
     static char info[128];
     int n = snprintf(info, sizeof(info), "PICS %u %u %u", picSlots, SCR_W, SCR_H);
-    for (uint8_t i = 0; i < picSlots; i++) n += snprintf(info + n, sizeof(info) - n, " %lx", (unsigned long)picId[i]);
+    for (uint8_t i = 0; i < picSlots; i++) n += snprintf(info + n, sizeof(info) - n, " %lx", (unsigned long)(picW[i] == SCR_W ? picId[i] : 0));   // made the other way round: send again
     return info;
   }
   if (strncasecmp(line, "IMG ", 4) == 0) {       // start a picture: slot, JPEG size, picture id
@@ -404,9 +407,13 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 
 // Scenes for the sketch and the SET command: 255 = the portal, 0-7 = picture slots
 function picturesAllowed() { const B = boardOf(); return M.kind === "tft" && (/^ESP32/.test(B.family) || !!B.custom); }
+function turns(m) { return m.kind === "tft" && !!m.rect && m.w !== m.h; }   // rectangles can be turned live (portrait / landscape)
+const SCENE_STYLES = [0, 1, 2, 3, 4, 5, 6, 7, 14, 15, 16];          // styles a scene can switch to (crosses stay the main style)
+const isStyleScene = x => x >= 200 && SCENE_STYLES.includes(x - 200);
+const isPicScene = x => x >= 0 && x < 200 && x % 100 < S.pics.length;
 function sceneList() {
   if (!picturesAllowed()) return [];
-  return S.scenes.filter(x => x === -1 || (x >= 0 && x % 100 < S.pics.length)).slice(0, 8).map(x => x === -1 ? 255 : x >= 100 ? 28 + x : x);   // 100+k -> 128+k
+  return S.scenes.filter(x => x === -1 || isStyleScene(x) || isPicScene(x)).slice(0, 8).map(x => x === -1 ? 255 : x >= 200 ? x : x >= 100 ? 28 + x : x);   // 100+k -> 128+k, 200+style stays
 }
 
 function pinBlock(B, bus) {
@@ -520,7 +527,7 @@ if (!(S.glow >= 0.3 && S.glow <= 0.9)) S.glow = 0.55;
 S.pics = [];                                               // pictures live in their own storage key (they're big)
 try { const P = JSON.parse(localStorage.getItem("portal-studio-pics") || "[]"); if (Array.isArray(P)) S.pics = P.filter(x => x && typeof x.src === "string" && x.src.startsWith("data:image/")).slice(0, 8).map(x => ({ src: x.src, fit: x.fit === "fit" ? "fit" : "fill" })); } catch (e) {}
 if (!Array.isArray(S.scenes)) S.scenes = [];
-S.scenes = S.scenes.filter(x => x === -1 || (Number.isInteger(x) && x >= 0 && x % 100 < S.pics.length && x < 200)).slice(0, 8);
+S.scenes = S.scenes.filter(x => x === -1 || (Number.isInteger(x) && (isStyleScene(x) || isPicScene(x)))).slice(0, 8);
 if (!(S.frame >= 10 && S.frame <= 95)) S.frame = 50;
 if (!(S.holdsec >= 1 && S.holdsec <= 3600)) S.holdsec = 10;
 if (!(S.scenefade >= 0 && S.scenefade <= 60)) S.scenefade = 2;
@@ -536,6 +543,8 @@ function refreshConn() {
   else if (port) setConn("on", "Connected over USB");
   else if (plugged) setConn("plugged", "Board plugged in, not connected");
   else setConn("off", "Board not connected");
+  const tb = $("turn");                                // rectangle screens: turn portrait / landscape live
+  if (tb) { tb.hidden = !(port && turns(M)); tb.textContent = S.portrait ? "Turn to landscape" : "Turn to portrait"; }
 }
 async function countPlugged() {
   try { plugged = "serial" in navigator ? (await navigator.serial.getPorts()).length : 0; } catch (_) { plugged = 0; }
@@ -1315,7 +1324,28 @@ function tftFrame() {
   }
   buildTftParams();
   buildTftPalette();
-  const R = S.radius, arms = S.arms, style = S.style;
+  if (!tftImg) tftImg = g.createImageData(TW, TH);
+  const out = new Uint32Array(tftImg.data.buffer);
+  spaceT += S.speed * 8;
+  if (spaceT > 1e7) spaceT = 0;
+  const sc = typeof sceneNow === "function" ? sceneNow() : null;     // scenes can switch to another style
+  const stOf = c => c >= 200 && c < 255 ? c - 200 : S.style;
+  const fading = !!sc && sc.mix > 0 && sc.b !== sc.a;
+  const sA = stOf(sc ? (fading || sc.mix < 128 ? sc.a : sc.b) : 255);
+  tftRender(out, sA);
+  let out2 = null;
+  if (fading && stOf(sc.b) !== sA) {                  // fading into a different style: draw that one too
+    if (!tftOut2 || tftOut2.length !== TW * TH) tftOut2 = new Uint32Array(TW * TH);
+    out2 = tftOut2; tftRender(out2, stOf(sc.b));
+  }
+  if (typeof composePreview === "function") composePreview(out, out2);
+  g.putImageData(tftImg, 0, 0);
+  t += S.speed;
+  if (t > TWO_PI * 100) t -= TWO_PI * 100;
+}
+let tftOut2 = null;
+function tftRender(out, style) {                      // one frame of one style into out
+  const R = S.radius, arms = S.arms;
   const isCross = (style >= 8 && style <= 13) || style === 17, wood = style === 17;
   let fill = isCross ? S.crossFill : style;               // crosses: the chosen style is drawn inside (the Wooden cross: behind)
   if (isCross && fill >= 7 && fill <= 10 && !wood) fill = 0;   // the warm glow and the skies are only for the Wooden cross
@@ -1346,18 +1376,10 @@ function tftFrame() {
     const rr = pos * pos * 1.15 * R;
     warpRR[i] = rr; warpLen[i] = 1.5 + rr * 0.22; warpB[i] = 145 * Math.min(1, rr / (0.8 * R));
   }
-  if (!tftImg) tftImg = g.createImageData(TW, TH);
-  const out = new Uint32Array(tftImg.data.buffer);
-  spaceT += S.speed * 8;
-  if (spaceT > 1e7) spaceT = 0;
   const CE = isCross ? crossEdges() : null;
   buildCrossRipple(isCross && !wood);
   if (wood) {
     woodFrame(out, CE, fill, arms, phase, phase2, tw);
-    if (typeof composePreview === "function") composePreview(out);
-    g.putImageData(tftImg, 0, 0);
-    t += S.speed;
-    if (t > TWO_PI * 100) t -= TWO_PI * 100;
     return;
   }
   if (fill === 4 || fill >= 14) {                    // Galaxy, Nebula, Wormhole, Meteor Shower (also inside a cross)
@@ -1367,10 +1389,6 @@ function tftFrame() {
       if (ce > 0) { const rv = Math.max(crossRimT[ce], crossRipT[ce] > 8 ? Math.min(255, crossRipT[ce] + 60) : 0); if (rv > 8) { const a = out[i], b = tftPal[rv]; out[i] = (255 << 24) | (Math.max(a & 0xFF0000, b & 0xFF0000)) | (Math.max(a & 0xFF00, b & 0xFF00)) | Math.max(a & 0xFF, b & 0xFF); } }
       else out[i] = tftPal[Math.max(crossRimT[-ce], crossHaloT[-ce])];
     }
-    if (typeof composePreview === "function") composePreview(out);
-    g.putImageData(tftImg, 0, 0);
-    t += S.speed;
-    if (t > TWO_PI * 100) t -= TWO_PI * 100;
     return;
   }
   let p = 0;
@@ -1420,10 +1438,6 @@ function tftFrame() {
       if (xx >= 0 && xx < TW && yy >= 0 && yy < TH) out[yy * TW + xx] = tftPal[235];
     }
   }
-  if (typeof composePreview === "function") composePreview(out);
-  g.putImageData(tftImg, 0, 0);
-  t += S.speed;
-  if (t > TWO_PI * 100) t -= TWO_PI * 100;
 }
 
 // ---------------- render the simulated panel ----------------

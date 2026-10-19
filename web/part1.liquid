@@ -302,6 +302,7 @@
                 <button class="b" id="vps-send" type="button">Connect over USB</button>
                 <button class="b ghost" id="vps-reboot" type="button" hidden>Restart board</button>
                 <button class="b ghost" id="vps-check-fps" type="button">Check speed</button>
+                <button class="b ghost" id="vps-turn" type="button" hidden>Turn to portrait</button>
                 <label style="display:flex;align-items:center;gap:6px;font-size:13px" for="vps-live"><input id="vps-live" type="checkbox" checked> Send every change</label>
               </div>
               <div class="status" id="vps-serial-status" role="status"></div>
@@ -370,11 +371,12 @@
             </div>
           </div>
           <div class="fadebox" id="vps-pics-wrap" style="grid-column: 1 / -1">
-            <div class="sub" style="margin:0">Pictures &amp; scenes</div>
-            <p class="note" style="margin:0">Add your own pictures, then choose what the board shows and in what order: pictures, the portal, or both. Each one fades into the next. Pictures are cropped to this screen.</p>
+            <div class="sub" style="margin:0">Pictures, styles &amp; scenes</div>
+            <p class="note" style="margin:0">Add your own pictures or other styles, then choose what the board shows and in what order. Each one fades into the next. Pictures are cropped to this screen; other styles use your colours and settings.</p>
             <div class="pics" id="vps-pics"></div>
             <div class="btns" style="margin:0">
               <label class="b ghost small" for="vps-pic-file">+ Add pictures<input class="vh" id="vps-pic-file" type="file" accept="image/*" multiple></label>
+              <button class="b ghost small" id="vps-style-add" type="button">+ Add style</button>
               <span class="note" id="vps-pic-count" style="margin:0"></span>
             </div>
             <div id="vps-scene-box">
