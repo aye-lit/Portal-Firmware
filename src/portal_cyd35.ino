@@ -118,9 +118,23 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x8753059CUL;
+const uint32_t BUILD_ID = 0x9E55DE32UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
+
+// The ST7796's colour curve and voltages, as the panel maker sets them (the library leaves the factory defaults, which look washed out)
+void st7796Colours() {
+  const uint8_t unlock1[] = { 0xC3 }, unlock2[] = { 0x96 }, lock1[] = { 0x3C }, lock2[] = { 0x69 };
+  const uint8_t doca[] = { 0x40, 0x8A, 0x00, 0x00, 0x29, 0x19, 0xA5, 0x33 };
+  const uint8_t pw2[] = { 0x06 }, pw3[] = { 0xA7 }, vcom[] = { 0x18 };
+  const uint8_t gammaP[] = { 0xF0, 0x09, 0x0B, 0x06, 0x04, 0x15, 0x2F, 0x54, 0x42, 0x3C, 0x17, 0x14, 0x18, 0x1B };
+  const uint8_t gammaN[] = { 0xE0, 0x09, 0x0B, 0x06, 0x04, 0x03, 0x2B, 0x43, 0x42, 0x3B, 0x16, 0x14, 0x17, 0x1B };
+  tft.sendCommand(0xF0, unlock1, 1); tft.sendCommand(0xF0, unlock2, 1);
+  tft.sendCommand(0xE8, doca, 8);
+  tft.sendCommand(0xC1, pw2, 1); tft.sendCommand(0xC2, pw3, 1); tft.sendCommand(0xC5, vcom, 1);
+  tft.sendCommand(0xE0, gammaP, 14); tft.sendCommand(0xE1, gammaN, 14);
+  tft.sendCommand(0xF0, lock1, 1); tft.sendCommand(0xF0, lock2, 1);
+}
 
 // Lookup tables: distance and angle for one quarter of the screen (mirrored for the rest)
 uint8_t  *rT, *aT;                     // TQX x TQY each, allocated in setup()
@@ -2027,6 +2041,7 @@ void setup() {
   pinMode(17, OUTPUT); digitalWrite(17, HIGH);
   beginBus();
   tft.init(320, 480, 0, 0, ST7796S_BGR);   // if red and blue look swapped, change ST7796S_BGR to ST7796S_RGB
+  st7796Colours();                       // the panel maker's colour curve (deeper darks, richer colours)
   tft.invertDisplay(true);               // if the colours look like a photo negative, change true to false
   tft.setSPISpeed(SPI_HZ);
   tft.setRotation(1);                // landscape
