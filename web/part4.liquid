@@ -307,7 +307,7 @@ ${frame}
 // ---------------- UI ----------------
 
 const codeEl = $("code");
-const fmt = { crossw: v => v + "%", beam: v => v + "%", bar: v => v + "%", radius: v => v + " px", oval: v => f2(v), arms: v => v, twist: v => (+v).toFixed(1), speed: v => f2(v), sparks: v => v, bright: v => v + "%", tone: v => v + "%", ripples: v => v, rspeed: v => f2(v), glow: v => f2(v), stars: v => v, rimsmooth: v => v + "%" };
+const fmt = { crossw: v => v + "%", beam: v => v + "%", bar: v => v + "%", radius: v => v + " px", oval: v => f2(v), arms: v => v, twist: v => (+v).toFixed(1), speed: v => f2(v), sparks: v => v, bright: v => v + "%", tone: v => v + "%", warm: v => v + "%", ripples: v => v, rspeed: v => f2(v), glow: v => f2(v), stars: v => v, rimsmooth: v => v + "%" };
 let codeTimer;
 const refreshCode = () => { clearTimeout(codeTimer); codeTimer = setTimeout(() => codeEl.textContent = sketch(), 120); };
 
@@ -574,6 +574,7 @@ function selectModel(key, userChose) {
   $("drift-wrap").hidden = tft;
   $("bright-wrap").hidden = !tft;
   $("tone-wrap").hidden = !turns(M);                   // rectangle screens (they look paler than the round one)
+  $("warm-wrap").hidden = !turns(M);
   $("fade-wrap").hidden = !tft;
   $("rimsmooth-wrap").hidden = !tft;
   $("style-wrap").hidden = !tft;
@@ -1059,7 +1060,7 @@ const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFi
 function sceneArgs() {
   const L = sceneList(), cols = " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" "), rip = S.style === 17 ? S.woodGrain : S.crossRipple;
   const space = hasSpaceCols(S.style) || L.some(c => c >= 200 && c < 255 && hasSpaceCols(c - 200));
-  const tail = turns(M) ? `${cols} ${S.crossFill} ${rip} ${S.portrait ? 1 : 0} ${S.tone}`   // screens that turn: everything, then portrait / landscape
+  const tail = turns(M) ? `${cols} ${S.crossFill} ${rip} ${S.portrait ? 1 : 0} ${S.tone} ${S.warm}`   // screens that turn: everything, then portrait / landscape
     : isCrossStyle(S.style) ? `${cols} ${S.crossFill} ${rip}` : space ? cols : "";
   return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${tail}`;
 }   // space colours only when needed, so older boards still accept the rest

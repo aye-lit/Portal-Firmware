@@ -37,7 +37,7 @@ const DISP = {
   st7735:  { inc: "Adafruit_ST7735.h", decl: "Adafruit_ST7735 tft(PIN_CS, PIN_DC, PIN_RST);",
              begin: `  tft.initR(INITR_BLACKTAB);             // if the colours or edges look wrong, try INITR_GREENTAB or INITR_REDTAB\n  tft.setSPISpeed(SPI_HZ);\n  tft.setRotation(${rot});                // ${rot ? "landscape" : "portrait"}` },
   st7796:  { inc: "Adafruit_ST7796S.h", decl: "Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer",
-             begin: `  tft.init(${M.nw}, ${M.nh}, 0, 0, ST7796S_BGR);   // if red and blue look swapped, change ST7796S_BGR to ST7796S_RGB\n  st7796Colours();                       // the panel maker's colour curve (deeper darks, richer colours)\n  tft.invertDisplay(true);               // if the colours look like a photo negative, change true to false\n  tft.setSPISpeed(SPI_HZ);\n  tft.setRotation(${rot});                // ${rot ? "landscape" : "portrait"}` },
+             begin: `  tft.init(${M.nw}, ${M.nh}, 0, 0, ST7796S_BGR);   // if red and blue look swapped, change ST7796S_BGR to ST7796S_RGB\n  tft.invertDisplay(true);               // if the colours look like a photo negative, change true to false\n  tft.setSPISpeed(SPI_HZ);\n  tft.setRotation(${rot});                // ${rot ? "landscape" : "portrait"}` },
   ili9341: { inc: "Adafruit_ILI9341.h", decl: "Adafruit_ILI9341 tft(PIN_CS, PIN_DC, PIN_RST);",
              begin: `  tft.begin(SPI_HZ);\n  tft.setRotation(${rot});                // ${rot ? "landscape" : "portrait"}` },
 }[M.driver];
@@ -211,7 +211,7 @@ Spark sparks[MAX_SPARKS];
 int16_t sparkX[MAX_SPARKS], sparkY[MAX_SPARKS];
 float t = 0;
 
-struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill, crossRipple, portrait, tone; };
+struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill, crossRipple, portrait, tone, warm; };
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // ---------- tables ----------
@@ -284,12 +284,21 @@ void buildParams() {
 }
 
 uint8_t  TONE = ${turns(M) ? S.tone : 0};             // Colour depth: darker mid-tones for screens that look washed out (0 = as drawn)
-uint8_t  toneT[256];                    // the colour curve every colour goes through on its way to the screen
+uint8_t  WARM = ${turns(M) ? S.warm : 0};             // Warmth: less blue (and a little less green) for screens that lean blue
+uint16_t toneS[256];                    // how much to scale a colour by, from its brightest channel (keeps the hue)
+uint16_t warmG = 256, warmB = 256;
 void buildTone() {
-  float g = 1 + TONE / 100.0f;           // 0 -> straight line, 100 -> gamma 2
-  for (int i = 0; i < 256; i++) toneT[i] = (uint8_t)lroundf(255 * powf(i / 255.0f, g));
+  float g = 1 + TONE / 100.0f;           // 0 -> straight line, 100 -> gamma 2 (on the colour's brightness, so pinks stay pink)
+  toneS[0] = 256;
+  for (int i = 1; i < 256; i++) toneS[i] = (uint16_t)lroundf(256 * powf(i / 255.0f, g) * 255 / i);
+  warmB = (uint16_t)(256 - WARM * 0.35f * 2.56f); warmG = (uint16_t)(256 - WARM * 0.10f * 2.56f);
 }
-uint16_t to565(uint8_t r, uint8_t g, uint8_t b) { r = toneT[r]; g = toneT[g]; b = toneT[b]; return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
+uint16_t to565(uint8_t r, uint8_t g, uint8_t b) {
+  uint8_t m = r > g ? (r > b ? r : b) : (g > b ? g : b);
+  uint32_t k = toneS[m];
+  r = (r * k) >> 8; g = (g * k * warmG) >> 16; b = (b * k * warmB) >> 16;
+  return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+}
 uint16_t to565raw(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }   // without the colour curve (the wood: dark browns would lose their grain)
 
 uint32_t mixColor(uint32_t x, uint32_t y, float f) {   // blend two 0xRRGGBB colours
@@ -446,6 +455,7 @@ void apply(const Saved &s) {
   wantPortrait = s.portrait == 1;        // turned at the start of the next frame
 #endif
   TONE = s.tone <= 100 ? s.tone : 0;
+  WARM = s.warm <= 100 ? s.warm : 0;
 }
 
 void loadSettings() {
@@ -470,6 +480,7 @@ void saveSettings() {
   s.crossRipple = CROSS_RIPPLE;
   s.portrait = wantPortrait ? 1 : 0;
   s.tone = TONE;
+  s.warm = WARM;
   EEPROM.put(0, s);
 ${EEPROM_BEGIN_GUARD}
   EEPROM.commit();
@@ -497,11 +508,12 @@ void clampSettings(Saved &s) {
   if (s.crossRipple > 2) s.crossRipple = 0;
   if (s.portrait > 1) s.portrait = 0;
   if (s.tone > 100) s.tone = 100;
+  if (s.warm > 100) s.warm = 0;
 }
 ${pictureBlock()}
 // ---------- live tuning over USB serial (and Bluetooth below) ----------
 // Command: SET radius oval arms twist speed sparks drift core rim brightness style ripples ripspeed glow stars fade count core2 rim2 core3 rim3 core4 rim4 fadesecs rimsmooth
-//              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar [space1..space4 [crossfill [ripple [portrait [tone]]]]]]]]   (reply: OK or ERR)
+//              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar [space1..space4 [crossfill [ripple [portrait [tone [warm]]]]]]]]]   (reply: OK or ERR)
 //          scenes: 255 the portal, 0-7 pictures, 128-135 portal around a picture, 200-216 another style (200 + style number)
 // Pictures: INFO, then IMG slot bytes id / D base64... / END   (see "pictures" above)
 char cmd[384];
@@ -511,11 +523,11 @@ uint32_t rebootAt = 0;                   // set by the REBOOT command
 
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strncasecmp(line, "SET ", 4) == 0) {
-    float v[48];
+    float v[49];
     uint8_t n = 0;
     char *p = strtok(line + 4, " ");
-    while (p && n < 48) { v[n++] = atof(p); p = strtok(NULL, " "); }
-    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46 || n == 47 || n == 48) {
+    while (p && n < 49) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46 || n == 47 || n == 48 || n == 49) {
       Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
       for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
       s.fadeSecs = v[23];
@@ -528,6 +540,7 @@ const char* handleCommand(char *line) {   // returns the reply to send back
       s.crossRipple = n >= 46 ? (uint8_t)v[45] : CROSS_RIPPLE;
       s.portrait = n >= 47 ? (uint8_t)v[46] : (wantPortrait ? 1 : 0);   // portrait / landscape (screens that can turn)
       s.tone = n >= 48 ? (uint8_t)v[47] : TONE;                          // colour depth
+      s.warm = n >= 49 ? (uint8_t)v[48] : WARM;                          // warmth
       if (n >= 36) {
         s.sceneCount = (uint8_t)v[25];
         for (int k = 0; k < 8; k++) s.scenes[k] = (uint8_t)v[26 + k];
