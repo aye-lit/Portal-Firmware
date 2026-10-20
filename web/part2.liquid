@@ -941,7 +941,7 @@ function spaceFrame(out, style = S.style, cyc = QY) {   // cyc: centre row (cros
   }
   // Galaxy, Nebula and Meteor Shower: gas worked out on a grid, smoothed in between
   galK = 3 + S.twist * 2.5;                          // Galaxy: Spiral setting
-  const C = style === 4 && Math.min(TW, TH) < 300 ? 3 : 4, WM = C === 3 ? 7282 : 4096;   // WM: 1 / (C * C) in 1/65536ths
+  const C = style === 4 ? (Math.min(TW, TH) < 300 ? 3 : 4) : 8, WM = C === 3 ? 7282 : 65536 / (C * C);   // Nebula and Meteor Shower: softer gas, coarser grid (4x less work); WM: 1 / (C * C) in 1/65536ths
   const GC = Math.trunc(TW / C) + 2, GR = Math.trunc((TH - 1) / C) + 2;
   const gH = new Uint8Array(GC * GR), gV = new Uint8Array(GC * GR), gX = new Uint8Array(GC * GR);
   const rot = (T * 0.007) % TWO_PI, gcr = Math.cos(rot), gsr = Math.sin(rot), gcp = Math.cos(GAL_PA), gsp = Math.sin(GAL_PA);
@@ -973,30 +973,37 @@ function spaceFrame(out, style = S.style, cyc = QY) {   // cyc: centre row (cros
     }
   }
   const dens = Math.trunc((style === 14 ? 7 : style === 4 ? 4 : 10) * S.stars / 3), densBand = Math.trunc(22 * S.stars / 3);
+  const genD = style === 16 ? densBand : dens, gapMax = genD > 0 ? Math.max(2, Math.trunc(2048 / genD)) : 0;   // stars: jump from one to the next (same as the board)
+  const CW = C * WM, colH = new Int32Array(GC), colV = new Int32Array(GC), colX = new Int32Array(GC);
   let p = 0;
   for (let y = 0; y < TH; y++) {
-    const gy = Math.trunc(y / C), fy = y % C, Y = (y + 0.5 - cyc) * spU;
-    const cy = C - fy;
-    for (let x = 0, i = gy * GC, fx = 0; x < TW; x++) {
-      const cx = C - fx, w00 = cx * cy, w01 = fx * cy, w10 = cx * fy, w11 = fx * fy;
-      const h = (((gH[i] * cx + gH[i + 1] * fx) * cy + (gH[i + GC] * cx + gH[i + GC + 1] * fx) * fy) * WM) >> 16;
-      const v = (((gV[i] * cx + gV[i + 1] * fx) * cy + (gV[i + GC] * cx + gV[i + GC + 1] * fx) * fy) * WM) >> 16;
-      const ii = i; if (++fx === C) { fx = 0; i++; }
-      let hi = (h >> 1) & 63, vi = v >> 2;
-      if (style === 4) {
-        const am = (gX[ii] > 90 || gX[ii + 1] > 90 || gX[ii + GC] > 90 || gX[ii + GC + 1] > 90) ? ((gX[ii] * w00 + gX[ii + 1] * w01 + gX[ii + GC] * w10 + gX[ii + GC + 1] * w11) * WM) >> 16 : 0;
-        if (am > 90) {                               // knots on the arms: pink star nurseries, blue clusters
-          const X = (x + 0.5 - QX) * spU, xr = gax * X + gbx * Y, yr = gay * X + gby * Y;
+    const gy = Math.trunc(y / C), fy = y % C, Y = (y + 0.5 - cyc) * spU, cy = C - fy, r0 = gy * GC;
+    for (let g = 0; g < GC; g++) { colH[g] = gH[r0 + g] * cy + gH[r0 + g + GC] * fy; colV[g] = gV[r0 + g] * cy + gV[r0 + g + GC] * fy; colX[g] = gX[r0 + g] * cy + gX[r0 + g + GC] * fy; }
+    let rs = hash32((Math.imul(y, 2654435761) + 0x5bd1e995) >>> 0), sx = gapMax ? rs % gapMax : TW;
+    for (let x = 0, g = 0; x < TW; g++) {
+      let hA = colH[g] * CW, vA = colV[g] * CW, aA = colX[g] * CW;
+      const dH = (colH[g + 1] - colH[g]) * WM, dV = (colV[g + 1] - colV[g]) * WM, dA = (colX[g + 1] - colX[g]) * WM, xe = Math.min(x + C, TW);
+      for (; x < xe; x++, hA += dH, vA += dV, aA += dA) {
+        let hi = (hA >> 17) & 63, vi = vA >> 18;
+        if (style === 4 && (aA >> 16) > 90) {        // knots on the arms: pink star nurseries, blue clusters
+          const am = aA >> 16, X = (x + 0.5 - QX) * spU, xr = gax * X + gbx * Y, yr = gay * X + gby * Y;
           const kx = Math.floor(xr / 4), ky = Math.floor(yr / 4), kh = hash32((Math.imul(kx + 4096, 7919) + Math.imul(ky + 4096, 104729)) >>> 0), kind = kh & 15;
           if (kind < 3) {
             const dx = xr - (kx * 4 + 1 + ((kh >>> 8) & 1) * 2), dy = yr - (ky * 4 + 1 + ((kh >>> 9) & 1) * 2), d2 = dx * dx + dy * dy, size = kind === 0 ? 1.6 : 0.9;
             if (d2 < size) { const kv = Math.trunc((0.62 + am / 700) * 63 * (1 - d2 / size * 0.4)); if (kv > vi) { hi = kind === 0 ? 17 : 33; vi = Math.min(63, kv); } }
           }
         }
-        const st = star(y * TW + x, dens); if (st && st[1] > vi + 8) { hi = 42; vi = st[1]; }
-      } else if (style === 14) { const st = star(y * TW + x, dens); if (st && st[1] > vi) { hi = st[0]; vi = Math.min(63, st[1] + 13); } }
-      else { const st = star(y * TW + x, gX[ii] ? densBand : dens); if (st) { hi = st[0]; vi = st[1]; } }
-      out[p++] = spaceLUT[hi * 64 + vi];
+        if (x === sx) {                              // a star here
+          const h = hash32(Math.imul(y * TW + x, 2654435761) >>> 0);
+          const svi = 47 + Math.trunc(sinT[(spTw + (h >>> 10)) & 255] / 10), shi = (h >>> 20) & 63;
+          if (style === 4) { if (svi > vi + 8) { hi = 42; vi = svi; } }
+          else if (style === 14) { if (svi > vi) { hi = shi; vi = Math.min(63, svi + 13); } }
+          else if (gX[r0 + g] || (h >>> 26) * densBand < dens * 64) { hi = shi; vi = svi; }
+          rs = (Math.imul(rs, 1664525) + 1013904223) >>> 0;
+          sx += 1 + ((rs >>> 16) % (gapMax - 1));
+        }
+        out[p++] = spaceLUT[hi * 64 + vi];
+      }
     }
   }
   if (style === 16) {                                // shooting stars with coloured tails

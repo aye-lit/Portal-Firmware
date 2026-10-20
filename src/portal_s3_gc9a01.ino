@@ -113,7 +113,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xE1BAEE98UL;
+const uint32_t BUILD_ID = 0xBD915538UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -325,7 +325,7 @@ void updateColourFade() {             // fade through the colour sets in order, 
 #else
   #define HOT
 #endif
-HOT uint32_t hash32(uint32_t n) {
+static inline __attribute__((always_inline)) uint32_t hash32(uint32_t n) {   // (inline: it runs for every pixel of the space styles)
   n = (n ^ 61) ^ (n >> 16);
   n *= 9;
   n ^= n >> 4;
@@ -1034,6 +1034,13 @@ int      spTw = 0, whPh = 0;
 #define SP_GRID ((SCR_WMAX / 2 + 2) * (STRIP / 2 + 3))   // gas worked out every 2 or 4 pixels, smoothed in between (one strip at a time)
 uint8_t  *spH = NULL, *spV = NULL, *spX = NULL;
 uint8_t  *spH1 = NULL, *spV1 = NULL, *spX1 = NULL;   // a second gas grid, so core 1 can draw space styles at the same time
+// Both cores share the gas grid rows they work out (each row once per frame instead of once per piece of a strip)
+#define  SP_RING_W (SCR_WMAX / 3 + 3)
+uint8_t  *ringH = NULL, *ringV = NULL, *ringX = NULL;
+int      ringN = 0;
+bool     ringTried = false;
+volatile uint32_t ringTag[48];
+uint32_t spFrame = 1;
 // Galaxy: a Hubble-style spiral (like M51, M100, NGC 4414)
 #define GAL_TILT 0.86f                   // how tilted toward you (1 = face on)
 #define GAL_PA   -0.55f                  // which way it points
@@ -1045,7 +1052,7 @@ float    gax = 1, gbx = 0, gay = 0, gby = 1, galK = 9;   // galK: how tightly th
 uint8_t  *gtH = NULL, *gtV = NULL, *gtX = NULL;
 uint32_t galFlashKey = 0;                // the galaxy picture kept in flash (when there's no room for it in memory)
 bool     gtInFlash = false;
-int      gtA = 0;
+int      gtA = 0, gtS = 1;                // gtS: 1 = three separate pictures (memory), 3 = side by side per point (flash: one read instead of three)
 float    gtK = -1, gpx = 1, gqx = 0, gpy = 0, gqy = 1, gRot = 0;
 bool     gtReady = false;
 uint8_t  powT[256], whRingT[256], whNearT[256];
@@ -1065,6 +1072,13 @@ void buildNoise() {
 }
 
 bool spaceMemory() {                    // reserved at startup (allocBuffers), so every space style always has room
+  if (!ringTried) {                     // optional: the shared grid rows
+    ringTried = true;
+    int n = 2 * STRIP / 3 + 8; if (n > 48) n = 48;
+    ringH = (uint8_t *)malloc(n * SP_RING_W); ringV = (uint8_t *)malloc(n * SP_RING_W); ringX = (uint8_t *)malloc(n * SP_RING_W);
+    if (ringH && ringV && ringX) { ringN = n; for (int i = 0; i < 48; i++) ringTag[i] = 0xFFFFFFFFUL; }
+    else { free(ringH); free(ringV); free(ringX); ringH = ringV = ringX = NULL; ringN = 0; }
+  }
   if (spaceLUT && noise8 && spX) return true;
   if (!spH) spH = (uint8_t *)malloc(SP_GRID);
   if (!spV) spV = (uint8_t *)malloc(SP_GRID);
@@ -1134,7 +1148,7 @@ bool galaxyTex() {                      // build the galaxy picture once per Spi
   if (!gtH) {
     for (int a = 256; a >= 128 && !gtH; a /= 2) {
       gtH = (uint8_t *)malloc(GT_R * a); gtV = (uint8_t *)malloc(GT_R * a); gtX = (uint8_t *)malloc(GT_R * a);
-      if (gtH && gtV && gtX) gtA = a;
+      if (gtH && gtV && gtX) { gtA = a; gtS = 1; }
       else { free(gtH); free(gtV); free(gtX); gtH = gtV = gtX = NULL; }
     }
     if (!gtH) { gtInFlash = true; return galaxyTexFlash(); }   // no room in memory: keep it in flash (read through the cache)
@@ -1158,19 +1172,19 @@ bool galaxyTexFlash() {                 // the galaxy picture in the end of the 
   uint32_t off = stageOff + crossPlane, room = STAGE_SIZE - crossPlane - 16;
   int a = 3UL * GT_R * 256 <= room ? 256 : 128;
   if (3UL * GT_R * a > room) return false;
-  uint32_t key = (uint32_t)lroundf(galK * 1000) * 1024 + a + 1;
+  uint32_t key = (uint32_t)lroundf(galK * 1000) * 1024 + a + 2;   // (+2: the points' three values side by side)
   const uint8_t *base = planeMap + (off - crossOff);
   if (galFlashKey != key) {
     const uint32_t *h = (const uint32_t *)base;
     if (!(h[0] == GAL_MAGIC && h[1] == key)) {   // not there yet (or the Spiral setting changed): work it out once and store it
       esp_partition_erase_range(picPart, off, (16 + 3UL * GT_R * a + 4095) & ~4095UL);
-      static uint8_t row[3][256];
+      static uint8_t row[3 * 256];
       for (int ri = 0; ri < GT_R; ri++) {
         for (int ai = 0; ai < a; ai++) {
           float gr = ri * GT_DR, an = ai * TWO_PI / a;
-          galaxyNode(gr * cosf(an), gr * sinf(an), row[0][ai], row[1][ai], row[2][ai]);
+          galaxyNode(gr * cosf(an), gr * sinf(an), row[ai * 3], row[ai * 3 + 1], row[ai * 3 + 2]);
         }
-        for (int k = 0; k < 3; k++) esp_partition_write(picPart, off + 16 + (uint32_t)k * GT_R * a + (uint32_t)ri * a, row[k], a);
+        esp_partition_write(picPart, off + 16 + (uint32_t)ri * a * 3, row, a * 3);
         if ((ri & 7) == 7) delay(1);
       }
       uint32_t hd[4] = { GAL_MAGIC, key, 0, 0 };
@@ -1178,8 +1192,8 @@ bool galaxyTexFlash() {                 // the galaxy picture in the end of the 
     }
     galFlashKey = key;
   }
-  gtA = a;
-  gtH = (uint8_t *)(base + 16); gtV = gtH + GT_R * a; gtX = gtV + GT_R * a;   // (read only)
+  gtA = a; gtS = 3;
+  gtH = (uint8_t *)(base + 16); gtV = gtH + 1; gtX = gtH + 2;   // (read only)
   return true;
 }
 #else
@@ -1191,13 +1205,18 @@ HOT void spaceNode(float X, float Y, uint8_t &h, uint8_t &v, uint8_t &x8) {   //
   if (look == 4) {
     if (!gtReady) { galaxyNode(gax * X + gbx * Y, gay * X + gby * Y, h, v, x8); return; }
     float px = gpx * X + gqx * Y, py = gpy * X + gqy * Y;                 // look the galaxy up, turned
-    float fr = sqrtf(px * px + py * py) / GT_DR; if (fr > GT_R - 1.001f) fr = GT_R - 1.001f;
-    float fa = (fastAtan2(py, px) - gRot) * (gtA / TWO_PI); fa -= floorf(fa / gtA) * gtA;
+    float r2 = px * px + py * py, fr = 0;
+    if (r2 > 0) { union { float f; uint32_t i; } u; u.f = r2; u.i = 0x5f3759dfUL - (u.i >> 1); float q = u.f; q *= 1.5f - 0.5f * r2 * q * q; fr = r2 * q * (1 / GT_DR); }   // quick square root (to 0.2%)
+    if (fr > GT_R - 1.001f) fr = GT_R - 1.001f;
+    float fa = (fastAtan2(py, px) - gRot) * (gtA * (1 / TWO_PI));
+    while (fa < 0) fa += gtA;
+    while (fa >= gtA) fa -= gtA;
     int ri = (int)fr; float wr = fr - ri; int ai = (int)fa; float wa = fa - ai; if (ai >= gtA) ai -= gtA;
-    int a1 = ai + 1 == gtA ? 0 : ai + 1, i00 = ri * gtA + ai, i01 = ri * gtA + a1, i10 = i00 + gtA, i11 = i01 + gtA;
-    h  = (uint8_t)((gtH[i00] * (1 - wa) + gtH[i01] * wa) * (1 - wr) + (gtH[i10] * (1 - wa) + gtH[i11] * wa) * wr);
-    v  = (uint8_t)((gtV[i00] * (1 - wa) + gtV[i01] * wa) * (1 - wr) + (gtV[i10] * (1 - wa) + gtV[i11] * wa) * wr);
-    x8 = (uint8_t)((gtX[i00] * (1 - wa) + gtX[i01] * wa) * (1 - wr) + (gtX[i10] * (1 - wa) + gtX[i11] * wa) * wr);
+    const int S = gtS, a1 = ai + 1 == gtA ? 0 : ai + 1, i00 = (ri * gtA + ai) * S, i01 = (ri * gtA + a1) * S, i10 = i00 + gtA * S, i11 = i01 + gtA * S;
+    const int ua = (int)(wa * 256), ur = (int)(wr * 256), va = 256 - ua, vr = 256 - ur;   // in whole numbers
+    h  = (uint8_t)(((gtH[i00] * va + gtH[i01] * ua) * vr + (gtH[i10] * va + gtH[i11] * ua) * ur) >> 16);
+    v  = (uint8_t)(((gtV[i00] * va + gtV[i01] * ua) * vr + (gtV[i10] * va + gtV[i11] * ua) * ur) >> 16);
+    x8 = (uint8_t)(((gtX[i00] * va + gtX[i01] * ua) * vr + (gtX[i10] * va + gtX[i11] * ua) * ur) >> 16);
     return;
   }
   if (look == 14) {                                                       // Nebula
@@ -1225,6 +1244,7 @@ inline bool spaceStar(uint32_t i, int density, int &hi, int &vi) {   // a twinkl
 }
 
 void prepareSpace() {                   // once per frame
+  spFrame++;                            // (the shared grid rows from the last frame are out of date)
   spU = look == 15 ? 118.0f / SP_EXT : 236.0f / min(SCR_W, SCR_H);   // scaled to the screen
   spExt = SP_EXT * spU;
   double T = spaceT;
@@ -1311,55 +1331,81 @@ HOT void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
 #if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
   if (xPortGetCoreID() == 1 && spX1) { gH = spH1; gV = spV1; gX = spX1; }   // core 1 has its own grid
 #endif
-  const int C = look == 4 && min(SCR_W, SCR_H) < 300 ? 3 : 4, WM = C == 3 ? 7282 : 4096, GC = SCR_W / C + 2;   // WM: 1 / (C * C) in 1/65536ths
+  const int C = look == 4 ? (min(SCR_W, SCR_H) < 300 ? 3 : 4) : 8, WM = C == 3 ? 7282 : 65536 / (C * C), GC = SCR_W / C + 2;   // Nebula and Meteor Shower: softer gas, coarser grid (4x less work); WM: 1 / (C * C) in 1/65536ths
   int gy0 = y0 / C, gy1 = (y0 + rows - 1) / C + 1;
-  for (int gy = gy0; gy <= gy1; gy++)
-    for (int gx = 0; gx < GC; gx++) {
-      int i = (gy - gy0) * GC + gx;
-      spaceNode((gx * C + 0.5f - QX) * spU, (gy * C + 0.5f - spCY) * spU, gH[i], gV[i], gX[i]);
+  const bool ring = ringN && !(sceneMix > 0 && sceneA != sceneB);   // (not while two styles fade: each core then draws both)
+  const uint32_t tagBase = (spFrame << 16) | ((uint32_t)look << 8);
+  const uint8_t *pH[24], *pV[24], *pX[24];
+  for (int gy = gy0; gy <= gy1; gy++) {
+    const int k = gy - gy0;
+    uint8_t *h, *v, *xx; int s = 0; bool need = true;
+    if (ring) {
+      s = gy % ringN; h = ringH + s * SP_RING_W; v = ringV + s * SP_RING_W; xx = ringX + s * SP_RING_W;
+      need = ringTag[s] != (tagBase | gy);           // the other core may have worked this row out already
+    } else { h = gH + k * GC; v = gV + k * GC; xx = gX + k * GC; }
+    if (need) {
+      for (int gx = 0; gx < GC; gx++) spaceNode((gx * C + 0.5f - QX) * spU, (gy * C + 0.5f - spCY) * spU, h[gx], v[gx], xx[gx]);
+      if (ring) { __sync_synchronize(); ringTag[s] = tagBase | gy; }
     }
+    pH[k] = h; pV[k] = v; pX[k] = xx;
+  }
   int dens = (look == 14 ? 7 : look == 4 ? 4 : 10) * STARS / 3, densBand = 22 * STARS / 3;
+  const int genD = look == 16 ? densBand : dens, gapMax = genD > 0 ? max(2, 2048 / genD) : 0;   // stars: jump straight from one to the next instead of testing every pixel
   static int16_t colHc[2][SCR_WMAX / 3 + 3], colVc[2][SCR_WMAX / 3 + 3], colXc[2][SCR_WMAX / 3 + 3];   // one row of the grid, blended down to this pixel row (one set per core)
   const int core = CORE_ID();
   int16_t *colH = colHc[core], *colV = colVc[core], *colX = colXc[core];
+  const int CW = C * WM;
   for (int y = y0; y < y0 + rows; y++) {
     int gy = y / C - gy0, fy = y % C;
     float Y = (y + 0.5f - spCY) * spU;
     const int cy = C - fy;
-    const uint8_t *tH = gH + gy * GC, *tV = gV + gy * GC, *tX = gX + gy * GC;
+    const uint8_t *tH = pH[gy], *tV = pV[gy], *tX = pX[gy], *bH = pH[gy + 1], *bV = pV[gy + 1], *bX = pX[gy + 1];
     for (int g = 0; g < GC; g++) {                   // blend between the grid rows once per row, then only across
-      colH[g] = tH[g] * cy + tH[g + GC] * fy; colV[g] = tV[g] * cy + tV[g + GC] * fy;
-      colX[g] = tX[g] * cy + tX[g + GC] * fy;
+      colH[g] = tH[g] * cy + bH[g] * fy; colV[g] = tV[g] * cy + bV[g] * fy;
+      colX[g] = tX[g] * cy + bX[g] * fy;
     }
-    for (int x = 0, ic = 0, fx = 0; x < SCR_W; x++) {
-      const int g = ic, cx = C - fx, f = fx;
-      if (++fx == C) { fx = 0; ic++; }
-      int h = ((colH[g] * cx + colH[g + 1] * f) * WM) >> 16;
-      int v = ((colV[g] * cx + colV[g + 1] * f) * WM) >> 16;
-      int hi = (h >> 1) & 63, vi = v >> 2, shi, svi;
-      uint32_t pix = (uint32_t)(y * SCR_W + x);
-      const int i = gy * GC + g;
-      if (look == 4) {
-        int am = ((colX[g] * cx + colX[g + 1] * f) * WM) >> 16;
-        if (am > 90) {                                   // knots on the arms: pink star nurseries, blue clusters
-          float X = (x + 0.5f - QX) * spU, xr = gax * X + gbx * Y, yr = gay * X + gby * Y;
-          int kx = (int)floorf(xr / 4), ky = (int)floorf(yr / 4);
-          uint32_t kh = hash32((uint32_t)(kx + 4096) * 7919u + (uint32_t)(ky + 4096) * 104729u);
+    int lkx = 1 << 30, lky = 0; uint32_t lkh = 0;   // Galaxy: the knot patch the last pixel was in
+    const float X0 = (0.5f - QX) * spU, xr0 = gax * X0 + gbx * Y, yr0 = gay * X0 + gby * Y, dxr = gax * spU, dyr = gay * spU;   // Galaxy: where this row is in the galaxy's plane
+    uint32_t rs = hash32((uint32_t)y * 2654435761UL + 0x5bd1e995UL);
+    int sx = gapMax ? (int)(rs % (uint32_t)gapMax) : SCR_W;
+    for (int x = 0, g = 0; x < SCR_W; g++) {
+      int hA = colH[g] * CW, dH = (colH[g + 1] - colH[g]) * WM;   // across one grid cell the gas only needs adding up
+      int vA = colV[g] * CW, dV = (colV[g + 1] - colV[g]) * WM;
+      int aA = colX[g] * CW, dA = (colX[g + 1] - colX[g]) * WM;
+      const int xe = x + C < SCR_W ? x + C : SCR_W;
+      for (; x < xe; x++, hA += dH, vA += dV, aA += dA) {
+        int hi = (hA >> 17) & 63, vi = vA >> 18;
+        if (look == 4 && (aA >> 16) > 90) {             // knots on the arms: pink star nurseries, blue clusters
+          int am = aA >> 16;
+          float xr = xr0 + x * dxr, yr = yr0 + x * dyr;
+          int kx = (int)(xr * 0.25f + 4096) - 4096, ky = (int)(yr * 0.25f + 4096) - 4096;   // (floor, without the library call)
+          if (kx != lkx || ky != lky) { lkx = kx; lky = ky; lkh = hash32((uint32_t)(kx + 4096) * 7919u + (uint32_t)(ky + 4096) * 104729u); }   // same patch as the last pixel: same knot
+          uint32_t kh = lkh;
           int kind = kh & 15;
           if (kind < 3) {
             float dx = xr - (kx * 4 + 1 + (int)((kh >> 8) & 1) * 2), dy = yr - (ky * 4 + 1 + (int)((kh >> 9) & 1) * 2), d2 = dx * dx + dy * dy, size = kind == 0 ? 1.6f : 0.9f;
             if (d2 < size) { int kv = (int)((0.62f + am / 700.0f) * 63 * (1 - d2 / size * 0.4f)); if (kv > vi) { hi = kind == 0 ? 17 : 33; vi = min(63, kv); } }
           }
         }
-        if (spaceStar(pix, dens, shi, svi) && svi > vi + 8) { hi = 42; vi = svi; }
-      } else if (look == 14) { if (spaceStar(pix, dens, shi, svi) && svi > vi) { hi = shi; vi = min(63, svi + 13); } }
-      else if (spaceStar(pix, gX[i] ? densBand : dens, shi, svi)) { hi = shi; vi = svi; }
-      *p++ = spaceLUT[hi * 64 + vi];
+        if (x == sx) {                                  // a star here
+          uint32_t h = hash32((uint32_t)(y * SCR_W + x) * 2654435761UL);
+          int svi = 47 + sinT[(spTw + (h >> 10)) & 255] / 10, shi = (h >> 20) & 63;
+          if (look == 4) { if (svi > vi + 8) { hi = 42; vi = svi; } }
+          else if (look == 14) { if (svi > vi) { hi = shi; vi = min(63, svi + 13); } }
+          else if (tX[g] || (int)(h >> 26) * densBand < dens * 64) { hi = shi; vi = svi; }   // fewer away from the Milky Way
+          rs = rs * 1664525UL + 1013904223UL;
+          sx += 1 + (int)((rs >> 16) % (uint32_t)(gapMax - 1));
+        }
+        *p++ = spaceLUT[hi * 64 + vi];
+      }
     }
   }
   if (look == 16) for (int m = 0; m < meteorCount; m++) {           // shooting stars with coloured tails
     const Meteor &M = meteors[m];
-    for (int k = 0; k < M.len; k++) {
+    int k0 = (int)((M.y + 0.5f - (y0 + rows)) / 0.6f) - 1, k1 = (int)((M.y + 0.5f - y0 + 1) / 0.6f) + 2;   // only the part of the tail that crosses this strip
+    if (k0 < 0) k0 = 0;
+    if (k1 > (int)M.len + 1) k1 = (int)M.len + 1;
+    for (int k = k0; k < k1 && k < M.len; k++) {
       float f = 1 - k / M.len;
       int x = (int)floorf(M.x + 0.8f * k + 0.5f), y = (int)floorf(M.y - 0.6f * k + 0.5f);
       int vi = k < 3 ? 63 : (int)((0.9f * f * f + 0.05f) * 63);
@@ -2160,6 +2206,7 @@ bool allocBuffers() {
       free(stripBuf[0]); free(stripBuf[1]); free(picBuf); free(edgeBuf); picBuf = NULL; edgeBuf = NULL;
       free(spH); free(spV); free(spX); free(spaceLUT); free(noise8); spH = spV = spX = NULL; spaceLUT = NULL; noise8 = NULL;
       free(spH1); free(spV1); free(spX1); spH1 = spV1 = spX1 = NULL;
+      free(ringH); free(ringV); free(ringX); ringH = ringV = ringX = NULL; ringN = 0; ringTried = false;
     }
   }
   return false;
