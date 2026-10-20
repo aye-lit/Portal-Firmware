@@ -1,0 +1,7 @@
+numpy>=1.26
+pandas>=2.1
+scikit-learn>=1.4
+joblib>=1.3
+yfinance>=0.2.40   # optional: quick smoke-test data
+# databento        # optional: 5 years of CME 1-minute data (pip install databento)
+pytest>=8          # tests
