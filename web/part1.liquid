@@ -467,10 +467,10 @@ const BOARDS = {
     ide: "Boards Manager → install “esp32 by Espressif Systems”. Then Tools → Board → ESP32 Dev Module.",
     fpsTft: "about 30–40 fps (two cores)" },
   cyd35: { name: "3.5″ ESP32 display board (Hosyond / LCDwiki E32R35T, screen built in)", family: "ESP32", ram: 320, volt: 3.3, hz: 80,
-    screen: "st7796", builtin: true, dma: true,
+    screen: "st7796", builtin: true, dma: true, tap: { irq: 36, cs: 33 },   // touch chip XPT2046: its "pressed" pin is enough to spot a tap
     spi: { sck: 14, mosi: 13, cs: 15, dc: 2, rst: -1 }, i2c: { sda: 21, scl: 22 },
     extra: "  // Board extras: backlight on, touch chip off the shared SPI bus, speaker and RGB LED off\n  pinMode(27, OUTPUT); digitalWrite(27, HIGH);\n  pinMode(33, OUTPUT); digitalWrite(33, HIGH);\n  pinMode(4, OUTPUT);  digitalWrite(4, HIGH);\n  pinMode(22, OUTPUT); digitalWrite(22, HIGH);\n  pinMode(16, OUTPUT); digitalWrite(16, HIGH);\n  pinMode(17, OUTPUT); digitalWrite(17, HIGH);\n",
-    ide: "Boards Manager → install “esp32 by Espressif Systems”. Then Tools → Board → ESP32 Dev Module. The screen is built in, so there's nothing to wire: just plug in the USB-C cable.",
+    ide: "Boards Manager → install “esp32 by Espressif Systems”. Then Tools → Board → ESP32 Dev Module. The screen is built in, so there's nothing to wire: just plug in the USB-C cable. Tap the screen to show the next style (or the next scene, when you've added scenes).",
     fpsTft: "about 9–11 fps" },
   xiao_s3: { name: "Seeed XIAO ESP32S3", family: "ESP32-S3", ram: 320, volt: 3.3, hz: 80,
     spi: { sck: 7, mosi: 9, cs: 4, dc: 3, rst: 2 }, i2c: { sda: 5, scl: 6 },

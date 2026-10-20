@@ -58,6 +58,7 @@ void beginBus() {
 }
 #define SPI_HZ    80000000UL   // turbo: if the picture glitches or stays dark, change to 40000000UL
 
+#define TAP_PIN    -1
 #define PX         1            // one drawn pixel per screen pixel
 #define TURNS      0
 #define SCR_W      240          // drawing width and height (the screen is PX times bigger)
@@ -113,7 +114,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x6C7C5870UL;
+const uint32_t BUILD_ID = 0x65C5BDF8UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -386,6 +387,40 @@ bool validScenes(const Saved &s) {
   return true;
 }
 
+// ---------- tapping the screen ----------
+volatile uint8_t tapCount = 0;           // taps seen (core 1 counts them, the frame code acts on them)
+bool    tapMode = false;                 // showing a style picked by tapping
+int8_t  tapIdx = -1;                     // which one (-1 = your own style or scene)
+uint8_t tapFrom = 255, tapTo = 255;      // fading from / to
+uint32_t tapAt = 0, sceneShiftMs = 0;    // when the tap fade began; how far taps have moved the scene clock
+#if TAP_PIN >= 0
+void pollTap() {                         // the touch chip pulls its pin low while the screen is pressed
+  static uint32_t lowSince = 0, highSince = 0;
+  static bool down = false;
+  uint32_t now = millis() | 1;
+  if (digitalRead(TAP_PIN) == LOW) {
+    highSince = 0;
+    if (!lowSince) lowSince = now;
+    if (!down && now - lowSince >= 15) { down = true; tapCount++; }   // held a moment: a real press, not a blip
+  } else {
+    lowSince = 0;
+    if (!highSince) highSince = now;
+    if (down && now - highSince >= 150) down = false;                   // let go
+  }
+}
+void beginTap() {                        // put the touch chip in its waiting mode, where its pin shows presses
+  pinMode(TAP_CS, OUTPUT); digitalWrite(TAP_CS, HIGH);
+  pinMode(PIN_CS, OUTPUT); digitalWrite(PIN_CS, HIGH);
+  SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(TAP_CS, LOW); SPI.transfer(0x80); SPI.transfer(0); SPI.transfer(0); digitalWrite(TAP_CS, HIGH);
+  SPI.endTransaction();
+  pinMode(TAP_PIN, INPUT);
+}
+#else
+inline void pollTap() {}
+inline void beginTap() {}
+#endif
+
 bool valid(const Saved &s) {
   return s.radius >= 6 && s.radius <= RADIUS_MAX && s.oval >= 1 && s.oval <= 2 &&
          s.arms >= 1 && s.arms <= 8 && s.twist >= 0 && s.twist <= 6 &&
@@ -396,6 +431,7 @@ bool valid(const Saved &s) {
 }
 
 void apply(const Saved &s) {
+  tapMode = false; tapIdx = -1;          // new settings: show them (not a style picked by tapping)
   RADIUS = s.radius; OVAL = s.oval; TWIST = s.twist; SPEED = s.speed;
   ARMS = s.arms; NUM_SPARKS = s.sparks; DRIFT = s.drift;
   COLOR_CORE = s.core; COLOR_RIM = s.rim; BRIGHTNESS = s.bright; STYLE = s.style;
@@ -793,6 +829,7 @@ uint16_t cmdLen = 0;
 uint32_t rebootAt = 0;                   // set by the REBOOT command
 
 const char* handleCommand(char *line) {   // returns the reply to send back
+  if (strcasecmp(line, "TAP") == 0) { tapCount++; return "OK"; }   // same as tapping the screen: the next style (or scene)
   if (strncasecmp(line, "SET ", 4) == 0) {
     float v[49];
     uint8_t n = 0;
@@ -937,11 +974,40 @@ uint8_t sceneA = PORTAL, sceneB = PORTAL;
 int     sceneMix = 0;                    // 0 = all scene A, 256 = all scene B
 float   ageA = 0, ageB = 0;              // seconds since each scene started to appear
 
+const uint8_t TAP_STYLES[] = { 0, 1, 2, 3, 4, 5, 6, 7, 14, 15, 16 };   // styles a tap steps through (after your own)
+const int TAP_N = sizeof(TAP_STYLES);
+
+void onTap() {
+  if (SCENE_COUNT >= 2) {                // scenes: go on to the next one now
+    float per = HOLD_SECS + SCENE_FADE;
+    float pos = fmodf((millis() + sceneShiftMs) / 1000.0f, per * SCENE_COUNT);
+    float w = pos - min((int)(pos / per), SCENE_COUNT - 1) * per;
+    sceneShiftMs += (uint32_t)(((w < HOLD_SECS && SCENE_FADE > 0 ? HOLD_SECS : per) - w) * 1000) + 1;   // holding: start the fade; fading: finish it
+    return;
+  }
+  uint8_t own = SCENE_COUNT == 1 ? SCENES[0] : PORTAL;   // your own style (or your one scene)
+  uint8_t shown = tapMode ? tapTo : own;
+  int k = tapIdx;
+  do { k = k + 1 >= TAP_N ? -1 : k + 1; } while (k >= 0 && TAP_STYLES[k] == STYLE && own == PORTAL);   // (skip the style already yours)
+  tapIdx = k;
+  tapFrom = shown; tapTo = k < 0 ? own : 200 + TAP_STYLES[k];
+  tapAt = millis(); tapMode = true;
+}
+
 void updateScene() {
+  static uint8_t tapSeen = 0;
+  if (tapCount != tapSeen) { tapSeen = tapCount; onTap(); }
+  if (tapMode && SCENE_COUNT < 2) {      // a style picked by tapping: a quick fade into it
+    uint32_t el = millis() - tapAt;
+    if (el >= 800) { sceneA = sceneB = tapTo; sceneMix = 0; ageA = ageB = el / 1000.0f + 1; if (tapIdx < 0) tapMode = false; }
+    else { float f = el / 800.0f; f = f * f * (3 - 2 * f); sceneA = tapFrom; sceneB = tapTo; sceneMix = (int)(f * 256); ageA = el / 1000.0f + 1; ageB = el / 1000.0f; }
+    return;
+  }
+  tapMode = false;
   if (SCENE_COUNT == 0) { sceneA = sceneB = PORTAL; sceneMix = 0; return; }
   if (SCENE_COUNT == 1) { sceneA = sceneB = SCENES[0]; sceneMix = 0; ageA = millis() / 1000.0f; return; }
   float per = HOLD_SECS + SCENE_FADE;
-  float pos = fmodf(millis() / 1000.0f, per * SCENE_COUNT);
+  float pos = fmodf((millis() + sceneShiftMs) / 1000.0f, per * SCENE_COUNT);
   int i = min((int)(pos / per), SCENE_COUNT - 1);
   float w = pos - i * per;
   sceneA = SCENES[i];
@@ -2238,6 +2304,7 @@ void setup() {
   beginBus();
   tft.begin(SPI_HZ);
   tft.fillScreen(0);
+  beginTap();
   Serial.println(F("[portal] screen ready"));
 #if HAS_BLE
   beginBluetooth();                      // Bluetooth first: it needs one big block of memory
@@ -2359,6 +2426,7 @@ void loop() {
     }
     b ^= 1;
     readSerialQuick();                   // new settings get an answer even while a slow frame is drawn
+    pollTap();
   }
 #if USE_DMA
   if (pending >= 0) { lcdFinish(pending, 1000); xSemaphoreGive(freeSem[pending]); }
@@ -2383,6 +2451,7 @@ void loop() {
     sendStrip(stripBuf[0], rows);
     drawUs += t1 - t0; sendUs += micros() - t1;
     readSerialQuick();
+    pollTap();
   }
   frameEnd();
   tft.endWrite();
