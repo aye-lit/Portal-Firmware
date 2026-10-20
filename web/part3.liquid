@@ -727,14 +727,19 @@ void buildNoise() {
   for (int i = 0; i < 256; i++) powT[i] = (uint8_t)(255 * powf(i / 255.0f, 1.6f));
 }
 
+void ringMemory() {                     // optional: the shared grid rows (only while Galaxy, Nebula or Meteor Shower is showing)
+  if (ringTried) return;
+  ringTried = true;
+  int n = 2 * STRIP / 3 + 8; if (n > 48) n = 48;
+  ringH = (uint8_t *)malloc(n * SP_RING_W); ringV = (uint8_t *)malloc(n * SP_RING_W); ringX = (uint8_t *)malloc(n * SP_RING_W);
+  if (ringH && ringV && ringX) { ringN = n; for (int i = 0; i < 48; i++) ringTag[i] = 0xFFFFFFFFUL; }
+  else { free(ringH); free(ringV); free(ringX); ringH = ringV = ringX = NULL; ringN = 0; }
+}
+void freeRing() {                       // give the room back to the other styles
+  ringN = 0; free(ringH); free(ringV); free(ringX); ringH = ringV = ringX = NULL; ringTried = false;
+}
+
 bool spaceMemory() {                    // reserved at startup (allocBuffers), so every space style always has room
-  if (!ringTried) {                     // optional: the shared grid rows
-    ringTried = true;
-    int n = 2 * STRIP / 3 + 8; if (n > 48) n = 48;
-    ringH = (uint8_t *)malloc(n * SP_RING_W); ringV = (uint8_t *)malloc(n * SP_RING_W); ringX = (uint8_t *)malloc(n * SP_RING_W);
-    if (ringH && ringV && ringX) { ringN = n; for (int i = 0; i < 48; i++) ringTag[i] = 0xFFFFFFFFUL; }
-    else { free(ringH); free(ringV); free(ringX); ringH = ringV = ringX = NULL; ringN = 0; }
-  }
   if (spaceLUT && noise8 && spX) return true;
   if (!spH) spH = (uint8_t *)malloc(SP_GRID);
   if (!spV) spV = (uint8_t *)malloc(SP_GRID);
@@ -1130,6 +1135,13 @@ void frameStart() {
     if (L == 4 || (L >= 14 && L <= 16)) { look = L; if (spaceMemory()) prepareSpace(); else L = 0; }
   }
   if (!needB && sceneMix < 128) lookB = lookA;
+  {
+    auto gridLook = [](int L) { return L == 4 || L == 14 || L == 16; };
+    if (lookA != 3 && lookB != 3 && warpB) {        // Hyperspace not showing: give its star tables back
+      free(warpOn); free(warpRR); free(warpLen); free(warpB); warpOn = NULL; warpRR = warpLen = warpB = NULL;
+    }
+    if (gridLook(lookA) || gridLook(lookB)) ringMemory(); else if (ringTried) freeRing();
+  }
   look = lookA;
   crossOn = baseCross;
   spCY = crossOn ? crossYC : QY;
@@ -1145,6 +1157,10 @@ void frameStart() {
   twinkle = (int)(t * 25);
   if ((lookA == 3 || lookB == 3) && !warpB) {
     warpOn = (uint8_t *)malloc(768); warpRR = (float *)malloc(768 * 4); warpLen = (float *)malloc(768 * 4); warpB = (float *)malloc(768 * 4);
+    if ((!warpOn || !warpRR || !warpLen || !warpB) && ringTried) {   // no room: hand over the shared grid rows and try again
+      free(warpOn); free(warpRR); free(warpLen); free(warpB); freeRing();
+      warpOn = (uint8_t *)malloc(768); warpRR = (float *)malloc(768 * 4); warpLen = (float *)malloc(768 * 4); warpB = (float *)malloc(768 * 4);
+    }
     if (!warpOn || !warpRR || !warpLen || !warpB) { free(warpOn); free(warpRR); free(warpLen); free(warpB); warpOn = NULL; warpRR = warpLen = warpB = NULL; if (lookA == 3) lookA = 0; if (lookB == 3) lookB = 0; }   // no room: the Vortex
   }
   if (lookA == 3 || lookB == 3) {
@@ -1862,7 +1878,7 @@ bool allocBuffers() {
       free(stripBuf[0]); free(stripBuf[1]); free(picBuf); free(edgeBuf); picBuf = NULL; edgeBuf = NULL;
       free(spH); free(spV); free(spX); free(spaceLUT); free(noise8); spH = spV = spX = NULL; spaceLUT = NULL; noise8 = NULL;
       free(spH1); free(spV1); free(spX1); spH1 = spV1 = spX1 = NULL;
-      free(ringH); free(ringV); free(ringX); ringH = ringV = ringX = NULL; ringN = 0; ringTried = false;
+      freeRing();
     }
   }
   return false;
