@@ -113,7 +113,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x211BC3BAUL;
+const uint32_t BUILD_ID = 0xE1BAEE98UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -248,7 +248,7 @@ void buildTone() {
   float g = 1 + TONE / 100.0f;           // 0 -> straight line, 100 -> gamma 2 (on the colour's brightness, so pinks stay pink)
   toneS[0] = 256;
   for (int i = 1; i < 256; i++) toneS[i] = (uint16_t)lroundf(256 * powf(i / 255.0f, g) * 255 / i);
-  warmB = (uint16_t)(256 - WARM * 0.35f * 2.56f); warmG = (uint16_t)(256 - WARM * 0.10f * 2.56f);
+  warmB = (uint16_t)(256 - WARM * 0.65f * 2.56f); warmG = (uint16_t)(256 - WARM * 0.18f * 2.56f);   // 100%: blue x0.35, green x0.82
 }
 uint16_t to565(uint8_t r, uint8_t g, uint8_t b) {
   uint8_t m = r > g ? (r > b ? r : b) : (g > b ? g : b);
