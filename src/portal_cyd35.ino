@@ -96,7 +96,7 @@ uint8_t  BRIGHTNESS = 100;     // 10-100 %: dims the portal's colours
 uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy (Hubble-style spiral), 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
                                 // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
                                 // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
-uint8_t  CROSS_RIPPLE = 0;      // crosses: Ripple, rings echoing the outline inside the cross (0 off, 1 outward, 2 inward); the Wooden cross: its grain (0 classic, 1 pine, 2 rustic oak)
+uint8_t  CROSS_RIPPLE = 0;      // crosses: Ripple, rings echoing the outline inside the cross (0 off, 1 outward, 2 inward); the Wooden cross: its wood (0 classic, 1 pine, 2 rustic oak, 3 walnut, 4 cherry, 5 mahogany, 6 cedar, 7 driftwood, 8 ebony, 9 maple, 10 olive wood)
 uint8_t  CROSS_FILL = 0;       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower, 11 Solid colour; the Wooden cross: what's behind it, 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
 uint32_t SPACE_COLS[4] = { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF };   // Galaxy, Nebula, Wormhole, Meteor Shower: four colours blended together
 uint8_t  CROSS_W    = 46;      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
@@ -120,7 +120,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x0EBDE090UL;
+const uint32_t BUILD_ID = 0x0A0BE026UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -401,7 +401,7 @@ bool validScenes(const Saved &s) {
   if (s.crossW < 25 || s.crossW > 100 || s.beam < 5 || s.beam > 30 || s.bar < 20 || s.bar > 50) return false;
   for (int k = 0; k < 4; k++) if (s.spaceCols[k] > 0xFFFFFF) return false;
   if (!validFill(s.crossFill)) return false;
-  if (s.crossRipple > 2) return false;
+  if (s.crossRipple > 10) return false;   // (crosses: ripple 0-2; the Wooden cross: wood style 0-10)
   for (uint8_t i = 0; i < s.sceneCount; i++) {
     if (!validScene(s.scenes[i])) return false;
   }
@@ -522,7 +522,7 @@ void clampSettings(Saved &s) {
   s.crossW = clampb(s.crossW, 25, 100); s.beam = clampb(s.beam, 5, 30); s.bar = clampb(s.bar, 20, 50);
   for (int k = 0; k < 8; k++) if (!validScene(s.scenes[k])) s.scenes[k] = PORTAL;
   if (!validFill(s.crossFill)) s.crossFill = 0;
-  if (s.crossRipple > 2) s.crossRipple = 0;
+  if (s.crossRipple > 10) s.crossRipple = 0;
   if (s.portrait > 1) s.portrait = 0;
   if (s.tone > 100) s.tone = 100;
   if (s.warm > 100) s.warm = 0;
@@ -1710,7 +1710,7 @@ uint8_t crossRipT[128];                 // extra brightness by distance inside t
 float   ripplePh = 0;
 void buildCrossRipple() {
   memset(crossRipT, 0, sizeof(crossRipT));
-  if (!CROSS_RIPPLE) return;
+  if (!CROSS_RIPPLE || CROSS_RIPPLE > 2) return;
   float R = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100), AW = max(2.0f, R * BEAM / 100.0f), s = R / 149.0f;
   float rw = max(1.5f, AW * 0.18f), span = AW - rw;
   for (int j = 0; j < 3; j++) {
@@ -1753,13 +1753,22 @@ float woodSD(float x, float y) {               // one solid piece: upright and c
   return fminf(woodBox(x, y, 0, (woodBot - woodTop) / 2, woodAW, (woodBot + woodTop) / 2), woodBox(x, y, 0, 0, woodHHL, woodAW));
 }
 
-// Three grains (CROSS_RIPPLE picks it for the Wooden cross): 0 classic, 1 pine, 2 rustic oak.
+// Eleven woods (CROSS_RIPPLE picks it for the Wooden cross): 0 classic, 1 pine, 2 rustic oak, 3 walnut, 4 cherry, 5 mahogany,
+// 6 cedar, 7 driftwood, 8 ebony, 9 maple, 10 olive wood.
 // The wood never moves, so the board works it out once per pixel and keeps it in flash next to the cross outline:
 // one byte per pixel, 32 wood tones x 8 shades, then just looks the colours up while drawing.
 struct WoodGrain { float early[3], late[3], freq, arch, off, warp, l0, l1, tone, pores, poreLen, poreDark, u0V, u0H; };
-const WoodGrain WOOD_GRAINS[2] = {
+const WoodGrain WOOD_GRAINS[10] = {
   { { 222, 176, 118 }, { 156, 94, 46 }, 0.15f, 0.10f, 20, 3.0f, 0.50f, 0.86f, 0.10f, 0.008f, 9, 0.85f, 30, -25 },   // pine
-  { { 150, 100, 58 }, { 88, 54, 30 }, 0.26f, 0.08f, 22, 2.4f, 0.45f, 0.82f, 0.16f, 0.025f, 8, 0.78f, -20, 60 }     // rustic oak
+  { { 150, 100, 58 }, { 88, 54, 30 }, 0.26f, 0.08f, 22, 2.4f, 0.45f, 0.82f, 0.16f, 0.025f, 8, 0.78f, -20, 60 },    // rustic oak
+  { { 124, 84, 58 }, { 60, 38, 26 }, 0.19f, 0.09f, 18, 3.2f, 0.46f, 0.84f, 0.16f, 0.045f, 10, 0.68f, 10, -40 },   // walnut
+  { { 200, 118, 80 }, { 150, 76, 48 }, 0.15f, 0.1f, 24, 2.4f, 0.55f, 0.9f, 0.16f, 0.004f, 9, 0.85f, -30, 20 },   // cherry
+  { { 158, 76, 52 }, { 104, 46, 32 }, 0.32f, 0.03f, 30, 1.4f, 0.42f, 0.82f, 0.12f, 0.05f, 16, 0.7f, 0, 0 },   // mahogany
+  { { 226, 154, 112 }, { 150, 78, 56 }, 0.17f, 0.12f, 16, 3.6f, 0.48f, 0.82f, 0.18f, 0.006f, 9, 0.85f, 40, -10 },   // cedar
+  { { 186, 178, 164 }, { 122, 114, 104 }, 0.2f, 0.06f, 20, 4.5f, 0.4f, 0.78f, 0.24f, 0.07f, 26, 0.55f, -10, 30 },   // driftwood
+  { { 56, 46, 40 }, { 36, 30, 27 }, 0.3f, 0.04f, 26, 1.8f, 0.55f, 0.92f, 0.1f, 0.01f, 12, 0.8f, 20, -20 },   // ebony
+  { { 238, 214, 172 }, { 214, 182, 136 }, 0.12f, 0.1f, 22, 2.2f, 0.58f, 0.92f, 0.08f, 0.002f, 9, 0.9f, -20, 50 },   // maple
+  { { 220, 194, 140 }, { 104, 80, 46 }, 0.22f, 0.16f, 12, 9.0f, 0.58f, 0.86f, 0.2f, 0.006f, 9, 0.85f, 50, -60 }    // olive wood
 };
 const float WOOD_SHADE[8] = { 0.70f, 0.78f, 0.86f, 0.93f, 1.0f, 1.08f, 1.17f, 1.28f };
 uint16_t woodPal8[256];
@@ -1834,7 +1843,7 @@ uint8_t woodByte(int x, int y, int ce) {                     // one pixel of woo
 
 void prepareWood() {
   float R = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100);
-  woodGrain = CROSS_RIPPLE <= 2 ? CROSS_RIPPLE : 0;
+  woodGrain = CROSS_RIPPLE <= 10 ? CROSS_RIPPLE : 0;
   uint32_t key = 2166136261UL;
   uint32_t parts[] = { (uint32_t)(R * 16), CROSS_W, BEAM, BAR, BRIGHTNESS, SCR_W, SCR_H, (uint32_t)woodGrain, TONE, 2 };
   for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
