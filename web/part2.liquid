@@ -1192,10 +1192,10 @@ const dim32 = (c, m) => (255 << 24) | ((((c >> 16) & 255) * m >> 8) << 16) | (((
 // ---------------- cloud skies behind the Wooden cross (fills 8 blue sky, 9 sunset, 10 heavenly light), same maths as the board ----------------
 let cloudTex = null, cloudDrift = 0, cloudLastMs = 0, cloudKey = "";
 const cloudDensT = new Uint8Array(512), cloudShT = new Uint8Array(64), cloudGlowT = new Uint8Array(128), cloudRayT = new Uint8Array(256), cloudRayRT = new Uint8Array(256), cloudCol = Array.from({ length: 16 }, () => [0, 0, 0]);
-const CK = { k1: 0, k2: 0, k3: 0 };
+const CK = { k1: 0, k2: 0, k3: 0, k4: 0 };
 const SKY_TOP = [[38, 96, 190], [58, 38, 110], [140, 178, 236]], SKY_MID = [225, 110, 92], SKY_BOT = [[150, 200, 240], [255, 190, 110], [255, 232, 190]];
-const CL_LIT = [[250, 252, 255], [255, 226, 180], [255, 255, 250]], CL_SH = [[150, 168, 198], [78, 44, 92], [188, 188, 208]], CL_COV = [[0.44, 0.60], [0.47, 0.54], [0.47, 0.53]];
-const CL_DET = [36, 64, 64], CL_SHADE = [5, 7, 8], CL_GLOW = [0.7, 0.7, 0.35], CL_RAY = [0.55, 0.55, 0.3];   // heavenly light: crisper clouds, softer light
+const CL_LIT = [[250, 252, 255], [255, 226, 180], [255, 255, 250]], CL_SH = [[150, 168, 198], [78, 44, 92], [188, 188, 208]], CL_COV = [[0.44, 0.60], [0.485, 0.525], [0.47, 0.53]];
+const CL_DET = [36, 80, 64], CL_FINE = [0, 40, 0], CL_SHADE = [5, 7, 8], CL_GLOW = [0.7, 0.7, 0.35], CL_RAY = [0.55, 0.55, 0.3];   // heavenly light: crisper clouds, softer light
 const cloudLat = (ix, iy, p, o) => { ix &= p - 1; iy &= p - 1; return hash32((Math.imul(ix, 73856093) ^ Math.imul(iy, 19349663) ^ Math.imul(o, 83492791)) >>> 0) & 255; };
 function cloudMemory() {
   if (cloudTex) return;
@@ -1229,7 +1229,7 @@ function prepareClouds(kind) {
   for (let a = 0; a < 256; a++) cloudRayT[a] = Math.trunc(255 * Math.pow(Math.max(0, Math.sin(a * TWO_PI / 256)), 6));
   for (let r = 0; r < 256; r++) cloudRayRT[r] = Math.trunc(255 * CL_RAY[kind] * Math.max(0, 1 - r / (1.4 * W8.bot)));
   for (let i = 0; i < 16; i++) for (let j = 0; j < 3; j++) cloudCol[i][j] = Math.trunc(CL_SH[kind][j] + (CL_LIT[kind][j] - CL_SH[kind][j]) * i / 15);
-  CK.k1 = Math.round(64 / W8.s * 256); CK.k2 = Math.round(64 / W8.s * 256 * 1.7); CK.k3 = Math.round(64 / W8.s * 256 * 3.1);
+  CK.k1 = Math.round(64 / W8.s * 256); CK.k2 = Math.round(64 / W8.s * 256 * 1.7); CK.k3 = Math.round(64 / W8.s * 256 * 3.1); CK.k4 = Math.round(64 / W8.s * 256 * 6.5);
 }
 const rgb32 = (r, g, b) => { const r5 = r & 0xF8, g6 = g & 0xFC, b5 = b & 0xF8; return (255 << 24) | ((b5 | b5 >> 5) << 16) | ((g6 | g6 >> 6) << 8) | (r5 | r5 >> 5); };
 function cloudFrame(out, CE, fill) {
@@ -1240,14 +1240,14 @@ function cloudFrame(out, CE, fill) {
   if (cloudLastMs) cloudDrift += 6 * Math.min(8, (now - cloudLastMs) / 1000) * (S.speed / 0.12);
   cloudLastMs = now;
   if (cloudDrift > 1e6) cloudDrift = 0;
-  const D1 = Math.trunc(cloudDrift * 76.8), D2 = Math.trunc((cloudDrift * 0.3 + 97) * 128), D3 = Math.trunc((cloudDrift * 0.2 + 53) * 128);
+  const D1 = Math.trunc(cloudDrift * 76.8), D2 = Math.trunc((cloudDrift * 0.3 + 97) * 128), D3 = Math.trunc((cloudDrift * 0.2 + 53) * 128), D4 = Math.trunc((cloudDrift * 0.4 + 29) * 128);
   const rayPh = Math.trunc(now / 1000 * 0.15 * 40.74);
   const sky = [0, 0, 0], c = [0, 0, 0];
   for (let y = 0, p = 0; y < TH; y++) {
     const fy = y / TH;
     for (let j = 0; j < 3; j++) sky[j] = kind === 1 ? Math.trunc(fy < 0.55 ? SKY_TOP[1][j] + (SKY_MID[j] - SKY_TOP[1][j]) * fy / 0.55 : SKY_MID[j] + (SKY_BOT[1][j] - SKY_MID[j]) * (fy - 0.55) / 0.45)
                                                  : Math.trunc(SKY_TOP[kind][j] + (SKY_BOT[kind][j] - SKY_TOP[kind][j]) * fy);
-    const Y1 = (y * CK.k1) >> 8, Y2 = ((y * CK.k2) >> 8) + 31 * 128, Y3 = ((y * CK.k3) >> 8) + 11 * 128;
+    const Y1 = (y * CK.k1) >> 8, Y2 = ((y * CK.k2) >> 8) + 31 * 128, Y3 = ((y * CK.k3) >> 8) + 11 * 128, Y4 = ((y * CK.k4) >> 8) + 7 * 128;
     for (let x = 0; x < TW; x++, p++) {
       const ce = CE[p];
       if (ce > 0) {
@@ -1259,7 +1259,8 @@ function cloudFrame(out, CE, fill) {
       const k = -ce, X1 = ((x * CK.k1) >> 8) + D1, X2 = ((x * CK.k2) >> 8) + D2, X3 = ((x * CK.k3) >> 8) + D3;
       const n = (cloudAt(X1, Y1) * 205 + cloudAt(X2, Y2) * 51) >> 8;
       const n2 = (cloudAt(X1, Y1 - 768) * 205 + cloudAt(X2, Y2 - 1280) * 51) >> 8;
-      const det = ((cloudAt(X3, Y3) - 128) * CL_DET[kind]) >> 8;
+      let det = ((cloudAt(X3, Y3) - 128) * CL_DET[kind]) >> 8;
+      if (CL_FINE[kind]) det += ((cloudAt(((x * CK.k4) >> 8) + D4, Y4) - 128) * CL_FINE[kind]) >> 8;   // sunset: fine wisps on the edges
       const dens = cloudDensT[Math.max(0, Math.min(511, n + det + 128))];
       const light = Math.max(0, Math.min(255, 158 + (n - n2) * CL_SHADE[kind] + ((det * 3) >> 1))) >> 4;
       for (let j = 0; j < 3; j++) c[j] = sky[j] + (((cloudCol[light][j] - sky[j]) * dens) >> 8);
