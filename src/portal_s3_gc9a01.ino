@@ -44,6 +44,7 @@
 // Declared early so the Arduino IDE's automatic function prototypes compile
 struct Spark;
 struct Saved;
+struct Look;
 
 void beginBus() {
 #if defined(ESP32)
@@ -114,7 +115,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xE7A22817UL;
+const uint32_t BUILD_ID = 0x0DA692BBUL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -171,6 +172,28 @@ float t = 0;
 
 struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill, crossRipple, portrait, tone, warm, tapOff, fdLen, fdStars, fdClouds, fdGlow; };
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
+
+// Scenes with their own settings: each "another style" scene can keep its own size, colours, speed...
+struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn; };
+struct SceneSaved { uint32_t id; uint8_t has[8]; Look look[8]; };
+#define EE_SIZE (128 + sizeof(SceneSaved))   // main settings, then the scenes' own settings
+uint8_t  SCENE_HAS[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };   // 1 = that scene has its own settings
+Look     SCENE_LOOKS[8] = {
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 }
+};
+Look mainLook;                           // your main settings (the scenes without their own use these)
+Look pendLook[8]; uint8_t pendHas[8];    // scene settings from live tuning, applied between frames
+volatile bool scenePending = false;
+int8_t curLook = -1;                     // whose settings are loaded now (-1 = main)
+int8_t idxA = -1, idxB = -1;             // scene positions showing (-1 = not from the scene list)
+int    dipK = 256;                       // scenes with different settings fade through black: 256 = full brightness
 
 // ---------- tables ----------
 // Cartoon styles: smooth looping noise tables
@@ -460,7 +483,7 @@ void apply(const Saved &s) {
 
 void loadSettings() {
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
-  EEPROM.begin(128);
+  EEPROM.begin(EE_SIZE);
 #endif
   Saved s;
   EEPROM.get(0, s);
@@ -877,6 +900,25 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     }
     return "ERR";
   }
+  if (strncasecmp(line, "SCN ", 4) == 0) {   // SCN k radius oval arms twist speed sparks drift core rim bright ripples ripspeed glow stars rimsmooth space1..4  (or SCN k OFF)
+    float v[20];                         // no reply: older boards ignore it the same way
+    uint8_t n = 0; bool off = false;
+    char *p = strtok(line + 4, " ");
+    while (p && n < 20) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
+    int k = n ? (int)v[0] : -1;
+    if (k < 0 || k > 7) return NULL;
+    if (off || n != 20) { pendHas[k] = 0; scenePending = true; return NULL; }
+    Look &L = pendLook[k];
+    L.radius = clampf(v[1], 6, RADIUS_MAX); L.oval = clampf(v[2], 1, 2); L.arms = clampb((uint8_t)v[3], 1, 8);
+    L.twist = clampf(v[4], 0, 6); L.speed = clampf(v[5], 0, 0.4f); L.sparks = min((int)v[6], MAX_SPARKS); L.drift = v[7] ? 1 : 0;
+    L.core = (uint32_t)v[8] & 0xFFFFFF; L.rim = (uint32_t)v[9] & 0xFFFFFF; L.bright = clampb((uint8_t)v[10], 10, 100);
+    L.ripples = min((int)v[11], 6); L.ripSpeed = clampf(v[12], 0.03f, 0.3f); L.glow = clampf(v[13], 0.3f, 0.9f);
+    L.stars = clampb((uint8_t)v[14], 1, 6); L.rimSmooth = min((int)v[15], 100);
+    for (int j = 0; j < 4; j++) L.spaceCols[j] = (uint32_t)v[16 + j] & 0xFFFFFF;
+    L.fadeOn = 0;                        // a scene's own colours don't fade through the colour sets
+    pendHas[k] = 1; scenePending = true;
+    return NULL;
+  }
   if (strcasecmp(line, "PING") == 0) return "PORTAL";
 #if defined(ESP32)
   if (strcasecmp(line, "REBOOT") == 0) { rebootAt = millis() + 300; return "OK"; }   // restart shortly, after the reply goes out
@@ -986,6 +1028,59 @@ uint8_t sceneA = PORTAL, sceneB = PORTAL;
 int     sceneMix = 0;                    // 0 = all scene A, 256 = all scene B
 float   ageA = 0, ageB = 0;              // seconds since each scene started to appear
 
+// ---------- each scene's own settings ----------
+void grabLook(Look &L) {                 // the settings in use now
+  L.radius = RADIUS; L.oval = OVAL; L.twist = TWIST; L.speed = SPEED; L.ripSpeed = RIP_SPEED; L.glow = GLOW_SIZE;
+  L.core = COLOR_CORE; L.rim = COLOR_RIM; for (int k = 0; k < 4; k++) L.spaceCols[k] = SPACE_COLS[k];
+  L.arms = ARMS; L.sparks = NUM_SPARKS; L.drift = DRIFT; L.bright = BRIGHTNESS; L.ripples = RIPPLES; L.stars = STARS; L.rimSmooth = RIM_SMOOTH; L.fadeOn = FADE_ON;
+}
+void putLook(const Look &L) {
+  RADIUS = L.radius; OVAL = L.oval; TWIST = L.twist; SPEED = L.speed; RIP_SPEED = L.ripSpeed; GLOW_SIZE = L.glow;
+  COLOR_CORE = L.core; COLOR_RIM = L.rim; for (int k = 0; k < 4; k++) SPACE_COLS[k] = L.spaceCols[k];
+  ARMS = L.arms; NUM_SPARKS = L.sparks; DRIFT = L.drift; BRIGHTNESS = L.bright; RIPPLES = L.ripples; STARS = L.stars; RIM_SMOOTH = L.rimSmooth; FADE_ON = L.fadeOn;
+}
+void useSceneLook(int id) {              // load a scene's settings (or the main ones) and rebuild what depends on them
+  if (id == curLook) return;
+  putLook(id < 0 ? mainLook : SCENE_LOOKS[id]);
+  if (spaceLUT) buildSpaceLUT();
+  buildParams();
+  buildPalette();
+  resetSparks();
+  curLook = id;
+}
+void saveScenes() {
+  SceneSaved z; z.id = BUILD_ID;
+  for (int k = 0; k < 8; k++) { z.has[k] = SCENE_HAS[k]; z.look[k] = SCENE_LOOKS[k]; }
+  EEPROM.put(128, z);
+#if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
+  EEPROM.commit();
+#endif
+}
+void loadScenes() {                      // after loadSettings()
+  grabLook(mainLook); curLook = -1;
+  SceneSaved z; EEPROM.get(128, z);
+  if (z.id == BUILD_ID) for (int k = 0; k < 8; k++) {
+    const Look &L = z.look[k];
+    bool ok = z.has[k] == 1 && L.radius >= 6 && L.radius <= RADIUS_MAX && L.oval >= 1 && L.oval <= 2 && L.arms >= 1 && L.arms <= 8 && L.twist >= 0 && L.twist <= 6 &&
+              L.speed >= 0 && L.speed <= 0.4f && L.sparks <= MAX_SPARKS && L.bright >= 10 && L.bright <= 100 && L.stars >= 1 && L.stars <= 6 && L.ripples <= 6 &&
+              L.ripSpeed >= 0.03f && L.ripSpeed <= 0.3f && L.glow >= 0.3f && L.glow <= 0.9f && L.rimSmooth <= 100;
+    SCENE_HAS[k] = ok; if (ok) SCENE_LOOKS[k] = L;
+  }
+  for (int k = 0; k < 8; k++) { pendHas[k] = SCENE_HAS[k]; pendLook[k] = SCENE_LOOKS[k]; }
+}
+inline int lookOf(int idx, uint8_t code) { return idx >= 0 && idx < 8 && SCENE_HAS[idx] && isStyleScene(code) ? idx : -1; }
+void pickSceneLook() {                   // load the settings of the scene showing; scenes with different settings fade through black
+  int ia = lookOf(idxA, sceneA), ib = lookOf(idxB, sceneB);
+  dipK = 256;
+  if (sceneMix > 0 && ia != ib) {
+    if (sceneMix >= 128) { sceneA = sceneB; ageA = ageB; ia = ib; dipK = (sceneMix - 128) * 2; }
+    else dipK = (128 - sceneMix) * 2;
+    sceneB = sceneA; ageB = ageA; sceneMix = 0;
+  } else if (sceneMix >= 128 && sceneA == sceneB) ia = ib;
+  useSceneLook(ia);
+}
+
+
 const uint8_t TAP_STYLES[] = { 0, 1, 2, 3, 4, 5, 6, 7, 14, 15, 16 };   // styles a tap steps through (after your own)
 const int TAP_N = sizeof(TAP_STYLES);
 
@@ -1011,19 +1106,22 @@ void updateScene() {
   if (tapCount != tapSeen) { tapSeen = tapCount; onTap(); }
   if (tapMode && SCENE_COUNT < 2) {      // a style picked by tapping: a quick fade into it
     uint32_t el = millis() - tapAt;
-    if (el >= 800) { sceneA = sceneB = tapTo; sceneMix = 0; ageA = ageB = el / 1000.0f + 1; if (tapIdx < 0) tapMode = false; }
+    idxA = idxB = (SCENE_COUNT == 1 && tapTo == SCENES[0]) ? 0 : -1;
+    if (tapFrom != tapTo) idxA = (SCENE_COUNT == 1 && tapFrom == SCENES[0]) ? 0 : -1;
+    if (el >= 800) { sceneA = sceneB = tapTo; sceneMix = 0; idxA = idxB; ageA = ageB = el / 1000.0f + 1; if (tapIdx < 0) tapMode = false; }
     else { float f = el / 800.0f; f = f * f * (3 - 2 * f); sceneA = tapFrom; sceneB = tapTo; sceneMix = (int)(f * 256); ageA = el / 1000.0f + 1; ageB = el / 1000.0f; }
     return;
   }
   tapMode = false;
-  if (SCENE_COUNT == 0) { sceneA = sceneB = PORTAL; sceneMix = 0; return; }
-  if (SCENE_COUNT == 1) { sceneA = sceneB = SCENES[0]; sceneMix = 0; ageA = millis() / 1000.0f; return; }
+  if (SCENE_COUNT == 0) { sceneA = sceneB = PORTAL; sceneMix = 0; idxA = idxB = -1; return; }
+  if (SCENE_COUNT == 1) { sceneA = sceneB = SCENES[0]; sceneMix = 0; ageA = millis() / 1000.0f; idxA = idxB = 0; return; }
   float per = HOLD_SECS + SCENE_FADE;
   float pos = fmodf((millis() + sceneShiftMs) / 1000.0f, per * SCENE_COUNT);
   int i = min((int)(pos / per), SCENE_COUNT - 1);
   float w = pos - i * per;
   sceneA = SCENES[i];
   sceneB = SCENES[(i + 1) % SCENE_COUNT];
+  idxA = i; idxB = (i + 1) % SCENE_COUNT;
   ageA = w + SCENE_FADE;                 // it began fading in during the previous scene
   ageB = max(0.0f, w - HOLD_SECS);
   if (w < HOLD_SECS || SCENE_FADE <= 0) sceneMix = 0;
@@ -1060,6 +1158,9 @@ void framePicture(uint8_t pic, float age, int y0, int rows, uint16_t *dst) {
   }
 }
 
+HOT void dimStrip(uint16_t *a, int n, int k) {   // a = a * k / 256
+  for (int i = 0; i < n; i++) { uint16_t x = a[i]; a[i] = ((((x >> 11) * k) >> 8) << 11) | (((((x >> 5) & 63) * k) >> 8) << 5) | (((x & 31) * k) >> 8); }
+}
 HOT void blendStrip(uint16_t *a, const uint16_t *b, int n, int m) {   // a = a + (b - a) * m / 256
   for (int i = 0; i < n; i++) a[i] = mix565(a[i], b[i], m);
 }
@@ -1078,7 +1179,11 @@ HOT void drawScene(uint8_t s, float age, int y0, int rows, uint16_t *dst, int L,
 
 HOT void composeStrip(int y0, int rows, uint16_t *dst) {
   bool fading = sceneMix > 0 && sceneA != sceneB;
-  if (!fading || !picBuf) { if (sceneMix >= 128) drawScene(sceneB, ageB, y0, rows, dst, lookB, crossB); else drawScene(sceneA, ageA, y0, rows, dst, lookA, crossA); return; }
+  if (!fading || !picBuf) {
+    if (sceneMix >= 128) drawScene(sceneB, ageB, y0, rows, dst, lookB, crossB); else drawScene(sceneA, ageA, y0, rows, dst, lookA, crossA);
+    if (dipK < 256) dimStrip(dst, rows * SCR_W, dipK);   // fading through black between scenes with their own settings
+    return;
+  }
   drawScene(sceneA, ageA, y0, rows, dst, lookA, crossA);
   uint16_t *fb = CORE_ID() && picBuf2 ? picBuf2 : picBuf;   // each core fades in its own buffer
   drawScene(sceneB, ageB, y0, rows, fb, lookB, crossB);
@@ -1526,6 +1631,7 @@ void frameStart() {
   if (havePending) {
     apply(pendingSettings);
     saveSettings();
+    grabLook(mainLook); curLook = -1;      // the main settings are loaded now
     buildTone();
     if (spaceLUT) buildSpaceLUT();       // space colours go through the colour curve too
     buildParams();
@@ -1533,6 +1639,13 @@ void frameStart() {
     resetSparks();
     havePending = false;
   }
+  if (scenePending) {                    // a scene's own settings changed
+    scenePending = false;
+    for (int k = 0; k < 8; k++) { SCENE_HAS[k] = pendHas[k]; SCENE_LOOKS[k] = pendLook[k]; }
+    saveScenes();
+    if (curLook >= 0) { int c = curLook; curLook = -2; useSceneLook(c); }   // showing one now: load its new settings
+  }
+  pickSceneLook();
 #if TURNS
   if (wantPortrait != PORTRAIT) turnScreen(wantPortrait);
 #endif
@@ -2453,6 +2566,7 @@ void setup() {
   Serial.printf("[portal] memory ok, %u bytes free, %d rows per strip, room for %d pictures, space styles %s\n", (unsigned)ESP.getFreeHeap(), STRIP, picturesAvailable(), spaceLUT ? "ready" : "off (not enough memory)");
 #endif
   loadSettings();
+  loadScenes();
   buildTone();
   if (spaceLUT) buildSpaceLUT();
 #if TURNS
