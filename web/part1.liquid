@@ -3,6 +3,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
 #vps {
+  --brand-red: #f32c2c; --brand-red-soft: rgba(243, 44, 44, .06);
   --bg: #eef0f4;
   --surface: #ffffff;
   --ink: #161a24;
@@ -125,9 +126,9 @@
 }
 #vps button.b.ghost { background: transparent; color: var(--accent); }
 #vps button:focus-visible, #vps input:focus-visible, #vps select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-#vps .quick { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; }
+#vps .quick { border: 1px solid var(--brand-red); background: var(--brand-red-soft); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; }
 #vps .quick h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
-#vps .manual { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; }
+#vps .manual { border: 1px solid var(--brand-red); background: var(--brand-red-soft); border-radius: 10px; padding: 12px 14px; }
 #vps .fade-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 28px; }
 #vps .manual > h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
 #vps .sketch-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
