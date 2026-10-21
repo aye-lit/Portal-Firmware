@@ -124,6 +124,8 @@
 #vps .quick h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
 #vps .manual { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; }
 #vps .manual > h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+#vps .sketch-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+#vps .sketch-head h3 { margin: 0; }
 #vps .quick p { margin: 0 0 6px; color: var(--dim); font-size: 14px; }
 #vps .pbar { margin-top: 10px; }
 #vps .pbar-top { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--dim); margin-bottom: 4px; }
@@ -297,6 +299,13 @@ Takes about a minute.</p>
             </div>
           </li>
           <li>
+            <div style="min-width:0;flex:1">
+              <div class="sketch-head"><h3>Upload VortexPortal.ino</h3><button class="b" id="vps-copy" type="button">Copy sketch</button></div>
+              <div class="status" id="vps-copy-status" role="status"></div>
+              <pre id="vps-code" tabindex="0"></pre>
+            </div>
+          </li>
+          <li>
             <div>
               <h3>Change settings over USB</h3>
               <p>Once the sketch is on the board, you can send any style, colours and settings without re-uploading. The board saves them.</p>
@@ -437,15 +446,6 @@ Takes about a minute.</p>
         <p class="note" id="vps-wiring-note"></p>
       </section>
 
-      <section class="card" aria-label="Sketch">
-        <div class="card-head">
-          <h2>VortexPortal.ino</h2>
-          <button class="b" id="vps-copy" type="button">Copy sketch</button>
-        </div>
-        <p class="note" style="margin:0 0 10px">Using Arduino instead of Quick install? Copy this sketch, paste it into a new sketch (File → New), pick your board and port, then click Upload. Your current model and settings are baked in.</p>
-        <div class="status" id="vps-copy-status" role="status"></div>
-        <pre id="vps-code" tabindex="0"></pre>
-      </section>
     </div>
   </div>
 </div>
