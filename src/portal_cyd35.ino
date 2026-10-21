@@ -120,7 +120,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x0A0BE026UL;
+const uint32_t BUILD_ID = 0x068919ABUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -1900,12 +1900,12 @@ inline uint16_t dim565(uint16_t c, int m) {    // darken a colour (m: 0-255)
 uint8_t *cloudTex = NULL;                       // 128 x 128 tileable cloud texture (made once, when first needed)
 uint8_t  cloudDensT[512], cloudShT[64], cloudGlowT[128], cloudRayT[256], cloudRayRT[256], cloudCol[16][3];
 float    cloudDrift = 0;
-int      cloudK1 = 0, cloudK2 = 0, cloudK3 = 0, cloudKey = -1;
+int      cloudK1 = 0, cloudK2 = 0, cloudK3 = 0, cloudK4 = 0, cloudKey = -1;
 const uint8_t SKY_TOP[3][3] = { { 38, 96, 190 }, { 58, 38, 110 }, { 140, 178, 236 } }, SKY_MID[3] = { 225, 110, 92 };
 const uint8_t SKY_BOT[3][3] = { { 150, 200, 240 }, { 255, 190, 110 }, { 255, 232, 190 } };
 const uint8_t CL_LIT[3][3] = { { 250, 252, 255 }, { 255, 226, 180 }, { 255, 255, 250 } }, CL_SH[3][3] = { { 150, 168, 198 }, { 78, 44, 92 }, { 188, 188, 208 } };
-const float   CL_COV[3][2] = { { 0.44f, 0.60f }, { 0.47f, 0.54f }, { 0.47f, 0.53f } };   // sunset and heavenly light: crisper cloud edges   // heavenly light: crisper cloud edges
-const int     CL_DET[3] = { 36, 64, 64 }, CL_SHADE[3] = { 5, 7, 8 };                   // edge detail and shading strength
+const float   CL_COV[3][2] = { { 0.44f, 0.60f }, { 0.485f, 0.525f }, { 0.47f, 0.53f } };   // sunset and heavenly light: crisper cloud edges   // heavenly light: crisper cloud edges
+const int     CL_DET[3] = { 36, 80, 64 }, CL_FINE[3] = { 0, 40, 0 }, CL_SHADE[3] = { 5, 7, 8 };   // CL_FINE: sunset's fine wisps                   // edge detail and shading strength
 const float   CL_GLOW[3] = { 0.7f, 0.7f, 0.35f }, CL_RAY[3] = { 0.55f, 0.55f, 0.3f };    // heavenly light: softer glow and rays so the clouds show
 
 uint8_t cloudLat(int ix, int iy, int p, int o) { ix &= p - 1; iy &= p - 1; return hash32((uint32_t)(ix * 73856093) ^ (uint32_t)(iy * 19349663) ^ (uint32_t)(o * 83492791)) & 255; }
@@ -1948,7 +1948,7 @@ void prepareClouds(int kind) {
   for (int a = 0; a < 256; a++) cloudRayT[a] = (uint8_t)(255 * powf(fmaxf(0, sinf(a * TWO_PI / 256)), 6));
   for (int r = 0; r < 256; r++) cloudRayRT[r] = (uint8_t)(255 * CL_RAY[kind] * fmaxf(0, 1 - r / (1.4f * woodBot)));
   for (int i = 0; i < 16; i++) for (int j = 0; j < 3; j++) cloudCol[i][j] = (uint8_t)(CL_SH[kind][j] + (CL_LIT[kind][j] - CL_SH[kind][j]) * i / 15);
-  cloudK1 = (int)lroundf(64 / woodS * 256); cloudK2 = (int)lroundf(64 / woodS * 256 * 1.7f); cloudK3 = (int)lroundf(64 / woodS * 256 * 3.1f);
+  cloudK1 = (int)lroundf(64 / woodS * 256); cloudK2 = (int)lroundf(64 / woodS * 256 * 1.7f); cloudK3 = (int)lroundf(64 / woodS * 256 * 3.1f); cloudK4 = (int)lroundf(64 / woodS * 256 * 6.5f);
 }
 // The big cloud shapes are worked out every 4 pixels and blended in between; the fine detail on their edges
 // and where each cloud starts are worked out at every pixel, so the clouds stay crisp. The wood stays sharp.
@@ -1968,8 +1968,8 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
   uint16_t *ln = lnc[core], *lq = lqc[core];
   int16_t *ld = ldc[core];
   int kind = look - 8, br = BRIGHTNESS * 256 / 100;
-  const int detK = CL_DET[kind], shadeK = CL_SHADE[kind];
-  int D1 = (int)(cloudDrift * 76.8f), D2 = (int)((cloudDrift * 0.3f + 97) * 128), D3 = (int)((cloudDrift * 0.2f + 53) * 128);
+  const int detK = CL_DET[kind], fineK = CL_FINE[kind], shadeK = CL_SHADE[kind];
+  int D1 = (int)(cloudDrift * 76.8f), D2 = (int)((cloudDrift * 0.3f + 97) * 128), D3 = (int)((cloudDrift * 0.2f + 53) * 128), D4 = (int)((cloudDrift * 0.4f + 29) * 128);
   int rayPh = (int)(millis() / 1000.0f * 0.15f * 40.74f);
   const int gy0 = y0 / CG, gy1 = (y0 + rows - 1) / CG + 1, gw = SCR_W / CG + 1;
   for (int gy = gy0; gy <= gy1 && gy - gy0 < CGH; gy++) {          // the grid points this strip needs
@@ -1994,7 +1994,7 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
       ln[gx] = cgN[r0][gx] * wy + cgN[r0 + 1][gx] * fy; ld[gx] = cgD[r0][gx] * wy + cgD[r0 + 1][gx] * fy;
       lq[gx] = cgQ[r0][gx] * wy + cgQ[r0 + 1][gx] * fy;
     }
-    const int Y3 = ((y * cloudK3) >> 8) + 11 * 128;
+    const int Y3 = ((y * cloudK3) >> 8) + 11 * 128, Y4 = ((y * cloudK4) >> 8) + 7 * 128;
     float fyy = (float)y / SCR_H; if (fyy > 1) fyy = 1;   // the sky: a smooth fade from top to bottom
     int sky0, sky1, sky2;
     {
@@ -2015,7 +2015,8 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
       }
       const int gx = x / CG, fx = x % CG, wx = CG - fx, k = -ce;
       const int n = (ln[gx] * wx + ln[gx + 1] * fx) >> 4, dn = (ld[gx] * wx + ld[gx + 1] * fx) >> 4;   // (CG * CG = 16)
-      const int det = ((cloudAt(((x * cloudK3) >> 8) + D3, Y3) - 128) * detK) >> 8;   // crisp, puffy edges, right at this pixel
+      int det = ((cloudAt(((x * cloudK3) >> 8) + D3, Y3) - 128) * detK) >> 8;   // crisp, puffy edges, right at this pixel
+      if (fineK) det += ((cloudAt(((x * cloudK4) >> 8) + D4, Y4) - 128) * fineK) >> 8;   // sunset: fine wisps on the edges
       const int dens = cloudDensT[constrain(n + det + 128, 0, 511)];
       const uint8_t *cc = cloudCol[constrain(158 + dn * shadeK + ((det * 3) >> 1), 0, 255) >> 4];
       int c0 = sky0 + (((cc[0] - sky0) * dens) >> 8), c1 = sky1 + (((cc[1] - sky1) * dens) >> 8), c2 = sky2 + (((cc[2] - sky2) * dens) >> 8);
