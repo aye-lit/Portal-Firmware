@@ -1185,8 +1185,8 @@ let cloudTex = null, cloudDrift = 0, cloudLastMs = 0, cloudKey = "";
 const cloudDensT = new Uint8Array(512), cloudShT = new Uint8Array(64), cloudGlowT = new Uint8Array(128), cloudRayT = new Uint8Array(256), cloudRayRT = new Uint8Array(256), cloudCol = Array.from({ length: 16 }, () => [0, 0, 0]);
 const CK = { k1: 0, k2: 0, k3: 0 };
 const SKY_TOP = [[38, 96, 190], [58, 38, 110], [140, 178, 236]], SKY_MID = [225, 110, 92], SKY_BOT = [[150, 200, 240], [255, 190, 110], [255, 232, 190]];
-const CL_LIT = [[250, 252, 255], [255, 226, 180], [255, 255, 250]], CL_SH = [[150, 168, 198], [78, 44, 92], [188, 188, 208]], CL_COV = [[0.44, 0.60], [0.45, 0.61], [0.47, 0.53]];
-const CL_DET = [36, 36, 64], CL_SHADE = [5, 5, 8], CL_GLOW = [0.7, 0.7, 0.35], CL_RAY = [0.55, 0.55, 0.3];   // heavenly light: crisper clouds, softer light
+const CL_LIT = [[250, 252, 255], [255, 226, 180], [255, 255, 250]], CL_SH = [[150, 168, 198], [78, 44, 92], [188, 188, 208]], CL_COV = [[0.44, 0.60], [0.47, 0.54], [0.47, 0.53]];
+const CL_DET = [36, 64, 64], CL_SHADE = [5, 7, 8], CL_GLOW = [0.7, 0.7, 0.35], CL_RAY = [0.55, 0.55, 0.3];   // heavenly light: crisper clouds, softer light
 const cloudLat = (ix, iy, p, o) => { ix &= p - 1; iy &= p - 1; return hash32((Math.imul(ix, 73856093) ^ Math.imul(iy, 19349663) ^ Math.imul(o, 83492791)) >>> 0) & 255; };
 function cloudMemory() {
   if (cloudTex) return;
