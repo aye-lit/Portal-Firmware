@@ -589,15 +589,19 @@ if ("serial" in navigator) {
 function progressBar(id) {
   const el = $(id + "-bar"), fill = $(id + "-fill"), stage = $(id + "-stage"), pct = $(id + "-pct"), track = $(id + "-track");
   const bar = {
-    step(n, total, label) { el.hidden = false; el.classList.remove("done"); stage.innerHTML = `<b>Step ${n} of ${total}</b> ${label}`; bar.set(null); },
+    step(n, total, label) { el.hidden = false; el.classList.remove("done", "failed"); stage.innerHTML = `<b>Step ${n} of ${total}</b> ${label}`; bar.set(null); },
     set(f) {
       if (f == null) { el.classList.add("busy"); pct.textContent = ""; track.removeAttribute("aria-valuenow"); return; }
       el.classList.remove("busy");
       const p = Math.round(Math.min(1, Math.max(0, f)) * 100);
       fill.style.width = p + "%"; pct.textContent = p + "%"; track.setAttribute("aria-valuenow", p);
     },
-    done(label) { el.classList.remove("busy"); el.classList.add("done"); bar.set(1); stage.innerHTML = `<b>Done</b> ${label}`; },
-    fail() { el.classList.remove("busy"); el.hidden = true; },
+    done(label, head = "Done") { el.classList.remove("busy", "failed"); el.classList.add("done"); bar.set(1); stage.innerHTML = `<b>${head}</b> ${label}`; },
+    fail(head) {
+      el.classList.remove("busy", "done");
+      if (!head) { el.hidden = true; return; }
+      el.hidden = false; el.classList.add("failed"); stage.innerHTML = `<b>${head}</b>`;
+    },
   };
   return bar;
 }

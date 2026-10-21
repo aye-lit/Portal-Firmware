@@ -1039,10 +1039,10 @@ async function installFirmware() {
       } catch (_) { await loader.after("hard_reset"); }
     } else await loader.after("hard_reset");
     await transport.disconnect(); transport = null;
-    bar.done("Installed");
-    sayF("Installed! The portal starts in a few seconds. Then tap Connect over USB to send your style and colours.", "ok");
+    bar.done("", "Install Successful");
+    sayF("Installed! Unplug your board and plug it back in. Then tap Connect over USB to send your style and colours.", "ok");
   } catch (e) {
-    bar.fail();
+    bar.fail(e && e.name === "NotFoundError" ? "" : "Install Failed");
     if (e && e.name === "NotFoundError") sayF("No board selected.");
     else sayF("Install didn't finish: " + ((e && e.message) || e) + ". Unplug the board, plug it back in and try again. If it still won't connect, hold the BOOT button while plugging it in.", "warn");
     try { if (transport) await transport.disconnect(); } catch (_) {}
