@@ -511,7 +511,7 @@ const crossMax = (M, st = S.style) => M.rect ? Math.floor((M.h - 8) * 0.8) : Mat
 const radiusMax = M => (S.style >= 8 && S.style <= 13) || S.style === 17 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossRipple: 0, woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossRipple: 0, woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -522,6 +522,10 @@ if (!(S.bright >= 10 && S.bright <= 100)) S.bright = 100;
 if (!(S.tone >= 0 && S.tone <= 100)) S.tone = 20;
 if (!(S.warm >= 0 && S.warm <= 100)) S.warm = 50;
 S.tapnext = S.tapnext !== false;
+if (!(S.fdLen >= 2 && S.fdLen <= 30)) S.fdLen = 8;
+if (!(S.fdStars >= 0 && S.fdStars <= 100)) S.fdStars = 60;
+if (!(S.fdClouds >= 0 && S.fdClouds <= 100)) S.fdClouds = 50;
+if (!(S.fdGlow >= 20 && S.fdGlow <= 150)) S.fdGlow = 100;
 if (!(Number.isInteger(S.style) && S.style >= 0 && S.style <= 17)) S.style = 0;
 if (!(S.crossw >= 25 && S.crossw <= 100)) S.crossw = 46;
 if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
@@ -1218,11 +1222,11 @@ function cloudAt(X, Y) {
   const top = (a << 8) + (b - a) * fx, bot = (c << 8) + (d - c) * fx;
   return ((top << 8) + (bot - top) * fy) >> 16;
 }
-function prepareClouds(kind) {
-  const key = kind + "," + W8.s;
+function prepareClouds(kind, shift = 0) {             // shift: more (below 0) or fewer (above 0) clouds
+  const key = kind + "," + W8.s + "," + shift;
   if (key === cloudKey) return;
   cloudKey = key;
-  const [c0, c1] = CL_COV[kind];
+  const c0 = CL_COV[kind][0] + shift, c1 = CL_COV[kind][1] + shift;
   for (let i = 0; i < 512; i++) { const x = Math.min(1, Math.max(0, ((i - 128) / 255 - c0) / (c1 - c0))); cloudDensT[i] = Math.trunc(255 * x * x * (3 - 2 * x)); }
   for (let k = 0; k < 64; k++) cloudShT[k] = Math.trunc(255 * (1 - Math.exp(-k / 2.5) * (kind === 2 ? 0.15 : 0.45)));
   for (let k = 0; k < 128; k++) cloudGlowT[k] = Math.trunc(255 * CL_GLOW[kind] * Math.exp(-k / (10 * W8.s)));
@@ -1248,7 +1252,8 @@ const FD_KEYS = [
 ];
 let FD_T = null;                                     // (fixed moment in the cycle, for still previews)
 function fullDayState(nowMs) {
-  const tc = FD_T != null ? FD_T : ((nowMs / 1000) % FD_CYCLE) / FD_CYCLE;
+  const cyc = S.fdLen * 60;                          // Day length setting (minutes)
+  const tc = FD_T != null ? FD_T : ((nowMs / 1000) % cyc) / cyc;
   let i = 0; while (i < FD_KEYS.length - 2 && tc >= FD_KEYS[i + 1][0]) i++;
   const A = FD_KEYS[i], B = FD_KEYS[i + 1], f0 = (tc - A[0]) / (B[0] - A[0]), f = f0 * f0 * (3 - 2 * f0);
   const mix = (a, b) => a.map((v, j) => v + (b[j] - v) * f);
@@ -1263,14 +1268,14 @@ const rgb32 = (r, g, b) => { const r5 = r & 0xF8, g6 = g & 0xFC, b5 = b & 0xF8; 
 function cloudFrame(out, CE, fill) {
   cloudMemory();
   const fd = fill === 18, kind = fd ? 1 : fill - 8, br = Math.trunc(S.bright * 256 / 100);   // Full day: sunset's crisp clouds, its own colours
-  prepareClouds(kind);
+  prepareClouds(kind, fd ? (50 - S.fdClouds) * 0.004 : 0);   // Full day: the Cloud amount setting
   const FD = fd ? fullDayState(performance.now()) : null;
   let sunX = 0, sunY = 0, sunA = 0, sunCol = [255, 240, 200], moonX = 0, moonY = 0, moonA = 0;
   if (fd && FD.sun) {
     sunX = FD.sun.x * TW; sunY = TH * (1.02 - FD.sun.alt * 0.9); const low = 1 - Math.min(1, FD.sun.alt * 2.2);
-    sunA = Math.min(1, Math.max(0, FD.sun.alt * 6)); sunCol = [255, 246 - low * 90, 214 - low * 150];
+    sunA = Math.min(1, Math.max(0, FD.sun.alt * 6)) * S.fdGlow / 100; sunCol = [255, 246 - low * 90, 214 - low * 150];
   }
-  if (fd && FD.moon) { moonX = FD.moon.x * TW; moonY = TH * (1.02 - FD.moon.alt * 0.85); moonA = Math.min(1, Math.max(0, FD.moon.alt * 6)); }
+  if (fd && FD.moon) { moonX = FD.moon.x * TW; moonY = TH * (1.02 - FD.moon.alt * 0.85); moonA = Math.min(1, Math.max(0, FD.moon.alt * 6)) * S.fdGlow / 100; }
   const sunR = TH * 0.07, sunG = TH * 0.30, moonR = TH * 0.045, twk = performance.now() / 1000;
   const now = performance.now();
   if (cloudLastMs) cloudDrift += 6 * Math.min(8, (now - cloudLastMs) / 1000) * (S.speed / 0.12);
@@ -1305,16 +1310,16 @@ function cloudFrame(out, CE, fill) {
         if (sunA > 0) {
           const dx = x - sunX, dy = y - sunY, d = Math.sqrt(dx * dx + dy * dy);
           const g = d < sunR ? 1 : Math.exp(-((d - sunR) / sunG) * ((d - sunR) / sunG) * 3) * 0.55 + (d < sunR * 1.25 ? (sunR * 1.25 - d) / (sunR * 0.25) * 0.6 : 0);
-          for (let j = 0; j < 3; j++) bg[j] += (sunCol[j] - bg[j]) * Math.min(1, g) * sunA;
+          for (let j = 0; j < 3; j++) bg[j] += (sunCol[j] - bg[j]) * Math.min(1, Math.min(1, g) * sunA);
         }
         if (moonA > 0) {
           const dx = x - moonX, dy = y - moonY, d = Math.sqrt(dx * dx + dy * dy);
           const g = d < moonR ? 0.92 : Math.exp(-(((d - moonR) / (moonR * 2.2)) ** 2)) * 0.22;
-          for (let j = 0; j < 3; j++) bg[j] += ([236, 238, 226][j] - bg[j]) * g * moonA;
+          for (let j = 0; j < 3; j++) bg[j] += ([236, 238, 226][j] - bg[j]) * Math.min(1, g * moonA);
         }
         if (FD.stars > 0.01) {
           const h = hash32(Math.imul(y * TW + x, 2654435761) >>> 0);
-          if ((h & 1023) < 5) { const tw = 0.6 + 0.4 * Math.sin(twk * 2 + (h >>> 10)), v = (150 + ((h >>> 20) & 105)) * tw * FD.stars; for (let j = 0; j < 3; j++) bg[j] = Math.max(bg[j], v * [0.92, 0.95, 1][j]); }
+          if ((h & 1023) < Math.round(S.fdStars * 0.3)) { const tw = 0.6 + 0.4 * Math.sin(twk * 2 + (h >>> 10)), v = (150 + ((h >>> 20) & 105)) * tw * FD.stars; for (let j = 0; j < 3; j++) bg[j] = Math.max(bg[j], v * [0.92, 0.95, 1][j]); }
         }
         const cl = [0, 1, 2].map(j => FD.sh[j] + (FD.lit[j] - FD.sh[j]) * light / 15);
         for (let j = 0; j < 3; j++) c[j] = Math.trunc(bg[j] + ((cl[j] - bg[j]) * dens) / 256);

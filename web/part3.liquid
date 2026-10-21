@@ -213,7 +213,7 @@ Spark sparks[MAX_SPARKS];
 int16_t sparkX[MAX_SPARKS], sparkY[MAX_SPARKS];
 float t = 0;
 
-struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill, crossRipple, portrait, tone, warm, tapOff; };
+struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill, crossRipple, portrait, tone, warm, tapOff, fdLen, fdStars, fdClouds, fdGlow; };
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // ---------- tables ----------
@@ -286,6 +286,7 @@ void buildParams() {
 }
 
 uint8_t  TONE = ${turns(M) ? S.tone : 0};             // Colour depth: darker mid-tones for screens that look washed out (0 = as drawn)
+uint8_t  FD_LEN = ${S.fdLen}, FD_STARCNT = ${S.fdStars}, FD_CLOUDS = ${S.fdClouds}, FD_GLOW = ${S.fdGlow};   // Full day: day length (minutes), star count, cloud amount, sun and moon brightness (%)
 uint8_t  TAP_OFF = ${S.tapnext === false ? 1 : 0};             // 1: tapping the screen does nothing
 uint8_t  WARM = ${turns(M) ? S.warm : 0};             // Warmth: less blue (and a little less green) for screens that lean blue
 uint16_t toneS[256];                    // how much to scale a colour by, from its brightest channel (keeps the hue)
@@ -496,6 +497,9 @@ void apply(const Saved &s) {
   TONE = s.tone <= 100 ? s.tone : 0;
   WARM = s.warm <= 100 ? s.warm : 0;
   TAP_OFF = s.tapOff == 1;               // (older saved settings: tapping stays on)
+  if (s.fdLen >= 2 && s.fdLen <= 30 && s.fdStars <= 100 && s.fdClouds <= 100 && s.fdGlow >= 20 && s.fdGlow <= 150) {   // (older saved settings: Full day keeps its defaults)
+    FD_LEN = s.fdLen; FD_STARCNT = s.fdStars; FD_CLOUDS = s.fdClouds; FD_GLOW = s.fdGlow;
+  }
 }
 
 void loadSettings() {
@@ -522,6 +526,7 @@ void saveSettings() {
   s.tone = TONE;
   s.warm = WARM;
   s.tapOff = TAP_OFF;
+  s.fdLen = FD_LEN; s.fdStars = FD_STARCNT; s.fdClouds = FD_CLOUDS; s.fdGlow = FD_GLOW;
   EEPROM.put(0, s);
 ${EEPROM_BEGIN_GUARD}
   EEPROM.commit();
@@ -565,11 +570,11 @@ uint32_t rebootAt = 0;                   // set by the REBOOT command
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strcasecmp(line, "TAP") == 0) { tapCount++; return "OK"; }   // same as tapping the screen: the next style (or scene)
   if (strncasecmp(line, "SET ", 4) == 0) {
-    float v[50];
+    float v[54];
     uint8_t n = 0;
     char *p = strtok(line + 4, " ");
-    while (p && n < 50) { v[n++] = atof(p); p = strtok(NULL, " "); }
-    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46 || n == 47 || n == 48 || n == 49 || n == 50) {
+    while (p && n < 54) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46 || n == 47 || n == 48 || n == 49 || n == 50 || n == 54) {
       Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
       for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
       s.fadeSecs = v[23];
@@ -584,6 +589,8 @@ const char* handleCommand(char *line) {   // returns the reply to send back
       s.tone = n >= 48 ? (uint8_t)v[47] : TONE;                          // colour depth
       s.warm = n >= 49 ? (uint8_t)v[48] : WARM;                          // warmth
       s.tapOff = n >= 50 ? (v[49] ? 0 : 1) : TAP_OFF;                    // tap for next scene (touchscreens)
+      s.fdLen = n >= 54 ? (uint8_t)v[50] : FD_LEN; s.fdStars = n >= 54 ? (uint8_t)v[51] : FD_STARCNT;   // Full day settings
+      s.fdClouds = n >= 54 ? (uint8_t)v[52] : FD_CLOUDS; s.fdGlow = n >= 54 ? (uint8_t)v[53] : FD_GLOW;
       if (n >= 36) {
         s.sceneCount = (uint8_t)v[25];
         for (int k = 0; k < 8; k++) s.scenes[k] = (uint8_t)v[26 + k];
@@ -738,7 +745,7 @@ HOT void composeStrip(int y0, int rows, uint16_t *dst) {
 // ---------- one frame ----------
 uint8_t look = 0;                        // the style being drawn (crosses fall back to Vortex without flash storage)
 extern bool woodOn; extern int woodPulse; void prepareWood();   // Wooden cross (below)
-extern float cloudDrift; bool cloudMemory(); void prepareClouds(int kind); void prepareFullDay();
+extern float cloudDrift; bool cloudMemory(); void prepareClouds(int kind, int amount); void prepareFullDay();
 extern float ripplePh; extern uint8_t crossRipT[128]; void buildCrossRipple();
 
 inline void polarAt(int x, int y, int cyc, int &r, int &a) {   // distance and angle (0-255) from (centre column, row cyc)
@@ -1196,7 +1203,7 @@ void frameStart() {
   if (woodOn) { prepareWood(); woodPulse = (int)(256 * (0.75f + 0.25f * sinf(millis() / 1000.0f * 1.3f))); }
   if (crossOn && !woodOn) buildCrossRipple(); else memset(crossRipT, 0, sizeof(crossRipT));
   if (woodOn && ((look >= 8 && look <= 10) || look == 18)) {           // a cloud sky (no room: the warm glow)
-    if (cloudMemory()) { prepareClouds(look == 18 ? 1 : look - 8); if (look == 18) prepareFullDay(); } else look = 7;
+    if (cloudMemory()) { prepareClouds(look == 18 ? 1 : look - 8, look == 18 ? FD_CLOUDS : -1); if (look == 18) prepareFullDay(); } else look = 7;
   }
   bool baseCross = crossOn;
   int baseLook = look;
@@ -1576,11 +1583,11 @@ inline int cloudAt(int X, int Y) {              // bilinear, coordinates in 1/25
   int top = (a << 8) + (b - a) * fx, bot = (c << 8) + (d - c) * fx;
   return ((top << 8) + (bot - top) * fy) >> 16;
 }
-void prepareClouds(int kind) {
-  int key = kind * 1000000 + (int)(woodS * 1000);
+void prepareClouds(int kind, int amount) {   // amount: Full day's Cloud amount (50 = as designed; -1: not used)
+  int key = kind * 1000000 + (int)(woodS * 1000) + (amount + 1) * 3;
   if (key == cloudKey) return;
   cloudKey = key;
-  float c0 = CL_COV[kind][0], c1 = CL_COV[kind][1];
+  float shift = amount >= 0 ? (50 - amount) * 0.004f : 0, c0 = CL_COV[kind][0] + shift, c1 = CL_COV[kind][1] + shift;
   for (int i = 0; i < 512; i++) { float x = fminf(1, fmaxf(0, ((i - 128) / 255.0f - c0) / (c1 - c0))); cloudDensT[i] = (uint8_t)(255 * x * x * (3 - 2 * x)); }
   for (int k = 0; k < 64; k++) cloudShT[k] = (uint8_t)(255 * (1 - expf(-k / 2.5f) * (kind == 2 ? 0.15f : 0.45f)));
   for (int k = 0; k < 128; k++) cloudGlowT[k] = (uint8_t)(255 * CL_GLOW[kind] * expf(-k / (10 * woodS)));
@@ -1610,9 +1617,10 @@ int      fdStars = 0;                      // 0-256
 int      fdBodyX = 0, fdBodyY = 0, fdBodyR = 0, fdDisc = 0, fdBodyOn = 0;   // the sun (or the moon): where, how big, how bright its disc is
 uint8_t  fdBodyCol[3];
 uint8_t  fdGlowT[256];                     // its glow, by distance (2 pixels a step)
-int      fdTwk = 0;
+int      fdTwk = 0, fdStarD = 18;
 void prepareFullDay() {                    // once per frame
-  float tc = (float)(fmod(millis() / 1000.0, FD_CYCLE) / FD_CYCLE);
+  const double cyc = FD_LEN * 60.0;        // Day length setting
+  float tc = (float)(fmod(millis() / 1000.0, cyc) / cyc);
   int i = 0; while (i < 7 && tc >= FD_KEYS[i + 1][0]) i++;
   const float *A = FD_KEYS[i], *B = FD_KEYS[i + 1];
   float f = (tc - A[0]) / (B[0] - A[0]); f = f * f * (3 - 2 * f);
@@ -1629,23 +1637,24 @@ void prepareFullDay() {                    // once per frame
   float R, G, a, disc;
   if (day > -0.05f && day < 1.05f) {                       // the sun: up from the lower left, over the top, down at the lower right
     float alt = sinf(fminf(1, fmaxf(0, day)) * PI), low = 1 - fminf(1, alt * 2.2f);
-    a = fminf(1, fmaxf(0, alt * 6));
+    a = fminf(1, fmaxf(0, alt * 6)) * FD_GLOW / 100.0f;   // Sun and moon brightness setting
     fdBodyX = (int)((0.06f + day * 0.88f) * SCR_W); fdBodyY = (int)(SCR_H * (1.02f - alt * 0.9f));
     fdBodyCol[0] = 255; fdBodyCol[1] = (uint8_t)(246 - low * 90); fdBodyCol[2] = (uint8_t)(214 - low * 150);
     R = SCR_H * 0.07f; G = SCR_H * 0.30f; disc = 1;
     for (int k = 0; k < 256; k++) {
       float d = k * 2.0f, g = d < R ? 1 : expf(-((d - R) / G) * ((d - R) / G) * 3) * 0.55f + (d < R * 1.25f ? (R * 1.25f - d) / (R * 0.25f) * 0.6f : 0);
-      fdGlowT[k] = (uint8_t)(255 * fminf(1, g) * a);
+      fdGlowT[k] = (uint8_t)(255 * fminf(1, fminf(1, g) * a));
     }
   } else if (nt > -0.03f && nt < 1.03f) {                  // the moon, through the night
     float alt = sinf(fminf(1, fmaxf(0, nt)) * PI);
-    a = fminf(1, fmaxf(0, alt * 6));
+    a = fminf(1, fmaxf(0, alt * 6)) * FD_GLOW / 100.0f;
     fdBodyX = (int)((0.12f + nt * 0.76f) * SCR_W); fdBodyY = (int)(SCR_H * (1.02f - alt * 0.85f));
     fdBodyCol[0] = 236; fdBodyCol[1] = 238; fdBodyCol[2] = 226;
     R = SCR_H * 0.045f; disc = 0.92f;
-    for (int k = 0; k < 256; k++) { float d = k * 2.0f, q = (d - R) / (R * 2.2f), g = d < R ? 0.92f : expf(-q * q) * 0.22f; fdGlowT[k] = (uint8_t)(255 * g * a); }
+    for (int k = 0; k < 256; k++) { float d = k * 2.0f, q = (d - R) / (R * 2.2f), g = d < R ? 0.92f : expf(-q * q) * 0.22f; fdGlowT[k] = (uint8_t)(255 * fminf(1, g * a)); }
   } else { a = 0; R = 0; disc = 0; memset(fdGlowT, 0, sizeof(fdGlowT)); }
-  if (a > 0) { fdBodyOn = 1; fdBodyR = (int)R; fdDisc = (int)(255 * disc * a); }
+  if (a > 0) { fdBodyOn = 1; fdBodyR = (int)R; fdDisc = (int)(255 * fminf(1, disc * a)); }
+  fdStarD = (FD_STARCNT * 3 + 5) / 10;      // Star count setting (100%: 30 in 1024 pixels)
 }
 
 // The big cloud shapes are worked out every 4 pixels and blended in between; the fine detail on their edges
@@ -1744,7 +1753,7 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
         if (g) { b0 += ((fdBodyCol[0] - b0) * g) >> 8; b1 += ((fdBodyCol[1] - b1) * g) >> 8; b2 += ((fdBodyCol[2] - b2) * g) >> 8; }
         if (fdStars > 2) {
           uint32_t h = hash32((uint32_t)(y * SCR_W + x) * 2654435761UL);
-          if ((h & 1023) < 5) {
+          if ((int)(h & 1023) < fdStarD) {
             int v = ((150 + (int)((h >> 20) & 105)) * (154 + sinT[(fdTwk + (h >> 10)) & 255] * 102 / 127) >> 8) * fdStars >> 8;
             if ((v * 235 >> 8) > b0) b0 = v * 235 >> 8;
             if ((v * 242 >> 8) > b1) b1 = v * 242 >> 8;
