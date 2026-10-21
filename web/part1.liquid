@@ -90,6 +90,11 @@
 @media (max-width: 480px) {
 #vps .grid { grid-template-columns: minmax(0, 1fr); }
  }
+#vps .sliders { grid-column: 1 / -1; columns: 2; column-gap: 22px; }
+#vps .sliders > label.ctl { break-inside: avoid; margin-bottom: 10px; }
+@media (max-width: 480px) {
+#vps .sliders { columns: 1; }
+ }
 #vps label.ctl { display: grid; gap: 4px; font-size: 13px; align-content: start; }
 #vps label.ctl span { display: flex; justify-content: space-between; gap: 8px; }
 #vps label.ctl output { font: 500 12px var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -349,6 +354,7 @@ Takes about a minute.</p>
           </div>
         </div>
         <div class="grid">
+          <div class="sliders">
           <label class="ctl" for="vps-radius"><span>Portal size <output id="vps-o-radius"></output></span><input id="vps-radius" type="range" min="6" max="31" step="1"></label>
           <label class="ctl" for="vps-oval"><span>Shape <output id="vps-o-oval"></output></span><input id="vps-oval" type="range" min="1" max="2" step="0.05"><small>1.00 is round, higher is a wide oval</small></label>
           <label class="ctl" for="vps-arms"><span>Spiral arms <output id="vps-o-arms"></output></span><input id="vps-arms" type="range" min="1" max="8" step="1"></label>
@@ -367,6 +373,7 @@ Takes about a minute.</p>
           <label class="ctl" for="vps-glow" data-burst><span>Centre glow size <output id="vps-o-glow"></output></span><input id="vps-glow" type="range" min="0.3" max="0.9" step="0.05"><small>How far the centre glow reaches</small></label>
           <label class="ctl" for="vps-rimsmooth" id="vps-rimsmooth-wrap"><span>Rim smoothness <output id="vps-o-rimsmooth"></output></span><input id="vps-rimsmooth" type="range" min="0" max="100" step="5"><small>0% wobbly edge, 100% smooth ring</small></label>
           <label class="ctl" for="vps-frame" id="vps-frame-wrap" hidden><span>Portal around a picture: portal covers <output id="vps-o-frame"></output></span><input id="vps-frame" type="range" min="10" max="95" step="5"><small>How far the portal closes in over the picture</small></label>
+          </div>
           <label for="vps-reverse" class="chk" id="vps-reverse-wrap" style="grid-column: 1 / -1" hidden><input id="vps-reverse" type="checkbox"> Reverse: the rings fly out of the tunnel toward you</label>
           <label class="ctl" for="vps-crossfill" data-cross style="grid-column: 1 / -1"><span id="vps-crossfill-label">Inside the cross</span><select id="vps-crossfill"><optgroup label="Light and sky" id="vps-fill-sky"><option value="7">Warm glow</option><option value="8">Blue sky</option><option value="9">Sunset</option><option value="10">Heavenly light</option></optgroup><optgroup label="Plain" id="vps-fill-plain"><option value="11">Solid colour</option></optgroup><optgroup label="Portal"><option value="0">Vortex</option><option value="1">Toon Spiral</option><option value="2">Starburst</option><option value="6">Cartoon Swirl</option></optgroup><optgroup label="Space"><option value="3">Hyperspace</option><option value="4">Galaxy</option><option value="5">Black hole</option><option value="14">Nebula</option><option value="15">Wormhole</option><option value="16">Meteor Shower</option></optgroup></select><small id="vps-crossfill-hint">What's shown inside the glowing cross outline</small></label>
           <label class="ctl" for="vps-woodgrain" data-cross style="grid-column: 1 / -1"><span>Wood</span><select id="vps-woodgrain"><option value="0">Classic</option><option value="1">Pine</option><option value="2">Rustic oak</option></select><small>The grain of the wooden cross</small></label>
