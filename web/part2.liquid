@@ -530,7 +530,7 @@ if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 S.reverse = S.reverse === true;
 if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16].includes(S.crossFill)) S.crossFill = 0;
 if (![0, 1, 2].includes(S.crossRipple)) S.crossRipple = 0;
-if (![0, 1, 2].includes(S.woodGrain)) S.woodGrain = 0;
+if (!(Number.isInteger(S.woodGrain) && S.woodGrain >= 0 && S.woodGrain <= 10)) S.woodGrain = 0;
 if (S.c1 === "#c02ad0" && S.c2 === "#f9c8ff") { S.c1 = PRESETS.Bloom[0]; S.c2 = PRESETS.Bloom[1]; }   // the old pale Bloom colours
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
@@ -1093,10 +1093,18 @@ function woodNoise(x, seed) {
 }
 const woodBox = (x, y, cx, cy, hw, hh) => { const dx = Math.abs(x - cx) - hw, dy = Math.abs(y - cy) - hh; return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0); };
 const woodSD = (x, y) => Math.min(woodBox(x, y, 0, (W8.bot - W8.top) / 2, W8.AW, (W8.bot + W8.top) / 2), woodBox(x, y, 0, 0, W8.HHL, W8.AW));
-// Three grains: 0 classic, 1 pine, 2 rustic oak. Worked out once per pixel (one byte: 32 tones x 8 shades), like the board.
+// Eleven woods: 0 classic, 1 pine, 2 rustic oak, 3 walnut, 4 cherry, 5 mahogany, 6 cedar, 7 driftwood, 8 ebony, 9 maple, 10 olive wood. Worked out once per pixel (one byte: 32 tones x 8 shades), like the board.
 const WOOD_GRAINS = [
   { early: [222, 176, 118], late: [156, 94, 46], freq: 0.15, arch: 0.10, off: 20, warp: 3.0, l0: 0.50, l1: 0.86, tone: 0.10, pores: 0.008, poreLen: 9, poreDark: 0.85, u0V: 30, u0H: -25 },   // pine
-  { early: [150, 100, 58], late: [88, 54, 30], freq: 0.26, arch: 0.08, off: 22, warp: 2.4, l0: 0.45, l1: 0.82, tone: 0.16, pores: 0.025, poreLen: 8, poreDark: 0.78, u0V: -20, u0H: 60 }    // rustic oak
+  { early: [150, 100, 58], late: [88, 54, 30], freq: 0.26, arch: 0.08, off: 22, warp: 2.4, l0: 0.45, l1: 0.82, tone: 0.16, pores: 0.025, poreLen: 8, poreDark: 0.78, u0V: -20, u0H: 60 },   // rustic oak
+  { early: [124, 84, 58], late: [60, 38, 26], freq: 0.19, arch: 0.09, off: 18, warp: 3.2, l0: 0.46, l1: 0.84, tone: 0.16, pores: 0.045, poreLen: 10, poreDark: 0.68, u0V: 10, u0H: -40 },   // walnut
+  { early: [200, 118, 80], late: [150, 76, 48], freq: 0.15, arch: 0.1, off: 24, warp: 2.4, l0: 0.55, l1: 0.9, tone: 0.16, pores: 0.004, poreLen: 9, poreDark: 0.85, u0V: -30, u0H: 20 },   // cherry
+  { early: [158, 76, 52], late: [104, 46, 32], freq: 0.32, arch: 0.03, off: 30, warp: 1.4, l0: 0.42, l1: 0.82, tone: 0.12, pores: 0.05, poreLen: 16, poreDark: 0.7, u0V: 0, u0H: 0 },   // mahogany
+  { early: [226, 154, 112], late: [150, 78, 56], freq: 0.17, arch: 0.12, off: 16, warp: 3.6, l0: 0.48, l1: 0.82, tone: 0.18, pores: 0.006, poreLen: 9, poreDark: 0.85, u0V: 40, u0H: -10 },   // cedar
+  { early: [186, 178, 164], late: [122, 114, 104], freq: 0.2, arch: 0.06, off: 20, warp: 4.5, l0: 0.4, l1: 0.78, tone: 0.24, pores: 0.07, poreLen: 26, poreDark: 0.55, u0V: -10, u0H: 30 },   // driftwood
+  { early: [56, 46, 40], late: [36, 30, 27], freq: 0.3, arch: 0.04, off: 26, warp: 1.8, l0: 0.55, l1: 0.92, tone: 0.1, pores: 0.01, poreLen: 12, poreDark: 0.8, u0V: 20, u0H: -20 },   // ebony
+  { early: [238, 214, 172], late: [214, 182, 136], freq: 0.12, arch: 0.1, off: 22, warp: 2.2, l0: 0.58, l1: 0.92, tone: 0.08, pores: 0.002, poreLen: 9, poreDark: 0.9, u0V: -20, u0H: 50 },   // maple
+  { early: [220, 194, 140], late: [104, 80, 46], freq: 0.22, arch: 0.16, off: 12, warp: 9, l0: 0.58, l1: 0.86, tone: 0.2, pores: 0.006, poreLen: 9, poreDark: 0.85, u0V: 50, u0H: -60 }    // olive wood
 ];
 const WOOD_SHADE = [0.70, 0.78, 0.86, 0.93, 1.0, 1.08, 1.17, 1.28], woodPal8 = new Uint32Array(256);
 let woodBytes = null, woodPlaneKey = "";
