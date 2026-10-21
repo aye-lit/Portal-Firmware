@@ -408,7 +408,7 @@ function markStyle() {
     $("twist-hint").textContent = gal ? "How tightly the arms wind" : "How much the tunnel walls spiral";
   }
   $("reverse-wrap").hidden = !wh;
-  const sky = tft && S.style === 17 && S.crossFill >= 8 && S.crossFill <= 10;   // Wooden cross with a cloud sky: the speed slider moves the clouds
+  const sky = tft && S.style === 17 && ((S.crossFill >= 8 && S.crossFill <= 10) || S.crossFill === 18);   // Wooden cross with a cloud sky: the speed slider moves the clouds
   $("speed").closest("label").querySelector("span").firstChild.nodeValue = sky ? "Cloud speed " : "Spin speed ";
   $("speed-hint").hidden = !sky;
   const sl = $("sparks").closest("label");                   // Meteor Shower: the Sparks setting is the number of meteors
@@ -435,7 +435,7 @@ STYLES.forEach((st, i) => {
     if (st.sparks) S.sparks = st.sparks;
     if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.crossw = DEFAULTS.crossw; S.radius = crossMax(M); }
     if (st.wood) S.crossFill = 7;                              // Wooden cross: starts with the warm glow behind it
-    else if (S.crossFill >= 7 && S.crossFill <= 10) S.crossFill = 0;   // (Solid colour, 11, is kept for the other crosses)   // crosses fill the screen, each with its own proportions
+    else if ((S.crossFill >= 7 && S.crossFill <= 10) || S.crossFill === 18) S.crossFill = 0;   // (Solid colour, 11, is kept for the other crosses)   // crosses fill the screen, each with its own proportions
     bindAll(); markStyle(); changed(true);
   });
   $(isCrossStyle(i) ? "style-cross" : isSpaceStyle(i) ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole, Nebula, Wormhole, Meteor Shower are space styles
@@ -941,11 +941,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.10.19";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/e2bf4271ec233c78f58e7269ca675889463dc66a/";
+const FW_VERSION = "1.10.20";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/f296f0aa7b66a5742681bea01c7ae0e1f384fa1d/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "a7676b3ebb0c8c0ab689969eaad8cc53a768a5d0f34b022112f41788839bb162" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "7c3c0a496b7080f37a09a2aac91271346a0899d4ec50bda052217d5ecb40e6ea" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "b9650a456c031316896a81a466815b3e0446141e3d073de6ed50c28abdd6fd84" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "7a77047a98cc04a44914149ae51d4552fd46e39d9398091f48d6fdf79160fa0e" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
