@@ -122,6 +122,8 @@
 #vps button:focus-visible, #vps input:focus-visible, #vps select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #vps .quick { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; }
 #vps .quick h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+#vps .manual { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; }
+#vps .manual > h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
 #vps .quick p { margin: 0 0 6px; color: var(--dim); font-size: 14px; }
 #vps .pbar { margin-top: 10px; }
 #vps .pbar-top { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--dim); margin-bottom: 4px; }
@@ -284,6 +286,8 @@ Takes about a minute.</p>
           <div class="status" id="vps-fw-status" role="status"></div>
           <div class="btns" style="margin-top:8px"><button class="b" id="vps-fw-usb" type="button">Connect over USB</button></div>
         </div>
+        <div class="manual">
+        <h3>Manual Install</h3>
         <ol class="steps">
           <li>
             <div>
@@ -321,6 +325,7 @@ Takes about a minute.</p>
             </div>
           </li>
         </ol>
+        </div>
       </section>
     </div>
     <div class="col">
