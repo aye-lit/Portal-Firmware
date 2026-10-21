@@ -952,7 +952,7 @@ function showFirmware() {
   const fw = firmwareFor();
   $("fw-box").hidden = !fw;
   if (fw) $("fw-note").textContent = IS_ANDROID && fw.phone
-    ? "Select the correct board from the drop down list. Plug the board into your phone with USB-C, tap the Install on my board button.\nTakes about a minute."
+    ? "Select the correct board from the drop down list. Plug the board into your phone, tap the Install on my board button.\nTakes about a minute.\n(Only works with Android. A terminal app may be needed)"
     : "Select the correct board from the drop down list to the right. Plug the board into your computer, click the Install on my board button. Works in Chrome or Edge on a computer.\nTakes about a minute.";
 }
 let esptool = null;
