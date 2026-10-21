@@ -1,6 +1,6 @@
 # Vortex Portal firmware
 
-Prebuilt firmware for [Vortex Portal Studio](https://ayelit.com). The Studio's
+Prebuilt firmware for [Display Studio](https://ayelit.com). The Studio's
 "Install on my board" button flashes these straight from the browser (Chrome or Edge),
 no Arduino IDE needed. After installing, style and colours are sent from the Studio
 over Bluetooth or USB and saved on the board.
