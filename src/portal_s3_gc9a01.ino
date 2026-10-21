@@ -114,7 +114,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x068919ABUL;
+const uint32_t BUILD_ID = 0x63B76B56UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -370,7 +370,7 @@ void updateSparks() {
 }
 
 // ---------- saved settings (EEPROM) ----------
-bool validFill(uint8_t f) { return f <= 11 || (f >= 14 && f <= 16); }   // styles that can go inside a cross (Wooden cross only: 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
+bool validFill(uint8_t f) { return f <= 11 || (f >= 14 && f <= 16) || f == 18; }   // styles that can go inside a cross (Wooden cross only: 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light, 18 full day)
 
 inline bool isStyleScene(uint8_t c) { return c >= 200 && c <= 216 && (c - 200 <= 7 || c - 200 >= 14); }   // 200 + style: another style to fade into
 inline bool validScene(uint8_t c) { return c == PORTAL || c < MAX_PICS || (c >= 128 && c < 128 + MAX_PICS) || isStyleScene(c); }
@@ -1081,7 +1081,7 @@ HOT void composeStrip(int y0, int rows, uint16_t *dst) {
 // ---------- one frame ----------
 uint8_t look = 0;                        // the style being drawn (crosses fall back to Vortex without flash storage)
 extern bool woodOn; extern int woodPulse; void prepareWood();   // Wooden cross (below)
-extern float cloudDrift; bool cloudMemory(); void prepareClouds(int kind);
+extern float cloudDrift; bool cloudMemory(); void prepareClouds(int kind); void prepareFullDay();
 extern float ripplePh; extern uint8_t crossRipT[128]; void buildCrossRipple();
 
 inline void polarAt(int x, int y, int cyc, int &r, int &a) {   // distance and angle (0-255) from (centre column, row cyc)
@@ -1534,11 +1534,13 @@ void frameStart() {
   crossOn = isCross && crossReady;
   woodOn = crossOn && STYLE == 17;
   look = crossOn ? CROSS_FILL : isCross ? 0 : STYLE;   // crosses: the chosen style is drawn inside (the Wooden cross: behind)
-  if (crossOn && look >= 7 && look <= 10 && !woodOn) look = 0;   // the warm glow and the skies are only for the Wooden cross
+  if (crossOn && ((look >= 7 && look <= 10) || look == 18) && !woodOn) look = 0;   // the warm glow and the skies are only for the Wooden cross
   if (woodOn && look == 11) look = 7;                            // solid colour is for the glowing crosses
   if (woodOn) { prepareWood(); woodPulse = (int)(256 * (0.75f + 0.25f * sinf(millis() / 1000.0f * 1.3f))); }
   if (crossOn && !woodOn) buildCrossRipple(); else memset(crossRipT, 0, sizeof(crossRipT));
-  if (woodOn && look >= 8 && look <= 10) { if (cloudMemory()) prepareClouds(look - 8); else look = 7; }   // no room: the warm glow
+  if (woodOn && ((look >= 8 && look <= 10) || look == 18)) {           // a cloud sky (no room: the warm glow)
+    if (cloudMemory()) { prepareClouds(look == 18 ? 1 : look - 8); if (look == 18) prepareFullDay(); } else look = 7;
+  }
   bool baseCross = crossOn;
   int baseLook = look;
   lookA = isStyleScene(sceneA) ? sceneA - 200 : baseLook; crossA = !isStyleScene(sceneA) && baseCross;
@@ -1930,6 +1932,65 @@ void prepareClouds(int kind) {
   for (int i = 0; i < 16; i++) for (int j = 0; j < 3; j++) cloudCol[i][j] = (uint8_t)(CL_SH[kind][j] + (CL_LIT[kind][j] - CL_SH[kind][j]) * i / 15);
   cloudK1 = (int)lroundf(64 / woodS * 256); cloudK2 = (int)lroundf(64 / woodS * 256 * 1.7f); cloudK3 = (int)lroundf(64 / woodS * 256 * 3.1f); cloudK4 = (int)lroundf(64 / woodS * 256 * 6.5f);
 }
+// Full day (fill 18): one sky that runs through a whole day in about 8 minutes: sunrise, a few minutes of blue sky,
+// sunset, a starry night with the moon, then sunrise again (same as the Studio's preview).
+#define FD_CYCLE 480.0
+const float FD_KEYS[9][16] = {   // time, sky top, middle, bottom, lit cloud, cloud shadow (r g b each), stars
+  { 0.00f, 18, 22, 56,  66, 46, 96,   186, 104, 92,  196, 150, 150, 56, 46, 80 },
+  { 0.05f, 62, 82, 160, 236, 140, 104, 255, 196, 136, 255, 220, 186, 126, 88, 112 },
+  { 0.12f, 44, 104, 196, 110, 160, 225, 168, 208, 244, 250, 252, 255, 150, 168, 198 },
+  { 0.50f, 36, 96, 190, 100, 152, 220, 150, 200, 240, 250, 252, 255, 150, 168, 198 },
+  { 0.58f, 58, 38, 110, 225, 110, 92,  255, 190, 110, 255, 226, 180, 78, 44, 92 },
+  { 0.65f, 18, 18, 50,  60, 38, 86,    150, 76, 84,   128, 96, 124,  40, 32, 60 },
+  { 0.72f, 6, 8, 26,    12, 16, 42,    26, 34, 72,    74, 80, 106,   20, 22, 38 },
+  { 0.95f, 8, 10, 32,   18, 20, 52,    44, 40, 86,    90, 86, 116,   24, 24, 44 },
+  { 1.00f, 18, 22, 56,  66, 46, 96,    186, 104, 92,  196, 150, 150, 56, 46, 80 },
+};
+const float FD_STARS[9] = { 0.35f, 0, 0, 0, 0, 0.45f, 1.0f, 0.85f, 0.35f };
+float    fdTop[3], fdMid[3], fdBot[3];
+uint8_t  fdCol[16][3];                     // the clouds in the day's light
+int      fdStars = 0;                      // 0-256
+int      fdBodyX = 0, fdBodyY = 0, fdBodyR = 0, fdDisc = 0, fdBodyOn = 0;   // the sun (or the moon): where, how big, how bright its disc is
+uint8_t  fdBodyCol[3];
+uint8_t  fdGlowT[256];                     // its glow, by distance (2 pixels a step)
+int      fdTwk = 0;
+void prepareFullDay() {                    // once per frame
+  float tc = (float)(fmod(millis() / 1000.0, FD_CYCLE) / FD_CYCLE);
+  int i = 0; while (i < 7 && tc >= FD_KEYS[i + 1][0]) i++;
+  const float *A = FD_KEYS[i], *B = FD_KEYS[i + 1];
+  float f = (tc - A[0]) / (B[0] - A[0]); f = f * f * (3 - 2 * f);
+  float lit[3], sh[3];
+  for (int j = 0; j < 3; j++) {
+    fdTop[j] = A[1 + j] + (B[1 + j] - A[1 + j]) * f; fdMid[j] = A[4 + j] + (B[4 + j] - A[4 + j]) * f; fdBot[j] = A[7 + j] + (B[7 + j] - A[7 + j]) * f;
+    lit[j] = A[10 + j] + (B[10 + j] - A[10 + j]) * f; sh[j] = A[13 + j] + (B[13 + j] - A[13 + j]) * f;
+  }
+  for (int k = 0; k < 16; k++) for (int j = 0; j < 3; j++) fdCol[k][j] = (uint8_t)(sh[j] + (lit[j] - sh[j]) * k / 15);
+  fdStars = (int)(256 * (FD_STARS[i] + (FD_STARS[i + 1] - FD_STARS[i]) * f));
+  fdTwk = (int)(fmod(millis() / 1000.0 * 2, TWO_PI) * 40.74f);
+  fdBodyOn = 0;
+  float day = (tc - 0.02f) / 0.60f, nt = (tc - 0.66f) / 0.32f;
+  float R, G, a, disc;
+  if (day > -0.05f && day < 1.05f) {                       // the sun: up from the lower left, over the top, down at the lower right
+    float alt = sinf(fminf(1, fmaxf(0, day)) * PI), low = 1 - fminf(1, alt * 2.2f);
+    a = fminf(1, fmaxf(0, alt * 6));
+    fdBodyX = (int)((0.06f + day * 0.88f) * SCR_W); fdBodyY = (int)(SCR_H * (1.02f - alt * 0.9f));
+    fdBodyCol[0] = 255; fdBodyCol[1] = (uint8_t)(246 - low * 90); fdBodyCol[2] = (uint8_t)(214 - low * 150);
+    R = SCR_H * 0.07f; G = SCR_H * 0.30f; disc = 1;
+    for (int k = 0; k < 256; k++) {
+      float d = k * 2.0f, g = d < R ? 1 : expf(-((d - R) / G) * ((d - R) / G) * 3) * 0.55f + (d < R * 1.25f ? (R * 1.25f - d) / (R * 0.25f) * 0.6f : 0);
+      fdGlowT[k] = (uint8_t)(255 * fminf(1, g) * a);
+    }
+  } else if (nt > -0.03f && nt < 1.03f) {                  // the moon, through the night
+    float alt = sinf(fminf(1, fmaxf(0, nt)) * PI);
+    a = fminf(1, fmaxf(0, alt * 6));
+    fdBodyX = (int)((0.12f + nt * 0.76f) * SCR_W); fdBodyY = (int)(SCR_H * (1.02f - alt * 0.85f));
+    fdBodyCol[0] = 236; fdBodyCol[1] = 238; fdBodyCol[2] = 226;
+    R = SCR_H * 0.045f; disc = 0.92f;
+    for (int k = 0; k < 256; k++) { float d = k * 2.0f, q = (d - R) / (R * 2.2f), g = d < R ? 0.92f : expf(-q * q) * 0.22f; fdGlowT[k] = (uint8_t)(255 * g * a); }
+  } else { a = 0; R = 0; disc = 0; memset(fdGlowT, 0, sizeof(fdGlowT)); }
+  if (a > 0) { fdBodyOn = 1; fdBodyR = (int)R; fdDisc = (int)(255 * disc * a); }
+}
+
 // The big cloud shapes are worked out every 4 pixels and blended in between; the fine detail on their edges
 // and where each cloud starts are worked out at every pixel, so the clouds stay crisp. The wood stays sharp.
 #define CG 4
@@ -1939,6 +2000,7 @@ uint8_t  cgNc[2][CGH][CGW], cgQc[2][CGH][CGW];                               // 
 int16_t  cgDc[2][CGH][CGW];                                                  // how the clouds are lit from above (one set per core)
 uint16_t lnc[2][CGW], lqc[2][CGW];
 int16_t  ldc[2][CGW];
+uint16_t rowDc[2][128], rowFc[2][128];                                       // this row of the cloud picture, for the per-pixel detail (one set per core)
 HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
   if (woodBuf) readWoodRows(y0, rows, woodBuf);
   const int core = CORE_ID();
@@ -1947,8 +2009,13 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
   int16_t (*cgD)[CGW] = cgDc[core];
   uint16_t *ln = lnc[core], *lq = lqc[core];
   int16_t *ld = ldc[core];
-  int kind = look - 8, br = BRIGHTNESS * 256 / 100;
+  uint16_t *rowD = rowDc[core], *rowF = rowFc[core];
+  const bool fdOn = look == 18;                 // Full day: sunset's crisp clouds, the day's own colours
+  int kind = fdOn ? 1 : look - 8, br = BRIGHTNESS * 256 / 100;
+  const uint8_t (*colT)[3] = fdOn ? fdCol : cloudCol;
+  const int bR2 = fdBodyR * fdBodyR, bR2o = (fdBodyR + 1) * (fdBodyR + 1);
   const int detK = CL_DET[kind], fineK = CL_FINE[kind], shadeK = CL_SHADE[kind];
+  int clearN = 0; while (clearN < 384 && cloudDensT[constrain(clearN + 128 + ((128 * (detK + fineK)) >> 8) + 1, 0, 511)] == 0) clearN++;   // below this, never any cloud
   int D1 = (int)(cloudDrift * 76.8f), D2 = (int)((cloudDrift * 0.3f + 97) * 128), D3 = (int)((cloudDrift * 0.2f + 53) * 128), D4 = (int)((cloudDrift * 0.4f + 29) * 128);
   int rayPh = (int)(millis() / 1000.0f * 0.15f * 40.74f);
   const int gy0 = y0 / CG, gy1 = (y0 + rows - 1) / CG + 1, gw = SCR_W / CG + 1;
@@ -1964,6 +2031,7 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
       cgN[r0][gx] = (uint8_t)n; cgD[r0][gx] = (int16_t)(n - n2);
       int q = 0;
       if (kind == 2) { int r, a; polarAt(min(x, SCR_W - 1), min(y, SCR_H - 1), crossYC, r, a); q = (cloudRayT[(a * 9 + rayPh) & 255] * cloudRayRT[r]) >> 8; }   // heavenly rays
+      else if (fdOn && fdBodyOn) { float dx = x - fdBodyX, dy = y - fdBodyY; int d2 = (int)(sqrtf(dx * dx + dy * dy) * 0.5f); q = fdGlowT[d2 > 255 ? 255 : d2]; }   // the sun's (or moon's) glow
       cgQ[r0][gx] = (uint8_t)q;
     }
   }
@@ -1975,15 +2043,25 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
       lq[gx] = cgQ[r0][gx] * wy + cgQ[r0 + 1][gx] * fy;
     }
     const int Y3 = ((y * cloudK3) >> 8) + 11 * 128, Y4 = ((y * cloudK4) >> 8) + 7 * 128;
+    {                                             // this row of the detail layers, worked out once (then only blended across)
+      const uint8_t *t0 = cloudTex + ((Y3 >> 8) & 127) * 128, *t1 = cloudTex + (((Y3 >> 8) + 1) & 127) * 128; const int f = Y3 & 255;
+      for (int i = 0; i < 128; i++) rowD[i] = (uint16_t)((t0[i] << 8) + (t1[i] - t0[i]) * f);
+      if (fineK) {
+        const uint8_t *u0 = cloudTex + ((Y4 >> 8) & 127) * 128, *u1 = cloudTex + (((Y4 >> 8) + 1) & 127) * 128; const int g = Y4 & 255;
+        for (int i = 0; i < 128; i++) rowF[i] = (uint16_t)((u0[i] << 8) + (u1[i] - u0[i]) * g);
+      }
+    }
     float fyy = (float)y / SCR_H; if (fyy > 1) fyy = 1;   // the sky: a smooth fade from top to bottom
     int sky0, sky1, sky2;
     {
       int sky[3];
-      for (int j = 0; j < 3; j++) sky[j] = kind == 1 ? (int)(fyy < 0.55f ? SKY_TOP[1][j] + (SKY_MID[j] - SKY_TOP[1][j]) * fyy / 0.55f : SKY_MID[j] + (SKY_BOT[1][j] - SKY_MID[j]) * (fyy - 0.55f) / 0.45f)
+      if (fdOn) for (int j = 0; j < 3; j++) sky[j] = (int)(fyy < 0.55f ? fdTop[j] + (fdMid[j] - fdTop[j]) * fyy / 0.55f : fdMid[j] + (fdBot[j] - fdMid[j]) * (fyy - 0.55f) / 0.45f);
+      else for (int j = 0; j < 3; j++) sky[j] = kind == 1 ? (int)(fyy < 0.55f ? SKY_TOP[1][j] + (SKY_MID[j] - SKY_TOP[1][j]) * fyy / 0.55f : SKY_MID[j] + (SKY_BOT[1][j] - SKY_MID[j]) * (fyy - 0.55f) / 0.45f)
                                                    : (int)(SKY_TOP[kind][j] + (SKY_BOT[kind][j] - SKY_TOP[kind][j]) * fyy);
       sky0 = sky[0]; sky1 = sky[1]; sky2 = sky[2];
     }
     const int8_t *eb = edgeBuf + (y - y0) * SCR_W;
+    const int bdy = y - fdBodyY, nearRow = fdOn && fdBodyOn && bdy * bdy <= bR2o;   // rows the sun's (or moon's) disc crosses
     for (int x = 0; x < SCR_W; x++) {
       int ce = eb[x];
       if (ce > 0) {                                 // the wood, lit a little by the sky on its edges
@@ -1995,11 +2073,29 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
       }
       const int gx = x / CG, fx = x % CG, wx = CG - fx, k = -ce;
       const int n = (ln[gx] * wx + ln[gx + 1] * fx) >> 4, dn = (ld[gx] * wx + ld[gx + 1] * fx) >> 4;   // (CG * CG = 16)
-      int det = ((cloudAt(((x * cloudK3) >> 8) + D3, Y3) - 128) * detK) >> 8;   // crisp, puffy edges, right at this pixel
-      if (fineK) det += ((cloudAt(((x * cloudK4) >> 8) + D4, Y4) - 128) * fineK) >> 8;   // sunset: fine wisps on the edges
-      const int dens = cloudDensT[constrain(n + det + 128, 0, 511)];
-      const uint8_t *cc = cloudCol[constrain(158 + dn * shadeK + ((det * 3) >> 1), 0, 255) >> 4];
-      int c0 = sky0 + (((cc[0] - sky0) * dens) >> 8), c1 = sky1 + (((cc[1] - sky1) * dens) >> 8), c2 = sky2 + (((cc[2] - sky2) * dens) >> 8);
+      int det = 0, dens = 0;
+      if (n >= clearN) {                            // (clear sky: the detail can't reach a cloud, so it's skipped)
+        { const int X = ((x * cloudK3) >> 8) + D3, i = (X >> 8) & 127, fx2 = X & 255; det = ((((rowD[i] * (256 - fx2) + rowD[(i + 1) & 127] * fx2) >> 16) - 128) * detK) >> 8; }   // crisp, puffy edges, right at this pixel
+        if (fineK) { const int X = ((x * cloudK4) >> 8) + D4, i = (X >> 8) & 127, fx2 = X & 255; det += ((((rowF[i] * (256 - fx2) + rowF[(i + 1) & 127] * fx2) >> 16) - 128) * fineK) >> 8; }   // sunset: fine wisps on the edges
+        dens = cloudDensT[constrain(n + det + 128, 0, 511)];
+      }
+      const uint8_t *cc = colT[constrain(158 + dn * shadeK + ((det * 3) >> 1), 0, 255) >> 4];
+      int b0 = sky0, b1 = sky1, b2 = sky2;
+      if (fdOn) {                                   // Full day: the sun (or moon) and the stars, behind the clouds
+        int g = (lq[gx] * wx + lq[gx + 1] * fx) >> 4;
+        if (nearRow) { int bdx = x - fdBodyX, d2 = bdx * bdx + bdy * bdy; if (d2 < bR2) { if (fdDisc > g) g = fdDisc; } else if (d2 < bR2o && fdDisc / 2 > g) g = fdDisc / 2; }
+        if (g) { b0 += ((fdBodyCol[0] - b0) * g) >> 8; b1 += ((fdBodyCol[1] - b1) * g) >> 8; b2 += ((fdBodyCol[2] - b2) * g) >> 8; }
+        if (fdStars > 2) {
+          uint32_t h = hash32((uint32_t)(y * SCR_W + x) * 2654435761UL);
+          if ((h & 1023) < 5) {
+            int v = ((150 + (int)((h >> 20) & 105)) * (154 + sinT[(fdTwk + (h >> 10)) & 255] * 102 / 127) >> 8) * fdStars >> 8;
+            if ((v * 235 >> 8) > b0) b0 = v * 235 >> 8;
+            if ((v * 242 >> 8) > b1) b1 = v * 242 >> 8;
+            if (v > b2) b2 = v;
+          }
+        }
+      }
+      int c0 = b0 + (((cc[0] - b0) * dens) >> 8), c1 = b1 + (((cc[1] - b1) * dens) >> 8), c2 = b2 + (((cc[2] - b2) * dens) >> 8);
       if (kind == 2) {                              // heavenly light: rays and a glow from behind the cross
         int q = ((lq[gx] * wx + lq[gx + 1] * fx) >> 4) + cloudGlowT[k > 127 ? 127 : k];
         if (q > 255) q = 255;
@@ -2013,7 +2109,7 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
 
 HOT void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase2) {
   const uint8_t look = lk[CORE_ID()].look;
-  if (look >= 8 && look <= 10) { renderCloudStrip(y0, rows, strip); return; }   // a cloud sky behind the cross
+  if ((look >= 8 && look <= 10) || look == 18) { renderCloudStrip(y0, rows, strip); return; }   // a cloud sky behind the cross
   if (woodBuf) readWoodRows(y0, rows, woodBuf);
   const int8_t *edgeBuf = edgeRows(y0); const uint8_t *woodBuf = woodRows(y0);
   if (look == 4 || look >= 14) {                 // a space picture behind the cross
