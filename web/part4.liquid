@@ -382,7 +382,7 @@ function markStyle() {
   root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !cross; });
   const woodSel = S.style === 17;                            // the Wooden cross picks what goes behind it
   $("crossfill-label").textContent = woodSel ? "Display behind the cross" : "Inside the cross";
-  $("crossfill-hint").textContent = woodSel ? "Shown behind the wooden cross. Skies drift faster with more spin speed." : "Shown inside the glowing outline. Solid colour uses the inner colour.";
+  $("crossfill-hint").textContent = woodSel ? "Shown behind the wooden cross" : "Shown inside the glowing outline. Solid colour uses the inner colour.";
   $("fill-sky").hidden = $("fill-sky").disabled = !woodSel;
   $("fill-sky").querySelectorAll("option").forEach(o => { o.hidden = o.disabled = !woodSel; });
   $("fill-plain").hidden = $("fill-plain").disabled = woodSel;
@@ -394,24 +394,49 @@ function markStyle() {
   $("crossripple").closest("label").hidden = !cross || woodSel;   // the Wooden cross has no ripple
   $("cross-row").hidden = !picturesAllowed() && !isCrossStyle(S.style);
   const sc = tft && (hasSpaceCols(eff) || sceneList().some(c => c >= 200 && c < 255 && hasSpaceCols(c - 200)));                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
-  const scOnly = sc && !cross;                               // a cross still uses the main colours for its glowing outline
   $("space-colors").hidden = !sc;
-  if (tft) { $("rgb-colors").hidden = scOnly; $("fade-wrap").hidden = scOnly; $("rimsmooth-wrap").hidden = sc; }
   $("radius").max = radiusMax(M);
+  $("radius").closest("label").querySelector("span").firstChild.nodeValue = cross ? "Cross size " : "Portal size ";
   if (S.radius > radiusMax(M)) S.radius = rmax(M);           // leaving a cross: back inside the screen
+  // Which settings actually change what's drawn: the chosen style plus any styles in the scene list
+  const use = new Set();
+  const addUses = st => {
+    const isC = isCrossStyle(st), wood = st === 17;
+    let f = isC ? S.crossFill : st;
+    if (isC && !wood && ((f >= 7 && f <= 10) || f === 18)) f = 0;   // skies and warm glow are only behind the Wooden cross
+    if (wood && f === 11) f = 7;
+    const sky = wood && ((f >= 8 && f <= 10) || f === 18), spc = hasSpaceCols(f), glowC = isC && !wood;
+    if (!sky && (!spc || glowC)) use.add("colours");          // main colours (a glowing cross outline uses them too)
+    if (f === 0 || f === 1 || f === 6 || (f === 7 && !isC)) { use.add("arms"); use.add("twist"); }
+    if (f === 4 || f === 15) use.add("twist");                // Galaxy spiral, Wormhole walls
+    if (!sky && !spc && f !== 11 && !(wood && f === 7)) use.add("oval");
+    if (f === 16 || (!wood && !spc && f !== 11)) use.add("sparks");
+    if (!glowC && !spc && !sky && !(wood && f === 7)) use.add("rimsmooth");
+    if (f === 15) use.add("reverse");
+    if (wood && f === 18) use.add("fd");
+    if (sky) use.add("sky");
+  };
+  if (tft) {
+    addUses(S.style);
+    sceneList().forEach(c => { if (c >= 200 && c < 255) addUses(c - 200); });
+    $("rgb-colors").hidden = !use.has("colours");
+    $("fade").closest("label").hidden = !use.has("colours");
+    $("fade-opts").hidden = !S.fade || !use.has("colours");
+    $("rimsmooth-wrap").hidden = !use.has("rimsmooth");
+    ["oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = !use.has(k); });
+  }
   const gal = tft && eff === 4, wh = tft && eff === 15, met = tft && eff === 16;
-  ["radius", "oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = sc && !(cross && k === "radius") && !((gal || wh) && k === "twist") && !(met && k === "sparks"); });   // portal-only controls
   const tl = $("twist").closest("label");                    // the Galaxy's Spiral setting is the portal's Twist (the Wormhole uses it too)
   if (tl) {
     tl.querySelector("span").firstChild.nodeValue = gal ? "Spiral " : "Twist ";
     $("twist-hint").hidden = !(gal || wh);
     $("twist-hint").textContent = gal ? "How tightly the arms wind" : "How much the tunnel walls spiral";
   }
-  $("reverse-wrap").hidden = !wh;
+  $("reverse-wrap").hidden = !use.has("reverse");
   const sky = tft && S.style === 17 && ((S.crossFill >= 8 && S.crossFill <= 10) || S.crossFill === 18);   // Wooden cross with a cloud sky: the speed slider moves the clouds
   $("speed").closest("label").querySelector("span").firstChild.nodeValue = sky ? "Cloud speed " : "Spin speed ";
   $("speed-hint").hidden = !sky;
-  ["fdLen", "fdStars", "fdClouds", "fdGlow"].forEach(k => { $(k).closest("label").hidden = !(sky && S.crossFill === 18); });   // Full day's own settings
+  ["fdLen", "fdStars", "fdClouds", "fdGlow"].forEach(k => { $(k).closest("label").hidden = !use.has("fd"); });   // Full day's own settings
   const sl = $("sparks").closest("label");                   // Meteor Shower: the Sparks setting is the number of meteors
   if (sl) { sl.querySelector("span").firstChild.nodeValue = met ? "Meteors " : "Sparks "; $("sparks-hint").hidden = !met; }
 }
@@ -778,11 +803,11 @@ function renderScenes() {
       <select aria-label="Scene ${i + 1}">${opts}</select>
       <span class="sgap"><button type="button" data-up aria-label="Move scene ${i + 1} earlier">▲</button><button type="button" data-down aria-label="Move scene ${i + 1} later">▼</button><button type="button" data-del aria-label="Remove scene ${i + 1}">Remove</button></span>`;
     thumb(row.querySelector("canvas"), sc >= 0 && sc < 200 ? S.pics[sc % 100] : null, 34, sc >= 100 && sc < 200, sc >= 200 ? sc - 200 : S.style);
-    row.querySelector("select").addEventListener("change", e => { S.scenes[i] = +e.target.value; renderScenes(); changed(); });
-    const move = d => { const j = i + d; if (j < 0 || j >= S.scenes.length) return; [S.scenes[i], S.scenes[j]] = [S.scenes[j], S.scenes[i]]; renderScenes(); changed(); };
+    row.querySelector("select").addEventListener("change", e => { S.scenes[i] = +e.target.value; renderScenes(); markStyle(); changed(); });
+    const move = d => { const j = i + d; if (j < 0 || j >= S.scenes.length) return; [S.scenes[i], S.scenes[j]] = [S.scenes[j], S.scenes[i]]; renderScenes(); markStyle(); changed(); };
     row.querySelector("[data-up]").addEventListener("click", () => move(-1));
     row.querySelector("[data-down]").addEventListener("click", () => move(1));
-    row.querySelector("[data-del]").addEventListener("click", () => { S.scenes.splice(i, 1); renderScenes(); changed(); });
+    row.querySelector("[data-del]").addEventListener("click", () => { S.scenes.splice(i, 1); renderScenes(); markStyle(); changed(); });
     box.appendChild(row);
   });
   $("scene-add").hidden = S.scenes.length >= 8;
