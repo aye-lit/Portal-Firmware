@@ -405,7 +405,7 @@ function markStyle() {
   if (tl) {
     tl.querySelector("span").firstChild.nodeValue = gal ? "Spiral " : "Twist ";
     $("twist-hint").hidden = !(gal || wh);
-    $("twist-hint").textContent = gal ? "How tightly the arms wind: low is open and loose, high wraps them around the core" : "How much the tunnel walls spiral: 0 is straight, high is a tight corkscrew";
+    $("twist-hint").textContent = gal ? "How tightly the arms wind" : "How much the tunnel walls spiral";
   }
   $("reverse-wrap").hidden = !wh;
   const sky = tft && S.style === 17 && S.crossFill >= 8 && S.crossFill <= 10;   // Wooden cross with a cloud sky: the speed slider moves the clouds
