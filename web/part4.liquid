@@ -309,7 +309,7 @@ ${frame}
 const codeEl = $("code");
 const fmt = { crossw: v => v + "%", beam: v => v + "%", bar: v => v + "%", radius: v => v + " px", oval: v => f2(v), arms: v => v, twist: v => (+v).toFixed(1), speed: v => f2(v), sparks: v => v, bright: v => v + "%", tone: v => v + "%", warm: v => v + "%", ripples: v => v, rspeed: v => f2(v), glow: v => f2(v), stars: v => v, rimsmooth: v => v + "%", fdLen: v => v + " min", fdStars: v => v + "%", fdClouds: v => v + "%", fdGlow: v => v + "%" };
 let codeTimer;
-const refreshCode = () => { clearTimeout(codeTimer); codeTimer = setTimeout(() => codeEl.textContent = sketch(), 120); };
+const refreshCode = () => { clearTimeout(codeTimer); codeTimer = setTimeout(() => codeEl.textContent = withMain(sketch), 120); };
 
 // display model dropdown: screen size first, part number and details underneath
 const modelTitle = m => { const size = m.spec.split(" · ")[0]; return /round|rectangle|square/.test(size) ? size : `${size} ${m.w === m.h ? "square" : "rectangle"}`; };
@@ -374,7 +374,11 @@ const STYLES = [
 ];
 const isCrossStyle = i => (i >= 8 && i <= 13) || i === 17, isSpaceStyle = i => (i >= 3 && i <= 5) || (i >= 14 && i <= 16), hasSpaceCols = i => i === 4 || (i >= 14 && i <= 16);
 function markStyle() {
-  $("style").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.i === S.style));
+  $("style").querySelectorAll("button").forEach(b => { b.setAttribute("aria-pressed", +b.dataset.i === S.style); b.disabled = editIdx >= 0 && !!STYLES[+b.dataset.i].cross; });   // a scene can't be a cross
+  $("edit-bar").hidden = editIdx === -1;
+  if (editIdx !== -1) $("edit-what").innerHTML = editIdx >= 0
+    ? `<b>Editing scene ${editIdx + 1}: ${STYLES[S.style].name}</b>Changes below are for this scene only. Press Save when you're done.`
+    : `<b>Editing scene ${S.scenes.indexOf(-1) + 1}: Main style (${STYLES[S.style].name})</b>Changes below are for the main style and every scene without its own settings.`;
   const tft = M.kind === "tft", cross = tft && isCrossStyle(S.style);
   const eff = cross ? S.crossFill : S.style;                 // the style being drawn (inside a cross: the chosen fill)
   root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(tft && eff === 2); });
@@ -393,7 +397,7 @@ function markStyle() {
   $("woodgrain").closest("label").hidden = !cross || !woodSel;
   $("crossripple").closest("label").hidden = !cross || woodSel;   // the Wooden cross has no ripple
   $("cross-row").hidden = !picturesAllowed() && !isCrossStyle(S.style);
-  const sc = tft && (hasSpaceCols(eff) || sceneList().some(c => c >= 200 && c < 255 && hasSpaceCols(c - 200)));                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
+  const sc = tft && (hasSpaceCols(eff) || (editIdx < 0 && sceneList().some((c, k) => c >= 200 && c < 255 && !S.sceneSets[k] && hasSpaceCols(c - 200))));                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
   $("space-colors").hidden = !sc;
   $("radius").max = radiusMax(M);
   $("radius").closest("label").querySelector("span").firstChild.nodeValue = cross ? "Cross size " : "Portal size ";
@@ -418,10 +422,10 @@ function markStyle() {
   };
   if (tft) {
     addUses(S.style);
-    sceneList().forEach(c => { if (c >= 200 && c < 255) addUses(c - 200); });
+    if (editIdx < 0) sceneList().forEach((c, k) => { if (c >= 200 && c < 255 && !S.sceneSets[k]) addUses(c - 200); });   // scenes without their own settings use these
     $("rgb-colors").hidden = !use.has("colours");
-    $("fade").closest("label").hidden = !use.has("colours");
-    $("fade-opts").hidden = !S.fade || !use.has("colours");
+    $("fade").closest("label").hidden = !use.has("colours") || editIdx >= 0;   // a scene's own colours don't fade through the sets
+    $("fade-opts").hidden = !S.fade || !use.has("colours") || editIdx >= 0;
     $("rimsmooth-wrap").hidden = !use.has("rimsmooth");
     ["oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = !use.has(k); });
   }
@@ -440,6 +444,7 @@ function markStyle() {
   const sl = $("sparks").closest("label");                   // Meteor Shower: the Sparks setting is the number of meteors
   if (sl) { sl.querySelector("span").firstChild.nodeValue = met ? "Meteors " : "Sparks "; $("sparks-hint").hidden = !met; }
 }
+$("edit-save").addEventListener("click", () => endEdit());
 $("crossripple").addEventListener("change", e => { S.crossRipple = +e.target.value; changed(true); });
 $("woodgrain").addEventListener("change", e => { S.woodGrain = +e.target.value; changed(true); });
 $("crossfill").addEventListener("change", e => {
@@ -460,7 +465,8 @@ STYLES.forEach((st, i) => {
     if (st.twist) S.twist = st.twist;
     if (st.sparks) S.sparks = st.sparks;
     if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.crossw = DEFAULTS.crossw; S.radius = crossMax(M); }
-    if (st.wood) S.crossFill = 7;                              // Wooden cross: starts with the warm glow behind it
+    if (editIdx >= 0) { S.scenes[editIdx] = 200 + i; renderScenes(); }   // editing a scene: this is its style now
+    else if (st.wood) S.crossFill = 7;                         // Wooden cross: starts with the warm glow behind it
     else if ((S.crossFill >= 7 && S.crossFill <= 10) || S.crossFill === 18) S.crossFill = 0;   // (Solid colour, 11, is kept for the other crosses)   // crosses fill the screen, each with its own proportions
     bindAll(); markStyle(); changed(true);
   });
@@ -657,7 +663,8 @@ $("reverse").addEventListener("change", e => { S.reverse = e.target.checked; cha
 $("tapnext").addEventListener("change", e => { S.tapnext = e.target.checked; changed(); });   // touchscreen boards: tapping shows the next style or scene
 $("addr").addEventListener("change", e => { S.addr = e.target.value; save(); refreshCode(); });
 $("reset").addEventListener("click", () => {
-  S = { ...DEFAULTS, model: S.model, tint: S.tint, addr: S.addr, board: S.board, custom: S.custom, pics: S.pics, scenes: S.scenes.slice(), fadeSets: DEFAULTS.fadeSets.map(x => ({ ...x })) };
+  endEdit(true);
+  S = { ...DEFAULTS, sceneSets: S.sceneSets.slice(), model: S.model, tint: S.tint, addr: S.addr, board: S.board, custom: S.custom, pics: S.pics, scenes: S.scenes.slice(), fadeSets: DEFAULTS.fadeSets.map(x => ({ ...x })) };
   selectModel(S.model, true); changed(true);
 });
 
@@ -709,13 +716,13 @@ function picPixels(i) {                             // preview pixels, rounded t
 }
 function sceneNow() {                               // same timing as the board (scene codes: 255 portal, k picture, 128+k portal around picture)
   const L = sceneList(), n = L.length, now = performance.now() / 1000;
-  if (!n) return null;
-  if (n === 1) return { a: L[0], b: L[0], mix: 0, ageA: now, ageB: 0 };
+  if (!n || editIdx !== -1) return null;             // editing a scene: the preview shows just that one
+  if (n === 1) return { a: L[0], b: L[0], mix: 0, ageA: now, ageB: 0, ia: 0, ib: 0 };
   const per = S.holdsec + S.scenefade, pos = now % (per * n);
   const i = Math.min(Math.floor(pos / per), n - 1), w = pos - i * per;
   let mix = 0;
   if (w >= S.holdsec && S.scenefade > 0) { let f = (w - S.holdsec) / S.scenefade; f = f * f * (3 - 2 * f); mix = Math.trunc(f * 256); }
-  return { a: L[i], b: L[(i + 1) % n], mix, ageA: w + S.scenefade, ageB: Math.max(0, w - S.holdsec) };
+  return { a: L[i], b: L[(i + 1) % n], mix, ageA: w + S.scenefade, ageB: Math.max(0, w - S.holdsec), ia: i, ib: (i + 1) % n };
 }
 function sceneLayer(code, age, buf) {                // buf: the style this layer shows (drawn already)
   if (code === 255 || code >= 200) return { kind: 0, buf };
@@ -729,8 +736,8 @@ function sceneLayer(code, age, buf) {                // buf: the style this laye
   return { kind: 2, pix, alpha, buf };
 }
 const mixABGR = (x, y, m) => { const n = 256 - m; return (255 << 24) | ((((x >> 16) & 255) * n + ((y >> 16) & 255) * m) >> 8 << 16) | ((((x >> 8) & 255) * n + ((y >> 8) & 255) * m) >> 8 << 8) | (((x & 255) * n + (y & 255) * m) >> 8); };
-function composePreview(out, out2) {                 // out: the style of the scene showing now; out2: the one it fades into (if different)
-  const sc = sceneNow(); if (!sc) return;
+function composePreview(out, out2, sc = sceneNow()) {   // out: the style of the scene showing now; out2: the one it fades into (if different)
+  if (!sc) return;
   let A = sceneLayer(sc.a, sc.ageA, out), B = sc.mix > 0 && sc.b !== sc.a ? sceneLayer(sc.b, sc.ageB, out2 || out) : null, m = sc.mix;
   if (!B && m >= 128) A = sceneLayer(sc.b, sc.ageB, out);
   if (!B) m = 0;
@@ -746,22 +753,22 @@ function composePreview(out, out2) {                 // out: the style of the sc
     }
   }
 }
-function thumb(c, pic, size, framed, st = S.style) {   // small picture of a scene
+function thumb(c, pic, size, framed, st = S.style, P = S) {   // small picture of a scene (P: whose colours)
   const k = size / Math.max(M.w, M.h);
   c.width = Math.round(M.w * k); c.height = Math.round(M.h * k);
   const x = c.getContext("2d");
   if (framed) {                                     // portal around the picture
-    thumb(c, null, size);
+    thumb(c, null, size, false, st, P);
     const src = cropCanvas(pic); if (!src) return;
-    const r = Math.min(c.width, c.height) / 2 * (S.radius / rmax(M)) * (1 - S.frame / 100);
+    const r = Math.min(c.width, c.height) / 2 * (P.radius / rmax(M)) * (1 - S.frame / 100);
     x.save(); x.beginPath(); x.arc(c.width / 2, c.height / 2, Math.max(2, r), 0, Math.PI * 2); x.clip();
     x.drawImage(src, 0, 0, c.width, c.height); x.restore();
     return;
   }
   if (!pic) {                                       // the portal (or another style)
     const gr = x.createRadialGradient(c.width / 2, c.height / 2, 1, c.width / 2, c.height / 2, Math.min(c.width, c.height) / 2);
-    const sp = hasSpaceCols(st), k1 = sp ? S.spaceCols[1] : S.c1, k2 = sp ? S.spaceCols[2] : S.c2;
-    gr.addColorStop(0, sp ? S.spaceCols[3] : "#fff"); gr.addColorStop(0.25, k1); gr.addColorStop(0.8, k2); gr.addColorStop(1, "#000");
+    const sp = hasSpaceCols(st), k1 = sp ? P.spaceCols[1] : P.c1, k2 = sp ? P.spaceCols[2] : P.c2;
+    gr.addColorStop(0, sp ? P.spaceCols[3] : "#fff"); gr.addColorStop(0.25, k1); gr.addColorStop(0.8, k2); gr.addColorStop(1, "#000");
     x.fillStyle = "#000"; x.fillRect(0, 0, c.width, c.height); x.fillStyle = gr; x.fillRect(0, 0, c.width, c.height);
     return;
   }
@@ -793,21 +800,38 @@ function renderScenes() {
   const round = M.kind === "tft" && !M.rect;
   $("scene-box").hidden = !S.pics.length && !S.scenes.length;
   const box = $("scenes"); box.innerHTML = "";
+  const mainP = mainSnap || S, mainStyle = mainSnap ? mainSnap.style : S.style;
   S.scenes.forEach((sc, i) => {
-    const row = document.createElement("div"); row.className = "scene" + (round ? " round" : "");
-    const opts = [`<option value="-1"${sc === -1 ? " selected" : ""}>Main style (${STYLES[S.style].name})</option>`]
+    const editing = i === editIdx || (editIdx === -2 && sc === -1), canEdit = sc === -1 || sc >= 200;
+    const row = document.createElement("div"); row.className = "scene" + (round ? " round" : "") + (editing ? " editing" : "");
+    const opts = [`<option value="-1"${sc === -1 ? " selected" : ""}>Main style (${STYLES[mainStyle].name})</option>`]
       .concat(SCENE_STYLES.map(k => `<option value="${200 + k}"${sc === 200 + k ? " selected" : ""}>Style: ${STYLES[k].name}</option>`))
       .concat(S.pics.map((_, k) => `<option value="${k}"${sc === k ? " selected" : ""}>Picture ${k + 1}</option>`))
       .concat(S.pics.map((_, k) => `<option value="${100 + k}"${sc === 100 + k ? " selected" : ""}>Portal around picture ${k + 1}</option>`)).join("");
     row.innerHTML = `<span class="snum">${i + 1}</span><canvas></canvas>
       <select aria-label="Scene ${i + 1}">${opts}</select>
-      <span class="sgap"><button type="button" data-up aria-label="Move scene ${i + 1} earlier">▲</button><button type="button" data-down aria-label="Move scene ${i + 1} later">▼</button><button type="button" data-del aria-label="Remove scene ${i + 1}">Remove</button></span>`;
-    thumb(row.querySelector("canvas"), sc >= 0 && sc < 200 ? S.pics[sc % 100] : null, 34, sc >= 100 && sc < 200, sc >= 200 ? sc - 200 : S.style);
-    row.querySelector("select").addEventListener("change", e => { S.scenes[i] = +e.target.value; renderScenes(); markStyle(); changed(); });
-    const move = d => { const j = i + d; if (j < 0 || j >= S.scenes.length) return; [S.scenes[i], S.scenes[j]] = [S.scenes[j], S.scenes[i]]; renderScenes(); markStyle(); changed(); };
+      <span class="sgap">${canEdit ? `<button type="button" data-edit class="${editing ? "save" : ""}" aria-label="${editing ? "Save" : "Edit"} scene ${i + 1}">${editing ? "Save" : "Edit"}</button>` : ""}<button type="button" data-up aria-label="Move scene ${i + 1} earlier">▲</button><button type="button" data-down aria-label="Move scene ${i + 1} later">▼</button><button type="button" data-del aria-label="Remove scene ${i + 1}">Remove</button></span>`;
+    const own = i === editIdx ? S : sc >= 200 && S.sceneSets[i] ? S.sceneSets[i] : mainP;
+    thumb(row.querySelector("canvas"), sc >= 0 && sc < 200 ? S.pics[sc % 100] : null, 34, sc >= 100 && sc < 200, sc >= 200 ? sc - 200 : mainStyle, own);
+    row.querySelector("select").addEventListener("change", e => {
+      if (editIdx === i || (editIdx === -2 && sc === -1)) endEdit(true);
+      const v = +e.target.value; S.scenes[i] = v; if (v < 200) S.sceneSets[i] = null;   // (a style keeps its own settings)
+      renderScenes(); markStyle(); changed();
+    });
+    const move = d => {
+      const j = i + d; if (j < 0 || j >= S.scenes.length) return;
+      [S.scenes[i], S.scenes[j]] = [S.scenes[j], S.scenes[i]]; [S.sceneSets[i], S.sceneSets[j]] = [S.sceneSets[j], S.sceneSets[i]];
+      if (editIdx === i) editIdx = j; else if (editIdx === j) editIdx = i;
+      renderScenes(); markStyle(); changed();
+    };
     row.querySelector("[data-up]").addEventListener("click", () => move(-1));
     row.querySelector("[data-down]").addEventListener("click", () => move(1));
-    row.querySelector("[data-del]").addEventListener("click", () => { S.scenes.splice(i, 1); renderScenes(); markStyle(); changed(); });
+    row.querySelector("[data-del]").addEventListener("click", () => {
+      if (editIdx === i || (editIdx === -2 && sc === -1)) endEdit(true, true); else if (editIdx > i) editIdx--;
+      S.scenes.splice(i, 1); S.sceneSets.splice(i, 1); bindAll(); renderScenes(); markStyle(); changed(true);
+    });
+    const eb = row.querySelector("[data-edit]");
+    if (eb) eb.addEventListener("click", () => editing ? endEdit() : beginEdit(sc === -1 ? -2 : i));
     box.appendChild(row);
   });
   $("scene-add").hidden = S.scenes.length >= 8;
@@ -817,9 +841,31 @@ function renderScenes() {
   $("frame-wrap").hidden = !S.scenes.some(x => x >= 100 && x < 200);
   $("frame").value = S.frame; $("o-frame").textContent = S.frame + "%";
 }
+function beginEdit(i) {                             // i: scene position (-2: the main style row)
+  endEdit(true);
+  if (i >= 0) {
+    mainSnap = snapMain();
+    Object.assign(S, pickLook(S.sceneSets[i] || mainSnap), { style: S.scenes[i] - 200, fade: false });
+  }
+  editIdx = i;
+  bindAll(); markStyle(); renderScenes(); changed(true);
+  const bar = $("edit-bar"); if (bar) bar.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+function endEdit(quiet, discard) {                  // Save: the scene keeps its settings, the main ones come back
+  if (editIdx === -1) return;
+  if (editIdx >= 0 && mainSnap) {
+    if (!discard) { S.sceneSets[editIdx] = pickLook(S); S.scenes[editIdx] = 200 + S.style; }
+    Object.assign(S, pickLook(mainSnap), { style: mainSnap.style, fade: mainSnap.fade });
+  }
+  editIdx = -1; mainSnap = null;
+  if (!quiet) { bindAll(); markStyle(); renderScenes(); changed(true); }
+}
 function removePic(i) {
   S.pics.splice(i, 1);
-  S.scenes = S.scenes.filter(x => x !== i && x !== 100 + i).map(x => x < 0 || x >= 200 ? x : (x >= 100 ? x - 100 : x) > i ? x - 1 : x);
+  endEdit(true);
+  const keep = S.scenes.map((x, k) => [x, S.sceneSets[k] || null]).filter(([x]) => x !== i && x !== 100 + i);
+  S.sceneSets = keep.map(e => e[1]);
+  S.scenes = keep.map(e => e[0]).map(x => x < 0 || x >= 200 ? x : (x >= 100 ? x - 100 : x) > i ? x - 1 : x);
   savePics(); renderPics(); changed();
 }
 async function addPictures(files) {
@@ -833,8 +879,8 @@ async function addPictures(files) {
       cx.drawImage(bmp, 0, 0, c.width, c.height);
       S.pics.push({ src: c.toDataURL("image/jpeg", 0.94), fit: "fill" });
       const idx = S.pics.length - 1;
-      if (!S.scenes.length) S.scenes = [-1, idx];                          // first picture: portal, then the picture
-      else if (S.scenes.length < 8) S.scenes.push(idx);
+      if (!S.scenes.length) { S.scenes = [-1, idx]; S.sceneSets = [null, null]; }   // first picture: portal, then the picture
+      else if (S.scenes.length < 8) { S.scenes.push(idx); S.sceneSets.push(null); }
     } catch (e) {
       $("pic-count").textContent = `Couldn't open ${file.name}. Try a JPEG or PNG.`;
     }
@@ -846,13 +892,13 @@ $("style-add").addEventListener("click", () => {      // another style to fade i
   if (S.scenes.length >= 8) return;
   const used = new Set(S.scenes), next = SCENE_STYLES.find(k => k !== S.style && !used.has(200 + k));
   if (next == null) return;
-  if (!S.scenes.length) S.scenes = [-1];                // start with the main style
-  S.scenes.push(200 + next); renderScenes(); markStyle(); changed();
+  if (!S.scenes.length) { S.scenes = [-1]; S.sceneSets = [null]; }   // start with the main style
+  S.scenes.push(200 + next); S.sceneSets.push(null); renderScenes(); markStyle(); changed();
 });
 $("scene-add").addEventListener("click", () => {
   if (S.scenes.length >= 8) return;
   const used = new Set(S.scenes), next = S.pics.findIndex((_, k) => !used.has(k));
-  S.scenes.push(next >= 0 ? next : -1); renderScenes(); changed();
+  S.scenes.push(next >= 0 ? next : -1); S.sceneSets.push(null); renderScenes(); changed();
 });
 function readHold() {
   let m = parseInt($("hold-min").value, 10), sec = parseInt($("hold-sec").value, 10);
@@ -967,11 +1013,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.10.21";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/7213e50900d9f890a6aead69bac94ae5ae277793/";
+const FW_VERSION = "1.10.22";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/646fecd41df6bfdbaef1512900efeb70499c3a3d/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "930b95793843c40e7704185bac6b4c27e5bd6df3cdddf2fa68623cb2d4f782da" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "3f11cb72ea2fca1fed2732b1ebf65763d06aad6ecc991e14fc4babdce242260f" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "7afbc3908fa397aa4dff0a093fc3d8e097df4d4ac790ed8ea2da33dfb2f207ad" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "4fa1bb80f30a8bde659b145f2ac9812fa57b0f0efd761d091b4bd612b31707d1" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -1091,7 +1137,8 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   for (let i = 0; i < 3; i++) { const st = S.fadeSets[i]; cols.push(st ? parseInt(hex6(st.core), 16) : 0, st ? parseInt(hex6(st.rim), 16) : 0); }
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
-const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${(M.kind === "tft" ? S.reverse : S.drift) ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
+const cmdLine = () => withMain(() => (M.kind === "tft" ? sceneLines() : "") + setLine());
+const setLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${(M.kind === "tft" ? S.reverse : S.drift) ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
 function sceneArgs() {
   const L = sceneList(), cols = " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" "), rip = S.style === 17 ? S.woodGrain : S.crossRipple;
   const space = hasSpaceCols(S.style) || L.some(c => c >= 200 && c < 255 && hasSpaceCols(c - 200));
