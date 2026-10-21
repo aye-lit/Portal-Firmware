@@ -1005,7 +1005,7 @@ async function installFirmware() {
     } else await loader.after("hard_reset");
     await transport.disconnect(); transport = null;
     bar.done("Installed");
-    sayF("Installed! The portal starts in a few seconds. Now send your style and colours with step 2.", "ok");
+    sayF("Installed! The portal starts in a few seconds. Then tap Connect over USB to send your style and colours.", "ok");
   } catch (e) {
     bar.fail();
     if (e && e.name === "NotFoundError") sayF("No board selected.");
@@ -1180,6 +1180,7 @@ async function sendUsb() {
   }
 }
 $("send").addEventListener("click", sendUsb);
+$("fw-usb").addEventListener("click", sendUsb);   // the same, right under Install
 
 // ---------------- live tuning over Bluetooth (Web Bluetooth) ----------------
 const send = () => bleRx ? sendBle() : sendUsb();
