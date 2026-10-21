@@ -382,7 +382,7 @@ function markStyle() {
   root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !cross; });
   const woodSel = S.style === 17;                            // the Wooden cross picks what goes behind it
   $("crossfill-label").textContent = woodSel ? "Behind the cross" : "Inside the cross";
-  $("crossfill-hint").textContent = woodSel ? "What's shown behind the wooden cross. The warm glow uses the colours below; the skies drift faster with a higher spin speed." : "What's shown inside the glowing cross outline. Solid colour fills it with the inner colour.";
+  $("crossfill-hint").textContent = woodSel ? "Shown behind the wooden cross. Skies drift faster with more spin speed." : "Shown inside the glowing outline. Solid colour uses the inner colour.";
   $("fill-sky").hidden = $("fill-sky").disabled = !woodSel;
   $("fill-sky").querySelectorAll("option").forEach(o => { o.hidden = o.disabled = !woodSel; });
   $("fill-plain").hidden = $("fill-plain").disabled = woodSel;
