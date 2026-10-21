@@ -939,11 +939,18 @@ $("send-pics").addEventListener("click", sendPictures);
 
 // ---------------- quick install: prebuilt firmware flashed from the browser (esptool-js) ----------------
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/main/";   // always the latest firmware
+// The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
+// fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
+const FW_VERSION = "1.10.17";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/ff1c4f63b194d9596eeb5f49a603721571310a5a/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "f26a2c94f84c87a2719bd637e103955ffbf21aa0260b9cf939f1dba4d1efefdc" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "73264bae4ae945097c2ac16a98de4e58fd8fc0806193862a6a3e814a6bf38ef9" },
 };
+async function sha256Hex(bytes) {
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(h, b => b.toString(16).padStart(2, "0")).join("");
+}
 const IS_ANDROID = /Android/i.test(navigator.userAgent);
 function firmwareFor() {
   const fw = FIRMWARE[S.board + "|" + S.model];
@@ -987,7 +994,8 @@ async function installFirmware() {
     const chip = loader.chip.CHIP_NAME;
     if (chip !== fw.chip) throw new Error(`this board is an ${chip}, but the board picked above needs an ${fw.chip}. Check "Select your board".`);
     bar.step(3, 4, "Downloading the firmware");
-    const data = await fetchWithProgress(FW_FILES + fw.file + "?v=" + Date.now(), f => bar.set(f));
+    const data = await fetchWithProgress(FW_FILES + fw.file, f => bar.set(f));
+    if (await sha256Hex(data) !== fw.sha256) throw new Error("the firmware download didn't match the expected file, so nothing was installed. Please try again later.");
     bar.step(4, 4, "Installing on the board. Keep it plugged in.");
     bar.set(0);
     await loader.writeFlash({
