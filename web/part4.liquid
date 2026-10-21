@@ -613,7 +613,7 @@ function bindAll() {
   for (const k of Object.keys(fmt)) { $(k).value = S[k]; $("o-" + k).textContent = fmt[k](S[k]); }
   $("drift").checked = S.drift; $("addr").value = S.addr; $("reverse").checked = S.reverse;
   $("c1").value = S.c1; $("c2").value = S.c2;
-  $("fade").checked = S.fade; $("fade-opts").hidden = !S.fade;
+  $("fade").checked = S.fade; $("fade-opts").hidden = !S.fade; $("tapnext").checked = S.tapnext;
   if (typeof renderFadeSets === "function") { renderFadeSets(); showFadeTime(); }
   markPresets(); markSpaceSets(); buildPalette();
   codeEl.textContent = sketch();
@@ -628,6 +628,7 @@ for (const k of Object.keys(fmt)) {
 }
 $("drift").addEventListener("change", e => { S.drift = e.target.checked; changed(); });
 $("reverse").addEventListener("change", e => { S.reverse = e.target.checked; changed(); });
+$("tapnext").addEventListener("change", e => { S.tapnext = e.target.checked; changed(); });   // touchscreen boards: tapping shows the next style or scene
 $("addr").addEventListener("change", e => { S.addr = e.target.value; save(); refreshCode(); });
 $("reset").addEventListener("click", () => {
   S = { ...DEFAULTS, model: S.model, tint: S.tint, addr: S.addr, board: S.board, custom: S.custom, pics: S.pics, scenes: S.scenes.slice(), fadeSets: DEFAULTS.fadeSets.map(x => ({ ...x })) };
@@ -1060,7 +1061,7 @@ const cmdLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFi
 function sceneArgs() {
   const L = sceneList(), cols = " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" "), rip = S.style === 17 ? S.woodGrain : S.crossRipple;
   const space = hasSpaceCols(S.style) || L.some(c => c >= 200 && c < 255 && hasSpaceCols(c - 200));
-  const tail = turns(M) ? `${cols} ${S.crossFill} ${rip} ${S.portrait ? 1 : 0} ${S.tone} ${S.warm}`   // screens that turn: everything, then portrait / landscape
+  const tail = turns(M) ? `${cols} ${S.crossFill} ${rip} ${S.portrait ? 1 : 0} ${S.tone} ${S.warm} ${S.tapnext ? 1 : 0}`   // screens that turn: everything, then portrait / landscape
     : isCrossStyle(S.style) ? `${cols} ${S.crossFill} ${rip}` : space ? cols : "";
   return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${tail}`;
 }   // space colours only when needed, so older boards still accept the rest

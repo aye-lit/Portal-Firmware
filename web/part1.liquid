@@ -128,6 +128,7 @@
 #vps .quick { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; }
 #vps .quick h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
 #vps .manual { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; }
+#vps .fade-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 28px; }
 #vps .manual > h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
 #vps .sketch-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 #vps .sketch-head h3 { margin: 0; }
@@ -380,7 +381,10 @@ Takes about a minute.</p>
           <label class="ctl" for="vps-woodgrain" data-cross><span>Wood</span><select id="vps-woodgrain"><option value="0">Classic</option><option value="1">Pine</option><option value="2">Rustic oak</option></select><small>The grain of the wooden cross</small></label>
           <label class="ctl" for="vps-crossripple" data-cross data-glowcross><span>Ripple</span><select id="vps-crossripple"><option value="0">Off</option><option value="1">Outward: middle to edge</option><option value="2">Inward: edge to middle</option></select><small>Rings that echo the cross outline</small></label>
           <div class="fadebox" id="vps-fade-wrap" style="grid-column: 1 / -1">
-            <label for="vps-fade" class="chk"><input id="vps-fade" type="checkbox"> Fade through colour sets</label>
+            <div class="fade-row">
+              <label for="vps-fade" class="chk"><input id="vps-fade" type="checkbox"> Fade through colour sets</label>
+              <label for="vps-tapnext" class="chk"><input id="vps-tapnext" type="checkbox"> Tap for next scene <span class="note" style="margin:0">(touchscreen displays only)</span></label>
+            </div>
             <div id="vps-fade-opts" class="fadeopts">
               <p class="note" style="margin:0">The portal fades through each set below in order, then starts over. Set 1 is also your main colours. Up to 4 sets.</p>
               <div class="fadesets" id="vps-fade-sets"></div>

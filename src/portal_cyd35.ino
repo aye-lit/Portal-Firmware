@@ -120,7 +120,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xAFD141E7UL;
+const uint32_t BUILD_ID = 0x0EBDE090UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -189,7 +189,7 @@ Spark sparks[MAX_SPARKS];
 int16_t sparkX[MAX_SPARKS], sparkY[MAX_SPARKS];
 float t = 0;
 
-struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill, crossRipple, portrait, tone, warm; };
+struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill, crossRipple, portrait, tone, warm, tapOff; };
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // ---------- tables ----------
@@ -262,6 +262,7 @@ void buildParams() {
 }
 
 uint8_t  TONE = 20;             // Colour depth: darker mid-tones for screens that look washed out (0 = as drawn)
+uint8_t  TAP_OFF = 0;             // 1: tapping the screen does nothing
 uint8_t  WARM = 50;             // Warmth: less blue (and a little less green) for screens that lean blue
 uint16_t toneS[256];                    // how much to scale a colour by, from its brightest channel (keeps the hue)
 uint16_t warmG = 256, warmB = 256;
@@ -417,6 +418,7 @@ uint32_t tapAt = 0, sceneShiftMs = 0;    // when the tap fade began; how far tap
 void pollTap() {                         // the touch chip pulls its pin low while the screen is pressed
   static uint32_t lowSince = 0, highSince = 0;
   static bool down = false;
+  if (TAP_OFF) return;                   // turned off in the Studio
   uint32_t now = millis() | 1;
   if (digitalRead(TAP_PIN) == LOW) {
     highSince = 0;
@@ -469,6 +471,7 @@ void apply(const Saved &s) {
 #endif
   TONE = s.tone <= 100 ? s.tone : 0;
   WARM = s.warm <= 100 ? s.warm : 0;
+  TAP_OFF = s.tapOff == 1;               // (older saved settings: tapping stays on)
 }
 
 void loadSettings() {
@@ -494,6 +497,7 @@ void saveSettings() {
   s.portrait = wantPortrait ? 1 : 0;
   s.tone = TONE;
   s.warm = WARM;
+  s.tapOff = TAP_OFF;
   EEPROM.put(0, s);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
   EEPROM.commit();
@@ -851,11 +855,11 @@ uint32_t rebootAt = 0;                   // set by the REBOOT command
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strcasecmp(line, "TAP") == 0) { tapCount++; return "OK"; }   // same as tapping the screen: the next style (or scene)
   if (strncasecmp(line, "SET ", 4) == 0) {
-    float v[49];
+    float v[50];
     uint8_t n = 0;
     char *p = strtok(line + 4, " ");
-    while (p && n < 49) { v[n++] = atof(p); p = strtok(NULL, " "); }
-    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46 || n == 47 || n == 48 || n == 49) {
+    while (p && n < 50) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46 || n == 47 || n == 48 || n == 49 || n == 50) {
       Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
       for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
       s.fadeSecs = v[23];
@@ -869,6 +873,7 @@ const char* handleCommand(char *line) {   // returns the reply to send back
       s.portrait = n >= 47 ? (uint8_t)v[46] : (wantPortrait ? 1 : 0);   // portrait / landscape (screens that can turn)
       s.tone = n >= 48 ? (uint8_t)v[47] : TONE;                          // colour depth
       s.warm = n >= 49 ? (uint8_t)v[48] : WARM;                          // warmth
+      s.tapOff = n >= 50 ? (v[49] ? 0 : 1) : TAP_OFF;                    // tap for next scene (touchscreens)
       if (n >= 36) {
         s.sceneCount = (uint8_t)v[25];
         for (int k = 0; k < 8; k++) s.scenes[k] = (uint8_t)v[26 + k];
