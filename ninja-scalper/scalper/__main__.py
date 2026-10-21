@@ -8,7 +8,7 @@
   serve     run the bridge NinjaTrader connects to
 """
 import argparse
-import ast
+import glob
 import json
 import os
 import sys
@@ -29,8 +29,18 @@ def _cfg(a, **extra):
     return Config.load(a.config, **over)
 
 
+def _expand(patterns):
+    """Windows' cmd.exe does not expand wildcards, so do it here: "C:\\exports\\MES*.txt" works."""
+    files = []
+    for p in patterns or []:
+        hits = sorted(glob.glob(p))
+        files += hits or [p]
+    return files
+
+
 def cmd_download(a):
     sym = a.instrument
+    a.files = _expand(a.files)
     if a.source == "databento":
         end = a.end or pd.Timestamp.now(tz="UTC").normalize().strftime("%Y-%m-%d")
         start = a.start or (pd.Timestamp(end) - pd.DateOffset(years=a.years)).strftime("%Y-%m-%d")

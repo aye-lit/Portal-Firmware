@@ -80,7 +80,7 @@ The command prints the quoted cost before it downloads.
 4. Load all the files at once. The bot rolls between contracts on volume and back-adjusts the prices:
 
 ```bat
-python -m scalper download --source ninjatrader --files "C:\exports\MES 03-21.Last.txt" "C:\exports\MES 06-21.Last.txt" ...
+python -m scalper download --source ninjatrader --files "C:\exports\MES*.txt"
 ```
 
 The timestamps follow NinjaTrader's time-zone setting. If yours is not Eastern, add `--source-tz America/Chicago` (or your zone). If the busiest bar of the day is not the 09:30 ET open, the loader prints a warning.
