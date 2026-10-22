@@ -660,7 +660,7 @@ for (const k of Object.keys(fmt)) {
 }
 $("drift").addEventListener("change", e => { S.drift = e.target.checked; changed(); });
 $("reverse").addEventListener("change", e => { S.reverse = e.target.checked; changed(); });
-$("tapnext").addEventListener("change", e => { S.tapnext = e.target.checked; changed(); });   // touchscreen boards: tapping shows the next style or scene
+$("tapnext").addEventListener("change", e => { S.tapnext = e.target.checked; renderScenes(); changed(); });   // touchscreen boards: tapping shows the next style or scene
 $("addr").addEventListener("change", e => { S.addr = e.target.value; save(); refreshCode(); });
 $("reset").addEventListener("click", () => {
   endEdit(true);
@@ -714,10 +714,19 @@ function picPixels(i) {                             // preview pixels, rounded t
   pic._pixKey = key; pic._pix = d;
   return d;
 }
+const tapScenes = () => M.kind === "tft" && S.tapnext && !!boardOf().tap;   // tap for next scene (touchscreens): no timer
+const pvTap = { cur: 0, nxt: 0, at: 0 };             // the preview: click it like tapping the screen
 function sceneNow() {                               // same timing as the board (scene codes: 255 portal, k picture, 128+k portal around picture)
   const L = sceneList(), n = L.length, now = performance.now() / 1000;
   if (!n || editIdx !== -1) return null;             // editing a scene: the preview shows just that one
   if (n === 1) return { a: L[0], b: L[0], mix: 0, ageA: now, ageB: 0, ia: 0, ib: 0 };
+  if (tapScenes()) {
+    if (pvTap.cur >= n || pvTap.nxt >= n) pvTap.cur = pvTap.nxt = 0;
+    const el = now - pvTap.at;
+    if (pvTap.cur !== pvTap.nxt && el >= 1) pvTap.cur = pvTap.nxt;
+    const f = Math.min(1, el), mix = pvTap.cur === pvTap.nxt ? 0 : Math.trunc(f * f * (3 - 2 * f) * 256);
+    return { a: L[pvTap.cur], b: L[pvTap.nxt], mix, ageA: el + 1, ageB: el, ia: pvTap.cur, ib: pvTap.nxt };
+  }
   const per = S.holdsec + S.scenefade, pos = now % (per * n);
   const i = Math.min(Math.floor(pos / per), n - 1), w = pos - i * per;
   let mix = 0;
@@ -736,6 +745,12 @@ function sceneLayer(code, age, buf) {                // buf: the style this laye
   return { kind: 2, pix, alpha, buf };
 }
 const mixABGR = (x, y, m) => { const n = 256 - m; return (255 << 24) | ((((x >> 16) & 255) * n + ((y >> 16) & 255) * m) >> 8 << 16) | ((((x >> 8) & 255) * n + ((y >> 8) & 255) * m) >> 8 << 8) | (((x & 255) * n + (y & 255) * m) >> 8); };
+cv.addEventListener("click", () => {                 // tap for next scene: clicking the preview is a tap
+  const n = sceneList().length;
+  if (!tapScenes() || n < 2 || editIdx !== -1) return;
+  if (pvTap.cur !== pvTap.nxt) pvTap.cur = pvTap.nxt;
+  pvTap.nxt = (pvTap.cur + 1) % n; pvTap.at = performance.now() / 1000;
+});
 function composePreview(out, out2, sc = sceneNow()) {   // out: the style of the scene showing now; out2: the one it fades into (if different)
   if (!sc) return;
   let A = sceneLayer(sc.a, sc.ageA, out), B = sc.mix > 0 && sc.b !== sc.a ? sceneLayer(sc.b, sc.ageB, out2 || out) : null, m = sc.mix;
@@ -838,6 +853,10 @@ function renderScenes() {
   $("style-add").disabled = S.scenes.length >= 8; $("style-add").style.opacity = S.scenes.length >= 8 ? .5 : 1;
   $("hold-min").value = Math.floor(S.holdsec / 60); $("hold-sec").value = S.holdsec % 60;
   $("scene-fade").value = S.scenefade;
+  const tapOnly = tapScenes();                        // tap for next scene: no timer to set
+  $("scene-timing").hidden = tapOnly;
+  $("order-note").textContent = tapOnly ? "Tap the screen to show the next one. After the last it starts over. (Click the preview to try it.)" : "The board shows these in turn, then starts over.";
+  cv.style.cursor = tapOnly && S.scenes.length > 1 ? "pointer" : "";
   $("frame-wrap").hidden = !S.scenes.some(x => x >= 100 && x < 200);
   $("frame").value = S.frame; $("o-frame").textContent = S.frame + "%";
 }
@@ -1013,11 +1032,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.10.22";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/646fecd41df6bfdbaef1512900efeb70499c3a3d/";
+const FW_VERSION = "1.10.23";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/cc723bccd3dc9254c7d694d18a91b4c9c13a912f/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "7afbc3908fa397aa4dff0a093fc3d8e097df4d4ac790ed8ea2da33dfb2f207ad" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "4fa1bb80f30a8bde659b145f2ac9812fa57b0f0efd761d091b4bd612b31707d1" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "56ce04f2c42b6c13a106e00429535324038d6908c7e50bc4cf9d9929970287a6" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "f1eae3828a52e281e24d187d5afd110c25e01fc77d4549d4679bd05bd54a79e6" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));

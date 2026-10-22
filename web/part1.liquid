@@ -422,9 +422,10 @@ Takes about a minute.</p>
             </div>
             <div id="vps-scene-box">
               <div class="sub">Play order</div>
-              <p class="note" style="margin:0 0 6px">The board shows these in turn, then starts over.</p>
+              <p class="note" style="margin:0 0 6px" id="vps-order-note">The board shows these in turn, then starts over.</p>
               <div class="scenes" id="vps-scenes"></div>
               <div class="btns"><button class="b ghost small" id="vps-scene-add" type="button">+ Add scene</button></div>
+              <div id="vps-scene-timing">
               <div class="fadetime" style="margin-top:10px">
                 <span>Show each scene for</span>
                 <label for="vps-hold-min"><input id="vps-hold-min" type="number" min="0" max="60" step="1" inputmode="numeric"> min</label>
@@ -434,6 +435,7 @@ Takes about a minute.</p>
                 <span>Fade into the next scene over</span>
                 <label for="vps-scene-fade"><input id="vps-scene-fade" type="number" min="0" max="60" step="1" inputmode="numeric"> sec</label>
                 <span class="note" style="margin:0">0 switches instantly</span>
+              </div>
               </div>
             </div>
           </div>
