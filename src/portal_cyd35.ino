@@ -121,7 +121,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x28E6B2D6UL;
+const uint32_t BUILD_ID = 0xBFD4D060UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -439,6 +439,10 @@ int8_t  tapIdx = -1;                     // which one (-1 = your own style or sc
 uint8_t tapFrom = 255, tapTo = 255;      // fading from / to
 uint32_t tapAt = 0, sceneShiftMs = 0;    // when the tap fade began; how far taps have moved the scene clock
 #if TAP_PIN >= 0
+uint8_t  tapCur = 0, tapNext = 0;        // tap for next scene: the scene showing, and the one it's fading into
+uint32_t tapSceneAt = 0;                 // when the last tap started that fade
+#endif
+#if TAP_PIN >= 0
 void pollTap() {                         // the touch chip pulls its pin low while the screen is pressed
   static uint32_t lowSince = 0, highSince = 0;
   static bool down = false;
@@ -478,6 +482,9 @@ bool valid(const Saved &s) {
 
 void apply(const Saved &s) {
   tapMode = false; tapIdx = -1;          // new settings: show them (not a style picked by tapping)
+#if TAP_PIN >= 0
+  tapCur = tapNext = 0;                  // tap for next scene: start again from the first scene
+#endif
   RADIUS = s.radius; OVAL = s.oval; TWIST = s.twist; SPEED = s.speed;
   ARMS = s.arms; NUM_SPARKS = s.sparks; DRIFT = s.drift;
   COLOR_CORE = s.core; COLOR_RIM = s.rim; BRIGHTNESS = s.bright; STYLE = s.style;
@@ -1062,6 +1069,7 @@ void putLook(const Look &L) {
 void useSceneLook(int id) {              // load a scene's settings (or the main ones) and rebuild what depends on them
   if (id == curLook) return;
   putLook(id < 0 ? mainLook : SCENE_LOOKS[id]);
+  if (id == -3) { float pr = min(SCR_W, SCR_H) / 2 - 1; if (RADIUS > pr) RADIUS = pr; }   // the cross size would be too big for a portal
   if (spaceLUT) buildSpaceLUT();
   buildParams();
   buildPalette();
@@ -1088,7 +1096,11 @@ void loadScenes() {                      // after loadSettings()
   }
   for (int k = 0; k < 8; k++) { pendHas[k] = SCENE_HAS[k]; pendLook[k] = SCENE_LOOKS[k]; }
 }
-inline int lookOf(int idx, uint8_t code) { return idx >= 0 && idx < 8 && SCENE_HAS[idx] && isStyleScene(code) ? idx : -1; }
+inline int lookOf(int idx, uint8_t code) {
+  if (idx >= 0 && idx < 8 && SCENE_HAS[idx] && isStyleScene(code)) return idx;   // its own settings
+  if (isStyleScene(code) && ((STYLE >= 8 && STYLE <= 13) || STYLE == 17)) return -3;   // another style while the main one is a cross: portal-sized
+  return -1;
+}
 void pickSceneLook() {                   // load the settings of the scene showing; scenes with different settings fade through black
   int ia = lookOf(idxA, sceneA), ib = lookOf(idxB, sceneB);
   dipK = 256;
@@ -1103,11 +1115,6 @@ void pickSceneLook() {                   // load the settings of the scene showi
 
 const uint8_t TAP_STYLES[] = { 0, 1, 2, 3, 4, 5, 6, 7, 14, 15, 16 };   // styles a tap steps through (after your own)
 const int TAP_N = sizeof(TAP_STYLES);
-
-#if TAP_PIN >= 0
-uint8_t  tapCur = 0, tapNext = 0;        // tap for next scene: the scene showing, and the one it's fading into
-uint32_t tapSceneAt = 0;                 // when the last tap started that fade
-#endif
 
 void onTap() {
 #if TAP_PIN >= 0
