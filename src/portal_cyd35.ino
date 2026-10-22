@@ -121,7 +121,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xBFD4D060UL;
+const uint32_t BUILD_ID = 0xF59D882FUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -194,19 +194,19 @@ struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, spar
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // Scenes with their own settings: each "another style" scene can keep its own size, colours, speed...
-struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn; };
+struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn, style, crossFill, crossRipple, beam, crossW, bar; };
 struct SceneSaved { uint32_t id; uint8_t has[8]; Look look[8]; };
 #define EE_SIZE (128 + sizeof(SceneSaved))   // main settings, then the scenes' own settings
 uint8_t  SCENE_HAS[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };   // 1 = that scene has its own settings
 Look     SCENE_LOOKS[8] = {
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0 }
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32 },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32 }
 };
 Look mainLook;                           // your main settings (the scenes without their own use these)
 Look pendLook[8]; uint8_t pendHas[8];    // scene settings from live tuning, applied between frames
@@ -416,7 +416,8 @@ void updateSparks() {
 // ---------- saved settings (EEPROM) ----------
 bool validFill(uint8_t f) { return f <= 11 || (f >= 14 && f <= 16) || f == 18; }   // styles that can go inside a cross (Wooden cross only: 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light, 18 full day)
 
-inline bool isStyleScene(uint8_t c) { return c >= 200 && c <= 216 && (c - 200 <= 7 || c - 200 >= 14); }   // 200 + style: another style to fade into
+inline bool isStyleScene(uint8_t c) { return c >= 200 && c <= 217; }   // 200 + style: another style to fade into (crosses too)
+inline bool isCrossSt(uint8_t st) { return (st >= 8 && st <= 13) || st == 17; }
 inline bool validScene(uint8_t c) { return c == PORTAL || c < MAX_PICS || (c >= 128 && c < 128 + MAX_PICS) || isStyleScene(c); }
 
 bool validScenes(const Saved &s) {
@@ -579,8 +580,13 @@ const uint32_t PIC_MAGIC = 0x43495056UL;   // "VPIC"
 const uint32_t STAGE_SIZE = 0x30000;       // room for one arriving JPEG (192 KB, enough for high quality on big screens)
 const esp_partition_t *picPart = NULL;
 uint32_t slotSize = 0, stageOff = 0;      // stageOff: where an arriving JPEG waits (last 64 KB)
-uint32_t crossOff = 0, crossSize = 0, crossPlane = 0, woodOff = 0;   // the cross outline (distance to the edge for every pixel) and the wood
+uint32_t crossOff = 0, crossSize = 0, crossPlane = 0, woodOff = 0;   // the cross outline (distance to the edge for every pixel) and the wood in use
 uint8_t  picSlots = 0;
+#define MAX_PLANES 10                     // cross outlines and wood kept side by side, so scenes can switch crosses without rebuilding them
+uint8_t  nPlanes = 0;
+uint32_t planesOff = 0;                   // the first one (they sit just before the staging area)
+uint32_t planeMagic[MAX_PLANES], planeKeyOf[MAX_PLANES], planeUse[MAX_PLANES], planeTick = 0;
+int8_t   crossSlot = -1, woodSlot = -1;   // the ones in use now
 volatile uint32_t picId[MAX_PICS];        // 0 = empty slot
 uint16_t picW[MAX_PICS];                  // the width each picture was made for (the screen may have been turned since)
 volatile bool uploading = false;
@@ -597,10 +603,20 @@ void beginPictures() {
   slotSize = (sizeof(PicHead) + (uint32_t)SCR_W * SCR_H * 2 + 4095) & ~4095UL;
   stageOff = (picPart->size - STAGE_SIZE) & ~4095UL;
   crossPlane = (16 + (uint32_t)SCR_W * SCR_H + 4095) & ~4095UL;
-  crossSize = crossPlane;                  // the cross outline lives just before the staging area
-  crossOff = stageOff - crossSize;
-  woodOff = stageOff;                      // the wood (Wooden cross) borrows the staging area; it's worked out again after a picture arrives
-  picSlots = min((uint32_t)MAX_PICS, crossOff / slotSize);
+  crossSize = crossPlane;
+  {                                        // room for several cross outlines (and wood), keeping at least 5 pictures where possible
+    uint32_t room = stageOff, keepPics = min((uint32_t)5, room / slotSize);
+    uint32_t n = (room - keepPics * slotSize) / crossPlane;
+    if (n < 1) { n = 1; }
+    nPlanes = min((uint32_t)MAX_PLANES, n);
+  }
+  planesOff = stageOff - nPlanes * crossPlane;
+  crossOff = woodOff = planesOff;
+  picSlots = min((uint32_t)MAX_PICS, planesOff / slotSize);
+  for (uint8_t i = 0; i < nPlanes; i++) {   // what each one holds
+    uint32_t h[4]; esp_partition_read(picPart, planesOff + (uint32_t)i * crossPlane, h, 16);
+    planeMagic[i] = h[0]; planeKeyOf[i] = h[1]; planeUse[i] = 0;
+  }
   for (uint8_t i = 0; i < picSlots; i++) {
     PicHead h;
     esp_partition_read(picPart, i * slotSize, &h, sizeof(h));
@@ -770,6 +786,18 @@ int crossShift() {                              // move the crossing up so the w
   return (int)lroundf((bot - top) / 2);
 }
 
+int findPlane(uint32_t magic, uint32_t key) {
+  for (int i = 0; i < nPlanes; i++) if (planeMagic[i] == magic && planeKeyOf[i] == key) return i;
+  return -1;
+}
+int freePlane() {                               // one to (re)build: never the cross or wood in use, otherwise the longest unused
+  int best = -1;
+  for (int i = 0; i < nPlanes; i++) {
+    if (i == crossSlot || i == woodSlot) continue;
+    if (best < 0 || planeUse[i] < planeUse[best]) best = i;
+  }
+  return best >= 0 ? best : (crossSlot == 0 && nPlanes > 1 ? 1 : 0);
+}
 void prepareCross() {                           // (re)build the outline when the cross settings change
   int shift = crossShift();
   crossYC = QY - shift;
@@ -778,11 +806,14 @@ void prepareCross() {                           // (re)build the outline when th
   for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
   if (key == crossKey && crossReady) return;
   crossReady = false;
+  int slot = findPlane(CROSS_MAGIC, key);       // made before (another scene's cross): use it as it is
+  bool build = slot < 0;
+  if (build) { slot = freePlane(); if (slot == woodSlot) { woodSlot = -1; woodPlaneKey = 0; } }
+  crossOff = planesOff + (uint32_t)slot * crossPlane; crossSlot = slot; planeUse[slot] = ++planeTick;
   float rw = max(1.5f, max(2.0f, min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100) * BEAM / 100.0f) * 0.18f);
   for (int k = 0; k < 128; k++) { crossRimT[k] = (uint8_t)(255 * expf(-(k / rw) * (k / rw))); crossHaloT[k] = (uint8_t)(115 * expf(-k / 12.0f)); }
-  uint32_t head[4];
-  esp_partition_read(picPart, crossOff, head, 16);
-  if (head[0] != CROSS_MAGIC || head[1] != key) {
+  if (build) {
+    planeMagic[slot] = 0;
     crossShapes();
     esp_partition_erase_range(picPart, crossOff, crossSize);
     static int8_t row[SCR_WMAX];
@@ -799,6 +830,7 @@ void prepareCross() {                           // (re)build the outline when th
     }
     uint32_t h2[4] = { CROSS_MAGIC, key, 0, 0 };
     esp_partition_write(picPart, crossOff, h2, 16);
+    planeMagic[slot] = CROSS_MAGIC; planeKeyOf[slot] = key;
   }
   crossKey = key;
   crossReady = true;
@@ -808,23 +840,28 @@ const uint8_t *planeMap = NULL;           // the cross outline and the wood, map
 esp_partition_mmap_handle_t planeH;
 void mapPlanes() {
   const void *ptr;
-  if (!planeMap && esp_partition_mmap(picPart, crossOff, stageOff + STAGE_SIZE - crossOff, ESP_PARTITION_MMAP_DATA, &ptr, &planeH) == ESP_OK) planeMap = (const uint8_t *)ptr;   // (the staging area too: the galaxy picture sits at its end)
+  if (!planeMap && esp_partition_mmap(picPart, planesOff, stageOff + STAGE_SIZE - planesOff, ESP_PARTITION_MMAP_DATA, &ptr, &planeH) == ESP_OK) planeMap = (const uint8_t *)ptr;   // (the staging area too: the galaxy picture sits at its end)
 }
 void readCrossRows(int y0, int rows) {   // (mapped: nothing to copy, edgeRows() points straight at it)
   if (!planeMap) esp_partition_read(picPart, crossOff + 16 + (uint32_t)y0 * SCR_W, edgeBuf, (uint32_t)rows * SCR_W);
 }
-const int8_t *edgeRows(int y0) { return planeMap ? (const int8_t *)(planeMap + 16 + (uint32_t)y0 * SCR_W) : edgeBuf; }   // a strip of the cross outline (either core)
+const int8_t *edgeRows(int y0) { return planeMap ? (const int8_t *)(planeMap + (crossOff - planesOff) + 16 + (uint32_t)y0 * SCR_W) : edgeBuf; }   // a strip of the cross outline (either core)
 void readEdgeRow(int y, int8_t *dst) { esp_partition_read(picPart, crossOff + 16 + (uint32_t)y * SCR_W, dst, SCR_W); }
 const uint32_t WOOD_MAGIC = 0x444F4F57UL;  // "WOOD"
-bool woodPlaneReady(uint32_t key) { uint32_t h[4]; esp_partition_read(picPart, woodOff, h, 16); return h[0] == WOOD_MAGIC && h[1] == key; }
+bool woodPlaneReady(uint32_t key) {             // made before? then use it (otherwise pick a place to make it)
+  int s = findPlane(WOOD_MAGIC, key), had = s >= 0;
+  if (!had) { s = freePlane(); planeMagic[s] = 0; }
+  woodSlot = s; woodOff = planesOff + (uint32_t)s * crossPlane; planeUse[s] = ++planeTick;
+  return had;
+}
 void woodPlaneBegin() { esp_partition_erase_range(picPart, woodOff, crossPlane); }
 void woodPlaneRow(int y, const uint8_t *row) { esp_partition_write(picPart, woodOff + 16 + (uint32_t)y * SCR_W, row, SCR_W); }
-void woodPlaneEnd(uint32_t key) { uint32_t h[4] = { WOOD_MAGIC, key, 0, 0 }; esp_partition_write(picPart, woodOff, h, 16); }
+void woodPlaneEnd(uint32_t key) { uint32_t h[4] = { WOOD_MAGIC, key, 0, 0 }; esp_partition_write(picPart, woodOff, h, 16); planeMagic[woodSlot] = WOOD_MAGIC; planeKeyOf[woodSlot] = key; }
 void readWoodRows(int y0, int rows, uint8_t *dst) {
   if (!planeMap) esp_partition_read(picPart, woodOff + 16 + (uint32_t)y0 * SCR_W, dst, (uint32_t)rows * SCR_W);
 }
 extern uint8_t *woodBuf;
-const uint8_t *woodRows(int y0) { return planeMap ? planeMap + (woodOff - crossOff) + 16 + (uint32_t)y0 * SCR_W : woodBuf; }   // a strip of the wood (either core)
+const uint8_t *woodRows(int y0) { return planeMap ? planeMap + (woodOff - planesOff) + 16 + (uint32_t)y0 * SCR_W : woodBuf; }   // a strip of the wood (either core)
 
 const char *pictureCommand(char *line) {
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
@@ -840,8 +877,7 @@ const char *pictureCommand(char *line) {
     upSlot = slot; upLen = len; upId = id; upPos = 0;
     esp_partition_erase_range(picPart, stageOff, (len + 4095) & ~4095UL);   // only what this picture needs
     uploading = true; upLast = millis();
-    woodPlaneKey = 0;                            // the wood shares this space: work it out again afterwards
-    galFlashKey = 0;                             // and so does the galaxy picture
+    galFlashKey = 0;                             // the galaxy picture shares this space: work it out again afterwards
     return "READY";
   }
   if (line[0] == 'D' && line[1] == ' ' && uploading) {   // a piece of the JPEG, in base64
@@ -927,14 +963,14 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     }
     return "ERR";
   }
-  if (strncasecmp(line, "SCN ", 4) == 0) {   // SCN k radius oval arms twist speed sparks drift core rim bright ripples ripspeed glow stars rimsmooth space1..4  (or SCN k OFF)
-    float v[20];                         // no reply: older boards ignore it the same way
+  if (strncasecmp(line, "SCN ", 4) == 0) {   // SCN k radius oval arms twist speed sparks drift core rim bright ripples ripspeed glow stars rimsmooth space1..4 style crossfill ripple beam crossw bar  (or SCN k OFF)
+    float v[26];                         // no reply: older boards ignore it the same way
     uint8_t n = 0; bool off = false;
     char *p = strtok(line + 4, " ");
-    while (p && n < 20) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
+    while (p && n < 26) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
     int k = n ? (int)v[0] : -1;
     if (k < 0 || k > 7) return NULL;
-    if (off || n != 20) { pendHas[k] = 0; scenePending = true; return NULL; }
+    if (off || n != 26 || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
     Look &L = pendLook[k];
     L.radius = clampf(v[1], 6, RADIUS_MAX); L.oval = clampf(v[2], 1, 2); L.arms = clampb((uint8_t)v[3], 1, 8);
     L.twist = clampf(v[4], 0, 6); L.speed = clampf(v[5], 0, 0.4f); L.sparks = min((int)v[6], MAX_SPARKS); L.drift = v[7] ? 1 : 0;
@@ -943,6 +979,8 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     L.stars = clampb((uint8_t)v[14], 1, 6); L.rimSmooth = min((int)v[15], 100);
     for (int j = 0; j < 4; j++) L.spaceCols[j] = (uint32_t)v[16 + j] & 0xFFFFFF;
     L.fadeOn = 0;                        // a scene's own colours don't fade through the colour sets
+    L.style = (uint8_t)v[20]; L.crossFill = (uint8_t)v[21]; L.crossRipple = min((int)v[22], 10);
+    L.beam = clampb((uint8_t)v[23], 5, 30); L.crossW = clampb((uint8_t)v[24], 25, 100); L.bar = clampb((uint8_t)v[25], 20, 50);
     pendHas[k] = 1; scenePending = true;
     return NULL;
   }
@@ -1060,11 +1098,13 @@ void grabLook(Look &L) {                 // the settings in use now
   L.radius = RADIUS; L.oval = OVAL; L.twist = TWIST; L.speed = SPEED; L.ripSpeed = RIP_SPEED; L.glow = GLOW_SIZE;
   L.core = COLOR_CORE; L.rim = COLOR_RIM; for (int k = 0; k < 4; k++) L.spaceCols[k] = SPACE_COLS[k];
   L.arms = ARMS; L.sparks = NUM_SPARKS; L.drift = DRIFT; L.bright = BRIGHTNESS; L.ripples = RIPPLES; L.stars = STARS; L.rimSmooth = RIM_SMOOTH; L.fadeOn = FADE_ON;
+  L.style = STYLE; L.crossFill = CROSS_FILL; L.crossRipple = CROSS_RIPPLE; L.beam = BEAM; L.crossW = CROSS_W; L.bar = BAR;
 }
 void putLook(const Look &L) {
   RADIUS = L.radius; OVAL = L.oval; TWIST = L.twist; SPEED = L.speed; RIP_SPEED = L.ripSpeed; GLOW_SIZE = L.glow;
   COLOR_CORE = L.core; COLOR_RIM = L.rim; for (int k = 0; k < 4; k++) SPACE_COLS[k] = L.spaceCols[k];
   ARMS = L.arms; NUM_SPARKS = L.sparks; DRIFT = L.drift; BRIGHTNESS = L.bright; RIPPLES = L.ripples; STARS = L.stars; RIM_SMOOTH = L.rimSmooth; FADE_ON = L.fadeOn;
+  STYLE = L.style; CROSS_FILL = L.crossFill; CROSS_RIPPLE = L.crossRipple; BEAM = L.beam; CROSS_W = L.crossW; BAR = L.bar;   // (a cross scene: its cross is drawn as the main style)
 }
 void useSceneLook(int id) {              // load a scene's settings (or the main ones) and rebuild what depends on them
   if (id == curLook) return;
@@ -1077,7 +1117,7 @@ void useSceneLook(int id) {              // load a scene's settings (or the main
   curLook = id;
 }
 void saveScenes() {
-  SceneSaved z; z.id = BUILD_ID;
+  SceneSaved z; z.id = BUILD_ID ^ 0x5CE20002UL;   // (^: this layout of scene settings)
   for (int k = 0; k < 8; k++) { z.has[k] = SCENE_HAS[k]; z.look[k] = SCENE_LOOKS[k]; }
   EEPROM.put(128, z);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
@@ -1087,18 +1127,19 @@ void saveScenes() {
 void loadScenes() {                      // after loadSettings()
   grabLook(mainLook); curLook = -1;
   SceneSaved z; EEPROM.get(128, z);
-  if (z.id == BUILD_ID) for (int k = 0; k < 8; k++) {
+  if (z.id == (BUILD_ID ^ 0x5CE20002UL)) for (int k = 0; k < 8; k++) {
     const Look &L = z.look[k];
     bool ok = z.has[k] == 1 && L.radius >= 6 && L.radius <= RADIUS_MAX && L.oval >= 1 && L.oval <= 2 && L.arms >= 1 && L.arms <= 8 && L.twist >= 0 && L.twist <= 6 &&
               L.speed >= 0 && L.speed <= 0.4f && L.sparks <= MAX_SPARKS && L.bright >= 10 && L.bright <= 100 && L.stars >= 1 && L.stars <= 6 && L.ripples <= 6 &&
-              L.ripSpeed >= 0.03f && L.ripSpeed <= 0.3f && L.glow >= 0.3f && L.glow <= 0.9f && L.rimSmooth <= 100;
+              L.ripSpeed >= 0.03f && L.ripSpeed <= 0.3f && L.glow >= 0.3f && L.glow <= 0.9f && L.rimSmooth <= 100 &&
+              L.style <= 17 && validFill(L.crossFill) && L.crossRipple <= 10 && L.beam >= 5 && L.beam <= 30 && L.crossW >= 25 && L.crossW <= 100 && L.bar >= 20 && L.bar <= 50;
     SCENE_HAS[k] = ok; if (ok) SCENE_LOOKS[k] = L;
   }
   for (int k = 0; k < 8; k++) { pendHas[k] = SCENE_HAS[k]; pendLook[k] = SCENE_LOOKS[k]; }
 }
 inline int lookOf(int idx, uint8_t code) {
   if (idx >= 0 && idx < 8 && SCENE_HAS[idx] && isStyleScene(code)) return idx;   // its own settings
-  if (isStyleScene(code) && ((STYLE >= 8 && STYLE <= 13) || STYLE == 17)) return -3;   // another style while the main one is a cross: portal-sized
+  if (isStyleScene(code) && !isCrossSt(code - 200) && isCrossSt(mainLook.style)) return -3;   // another style while the main one is a cross: portal-sized
   return -1;
 }
 void pickSceneLook() {                   // load the settings of the scene showing; scenes with different settings fade through black
@@ -1110,6 +1151,8 @@ void pickSceneLook() {                   // load the settings of the scene showi
     sceneB = sceneA; ageB = ageA; sceneMix = 0;
   } else if (sceneMix >= 128 && sceneA == sceneB) ia = ib;
   useSceneLook(ia);
+  if (isStyleScene(sceneA) && isCrossSt(sceneA - 200)) sceneA = PORTAL;   // a cross scene: its cross is now the main style, so draw it as that
+  if (isStyleScene(sceneB) && isCrossSt(sceneB - 200)) sceneB = PORTAL;   // (one with no settings of its own shows the main style)
 }
 
 
@@ -1412,7 +1455,7 @@ bool galaxyTexFlash() {                 // the galaxy picture in the end of the 
   int a = 3UL * GT_R * 256 <= room ? 256 : 128;
   if (3UL * GT_R * a > room) return false;
   uint32_t key = (uint32_t)lroundf(galK * 1000) * 1024 + a + 2;   // (+2: the points' three values side by side)
-  const uint8_t *base = planeMap + (off - crossOff);
+  const uint8_t *base = planeMap + (off - planesOff);
   if (galFlashKey != key) {
     const uint32_t *h = (const uint32_t *)base;
     if (!(h[0] == GAL_MAGIC && h[1] == key)) {   // not there yet (or the Spiral setting changed): work it out once and store it
@@ -1700,7 +1743,7 @@ void frameStart() {
 #if TURNS
   if (wantPortrait != PORTRAIT) turnScreen(wantPortrait);
 #endif
-  bool isCross = (STYLE >= 8 && STYLE <= 13) || STYLE == 17;   // 17: Wooden cross
+  bool isCross = ((STYLE >= 8 && STYLE <= 13) || STYLE == 17) && curLook != -3;   // 17: Wooden cross (-3: another style is showing, sized as a portal: no cross needed)
   if (isCross && crossAvailable() && edgeBuf) prepareCross();
   crossOn = isCross && crossReady;
   woodOn = crossOn && STYLE == 17;
