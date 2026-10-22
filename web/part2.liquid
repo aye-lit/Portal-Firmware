@@ -1476,7 +1476,8 @@ function tftFrame() {
   spaceT += S.speed * 8;
   if (spaceT > 1e7) spaceT = 0;
   let sc = typeof sceneNow === "function" ? sceneNow() : null;     // scenes can switch to another style
-  const setOf = (c, i) => c >= 200 && c < 255 ? S.sceneSets[i] || null : null;   // a scene's own settings
+  const portalSet = isCrossStyle(S.style) ? { ...pickLook(S), radius: Math.min(S.radius, rmax(M)) } : null;   // other styles shown with a cross: portal-sized
+  const setOf = (c, i) => c >= 200 && c < 255 ? (i != null && S.sceneSets[i]) || portalSet : null;   // a scene's own settings
   let dim = 256;
   if (sc && sc.mix > 0 && setOf(sc.a, sc.ia) !== setOf(sc.b, sc.ib)) {   // different settings: fade through black, like the board
     if (sc.mix >= 128) { dim = (sc.mix - 128) * 2; sc = { ...sc, a: sc.b, ageA: sc.ageB, ia: sc.ib }; } else dim = (128 - sc.mix) * 2;
