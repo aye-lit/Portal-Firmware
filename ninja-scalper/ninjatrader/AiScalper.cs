@@ -57,7 +57,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Port = 5555;
                 Contracts = 1;
                 MaxTradesPerDay = 8;
-                DailyLossLimit = 150;
+                DailyLossLimit = 30;      // sized for a $200 example account
+                MaxRiskPerTrade = 15;
                 FlattenTimeEt = 1555;
                 TradeHistorical = false;
             }
@@ -128,6 +129,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (stopTicks <= 0 || targetTicks < 2 * stopTicks)
             {
                 Print("AiScalper: rejected signal with bad bracket " + reply);
+                return;
+            }
+            double riskUsd = stopTicks * TickSize * Instrument.MasterInstrument.PointValue * Contracts;
+            if (riskUsd > MaxRiskPerTrade)
+            {
+                Print(string.Format("AiScalper: skipped {0}, risk ${1:0.00} > ${2:0.00}", action, riskUsd, MaxRiskPerTrade));
                 return;
             }
             if (hold > 0)
@@ -293,6 +300,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Range(0, double.MaxValue)]
         [Display(Name = "Daily loss limit ($)", GroupName = "Risk", Order = 3)]
         public double DailyLossLimit { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(0, double.MaxValue)]
+        [Display(Name = "Max risk per trade ($)", GroupName = "Risk", Order = 5)]
+        public double MaxRiskPerTrade { get; set; }
 
         [NinjaScriptProperty]
         [Range(0, 2359)]

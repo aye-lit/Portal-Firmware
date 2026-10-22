@@ -25,7 +25,7 @@ def _cfg(a, **extra):
     if getattr(a, "timeframes", None):
         over["timeframes"] = a.timeframes
     if getattr(a, "quick", False):
-        over.update(stop_atr_mults=[1.0], reward_ratios=[2.0], n_folds=3)
+        over.update(stop_atr_mults=[1.0], reward_ratios=[3.0], n_folds=3)
     return Config.load(a.config, **over)
 
 
@@ -144,13 +144,13 @@ def main(argv=None):
     for name, fn in [("explore", cmd_explore), ("learn", cmd_learn)]:
         e = sub.add_parser(name)
         e.add_argument("--timeframes", type=int, nargs="+", help="minutes, e.g. 1 2 3 5 10 15")
-        e.add_argument("--quick", action="store_true", help="one stop size, 2:1 only, 3 folds")
+        e.add_argument("--quick", action="store_true", help="one stop size, 3:1 only, 3 folds")
         e.set_defaults(fn=fn, timeframe=None)
 
     t = sub.add_parser("train")
     t.add_argument("--timeframe", type=int, help="minutes; omit to use the leaderboard winner")
     t.add_argument("--stop-mult", type=float, default=1.0)
-    t.add_argument("--reward", type=float, default=2.0)
+    t.add_argument("--reward", type=float, default=3.0)
     t.set_defaults(fn=cmd_train)
 
     r = sub.add_parser("retrain")

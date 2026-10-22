@@ -129,3 +129,12 @@ def test_back_adjust_removes_roll_gap():
 def test_instrument_specs():
     mes = get_instrument("MES 12-26")
     assert mes.tick_value == pytest.approx(1.25)
+
+
+def test_account_stops_trading_once_wiped_out():
+    from scalper.backtest import account
+    cfg = Config(starting_capital=200, min_account_usd=50)
+    trades = pd.DataFrame({"net_usd": [-60.0, -60.0, -60.0, 500.0], "session": [1, 2, 3, 4]})
+    a = account(trades, cfg, n_days=4)
+    assert a["wiped_out"] and a["end_usd"] == pytest.approx(20.0)   # the +500 after the wipe-out never happens
+    assert a["low_usd"] == pytest.approx(20.0)

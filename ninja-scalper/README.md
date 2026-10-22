@@ -3,7 +3,7 @@
 A machine-learning scalping bot for CME micro index futures: **MES** (Micro E-mini S&P 500) by default, plus MNQ, M2K and MYM.
 
 * **Learns from history.** It uses up to 5 years of 1-minute bars, downloaded over the internet or exported from NinjaTrader.
-* **Explores timeframes.** It rebuilds the data as 1, 2, 3, 5, 10 and 15-minute bars and tests each one with several stop sizes and reward:risk targets of **2:1, 2.5:1 and 3:1**. It ranks every combination by out-of-sample results.
+* **Explores timeframes.** It rebuilds the data as 1, 2, 3, 5, 10 and 15-minute bars and tests each one with several stop sizes and reward:risk targets of **3:1 and 4:1**, aimed at a ~30% win rate (any target of 2:1 or more can be configured). It ranks every combination by out-of-sample results.
 * **Trades through NinjaTrader.** A NinjaScript strategy sends each closed bar to the Python model. The model replies `long`, `short` or `none`, with a stop and a target in ticks. NinjaTrader then places the entry with an attached bracket.
 * **Keeps learning.** `retrain` adds new data and refits the model. `learn` re-runs the whole timeframe search.
 
@@ -35,7 +35,9 @@ the training data, then trade the NEXT period the model has never seen; repeat o
 leaderboard of timeframe × stop size × reward:risk  →  the winner becomes the live model
 ```
 
-With a 2:1 target the bot breaks even at a ~33% hit rate before costs. It only takes a trade when the model's probability is above the learned cut-off.
+Before costs, a 3:1 target breaks even at a 25% hit rate and a 4:1 target at 20%. After costs and fills, real winners average less than the target and real losers a little more than 1R. On a year of MES data, 3:1 needed about a 32% win rate to break even. The bot only takes a trade when the model's probability is above the learned cut-off.
+
+**Account check.** Every result is also replayed on a small account: **$200** by default, trading 1 contract. Any signal that would risk more than **$15** is skipped. The account counts as wiped out once it falls below **$50**, roughly the margin needed to hold 1 MES (check your broker). The trades are also reshuffled into 2,000 possible years to estimate how often bad luck alone would wipe the account out. All three numbers can be changed in the settings.
 
 **The backtest assumes conservative fills, so its results are not flattered:**
 - Entry is a market order at the next bar's open, plus 1 tick of slippage.
@@ -154,8 +156,9 @@ Restart `serve` after retraining. You can automate the weekly retrain with Windo
 The defaults are in `scalper/config.py`. To override any of them, write a JSON file and pass it with `--config`:
 
 ```json
-{ "timeframes": [2, 3, 5], "reward_ratios": [2.0, 3.0], "trade_start": "09:45", "trade_end": "11:30",
-  "max_trades_per_day": 4, "commission_per_side": 0.50 }
+{ "timeframes": [2, 3, 5], "reward_ratios": [3.0, 4.0], "trade_start": "09:45", "trade_end": "11:30",
+  "max_trades_per_day": 4, "commission_per_side": 0.50,
+  "starting_capital": 1000, "max_risk_per_trade_usd": 30 }
 ```
 
 ```bat
@@ -163,6 +166,8 @@ python -m scalper --config my.json learn
 ```
 
 The reward:risk ratio is never allowed below 2:1. Both Python and NinjaTrader reject any bracket with a target smaller than 2× the stop.
+
+The NinjaTrader strategy has matching risk settings, also sized for the $200 example. **Max risk per trade ($)** defaults to 15 and **Daily loss limit ($)** to 30. If you change the account size, change them in both places.
 
 ## Project layout
 

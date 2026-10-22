@@ -39,6 +39,8 @@ def simulate(index, aux, p_long, p_short, out_long, out_short, threshold, cfg, i
         long_side = p_long[i] >= p_short[i]
         out = out_long if long_side else out_short
         risk = out.stop_ticks[i] * inst.tick_value
+        if risk > cfg.max_risk_per_trade_usd:
+            continue
         net = out.pnl_pts[i] * inst.point_value - 2 * cfg.commission_per_side
         r = net / risk
         trades.append((index[min(i + 1, n - 1)], index[out.exit_idx[i]], "long" if long_side else "short",
@@ -79,3 +81,37 @@ def metrics(trades, n_days=None):
         "avg_win_r": float(r[r > 0].mean()) if (r > 0).any() else 0.0,
         "avg_loss_r": float(r[r <= 0].mean()) if (r <= 0).any() else 0.0,
     }
+
+
+def account(trades, cfg, n_days, sims=2000, seed=7):
+    """What these trades would have done to a small account trading 1 contract.
+
+    Besides the actual sequence, the trades are reshuffled (bootstrapped) into many possible years
+    to estimate how often an account of `starting_capital` drops below `min_account_usd` - the bad
+    luck of a different order of wins and losses is a real risk with a ~30% win rate."""
+    start, floor = cfg.starting_capital, cfg.min_account_usd
+    if trades is None or len(trades) == 0:
+        return {"start_usd": start, "end_usd": start, "low_usd": start, "wiped_out": False,
+                "wipeout_prob_1y": 0.0, "median_1y_usd": start, "p10_1y_usd": start, "p90_1y_usd": start}
+    usd = trades["net_usd"].to_numpy()
+    bal = _stop_at_floor(start + np.cumsum(usd)[None, :], floor)[0]
+    per_year = max(1, int(round(len(usd) / max(1, n_days) * 252)))
+    rng = np.random.default_rng(seed)
+    paths = _stop_at_floor(start + np.cumsum(rng.choice(usd, size=(sims, per_year), replace=True), axis=1), floor)
+    busted = paths[:, -1] < floor
+    ends = paths[:, -1]
+    return {"start_usd": start, "end_usd": float(bal[-1]), "low_usd": float(min(start, bal.min())),
+            "wiped_out": bool(bal[-1] < floor), "wipeout_prob_1y": float(busted.mean()),
+            "median_1y_usd": float(np.median(ends)), "p10_1y_usd": float(np.percentile(ends, 10)),
+            "p90_1y_usd": float(np.percentile(ends, 90))}
+
+
+def _stop_at_floor(paths, floor):
+    """A wiped-out account stops trading: hold each path at the balance where it first fell below the floor."""
+    below = paths < floor
+    hit = below.any(axis=1)
+    first = below.argmax(axis=1)
+    out = paths.copy()
+    for k in np.flatnonzero(hit):
+        out[k, first[k]:] = paths[k, first[k]]
+    return out
