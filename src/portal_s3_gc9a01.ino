@@ -115,7 +115,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x0DA692BBUL;
+const uint32_t BUILD_ID = 0x28E6B2D6UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -1084,7 +1084,19 @@ void pickSceneLook() {                   // load the settings of the scene showi
 const uint8_t TAP_STYLES[] = { 0, 1, 2, 3, 4, 5, 6, 7, 14, 15, 16 };   // styles a tap steps through (after your own)
 const int TAP_N = sizeof(TAP_STYLES);
 
+#if TAP_PIN >= 0
+uint8_t  tapCur = 0, tapNext = 0;        // tap for next scene: the scene showing, and the one it's fading into
+uint32_t tapSceneAt = 0;                 // when the last tap started that fade
+#endif
+
 void onTap() {
+#if TAP_PIN >= 0
+  if (SCENE_COUNT >= 2 && !TAP_OFF) {    // tap for next scene: only a tap moves on
+    if (tapCur != tapNext) tapCur = tapNext;                         // (still fading: finish that one first)
+    tapNext = (tapCur + 1) % SCENE_COUNT; tapSceneAt = millis();
+    return;
+  }
+#endif
   if (SCENE_COUNT >= 2) {                // scenes: go on to the next one now
     float per = HOLD_SECS + SCENE_FADE;
     float pos = fmodf((millis() + sceneShiftMs) / 1000.0f, per * SCENE_COUNT);
@@ -1115,6 +1127,18 @@ void updateScene() {
   tapMode = false;
   if (SCENE_COUNT == 0) { sceneA = sceneB = PORTAL; sceneMix = 0; idxA = idxB = -1; return; }
   if (SCENE_COUNT == 1) { sceneA = sceneB = SCENES[0]; sceneMix = 0; ageA = millis() / 1000.0f; idxA = idxB = 0; return; }
+#if TAP_PIN >= 0
+  if (!TAP_OFF) {                        // tap for next scene: each scene stays until the screen is tapped
+    if (tapCur >= SCENE_COUNT || tapNext >= SCENE_COUNT) tapCur = tapNext = 0;
+    float el = (millis() - tapSceneAt) / 1000.0f;
+    if (tapCur != tapNext && el >= 1) tapCur = tapNext;              // a one-second fade into the next scene
+    sceneA = SCENES[tapCur]; sceneB = SCENES[tapNext]; idxA = tapCur; idxB = tapNext;
+    ageA = el + 1; ageB = el;
+    if (tapCur == tapNext) sceneMix = 0;
+    else { float f = el * el * (3 - 2 * el); sceneMix = (int)(f * 256); }
+    return;
+  }
+#endif
   float per = HOLD_SECS + SCENE_FADE;
   float pos = fmodf((millis() + sceneShiftMs) / 1000.0f, per * SCENE_COUNT);
   int i = min((int)(pos / per), SCENE_COUNT - 1);
