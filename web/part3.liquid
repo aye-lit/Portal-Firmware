@@ -217,7 +217,7 @@ struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, spar
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // Scenes with their own settings: each "another style" scene can keep its own size, colours, speed...
-struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn; };
+struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn, style, crossFill, crossRipple, beam, crossW, bar; };
 struct SceneSaved { uint32_t id; uint8_t has[8]; Look look[8]; };
 #define EE_SIZE (128 + sizeof(SceneSaved))   // main settings, then the scenes' own settings
 ${sceneLooksBlock()}
@@ -429,7 +429,8 @@ void updateSparks() {
 // ---------- saved settings (EEPROM) ----------
 bool validFill(uint8_t f) { return f <= 11 || (f >= 14 && f <= 16) || f == 18; }   // styles that can go inside a cross (Wooden cross only: 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light, 18 full day)
 
-inline bool isStyleScene(uint8_t c) { return c >= 200 && c <= 216 && (c - 200 <= 7 || c - 200 >= 14); }   // 200 + style: another style to fade into
+inline bool isStyleScene(uint8_t c) { return c >= 200 && c <= 217; }   // 200 + style: another style to fade into (crosses too)
+inline bool isCrossSt(uint8_t st) { return (st >= 8 && st <= 13) || st == 17; }
 inline bool validScene(uint8_t c) { return c == PORTAL || c < MAX_PICS || (c >= 128 && c < 128 + MAX_PICS) || isStyleScene(c); }
 
 bool validScenes(const Saved &s) {
@@ -626,14 +627,14 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     }
     return "ERR";
   }
-  if (strncasecmp(line, "SCN ", 4) == 0) {   // SCN k radius oval arms twist speed sparks drift core rim bright ripples ripspeed glow stars rimsmooth space1..4  (or SCN k OFF)
-    float v[20];                         // no reply: older boards ignore it the same way
+  if (strncasecmp(line, "SCN ", 4) == 0) {   // SCN k radius oval arms twist speed sparks drift core rim bright ripples ripspeed glow stars rimsmooth space1..4 style crossfill ripple beam crossw bar  (or SCN k OFF)
+    float v[26];                         // no reply: older boards ignore it the same way
     uint8_t n = 0; bool off = false;
     char *p = strtok(line + 4, " ");
-    while (p && n < 20) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
+    while (p && n < 26) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
     int k = n ? (int)v[0] : -1;
     if (k < 0 || k > 7) return NULL;
-    if (off || n != 20) { pendHas[k] = 0; scenePending = true; return NULL; }
+    if (off || n != 26 || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
     Look &L = pendLook[k];
     L.radius = clampf(v[1], 6, RADIUS_MAX); L.oval = clampf(v[2], 1, 2); L.arms = clampb((uint8_t)v[3], 1, 8);
     L.twist = clampf(v[4], 0, 6); L.speed = clampf(v[5], 0, 0.4f); L.sparks = min((int)v[6], MAX_SPARKS); L.drift = v[7] ? 1 : 0;
@@ -642,6 +643,8 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     L.stars = clampb((uint8_t)v[14], 1, 6); L.rimSmooth = min((int)v[15], 100);
     for (int j = 0; j < 4; j++) L.spaceCols[j] = (uint32_t)v[16 + j] & 0xFFFFFF;
     L.fadeOn = 0;                        // a scene's own colours don't fade through the colour sets
+    L.style = (uint8_t)v[20]; L.crossFill = (uint8_t)v[21]; L.crossRipple = min((int)v[22], 10);
+    L.beam = clampb((uint8_t)v[23], 5, 30); L.crossW = clampb((uint8_t)v[24], 25, 100); L.bar = clampb((uint8_t)v[25], 20, 50);
     pendHas[k] = 1; scenePending = true;
     return NULL;
   }
@@ -686,11 +689,13 @@ void grabLook(Look &L) {                 // the settings in use now
   L.radius = RADIUS; L.oval = OVAL; L.twist = TWIST; L.speed = SPEED; L.ripSpeed = RIP_SPEED; L.glow = GLOW_SIZE;
   L.core = COLOR_CORE; L.rim = COLOR_RIM; for (int k = 0; k < 4; k++) L.spaceCols[k] = SPACE_COLS[k];
   L.arms = ARMS; L.sparks = NUM_SPARKS; L.drift = DRIFT; L.bright = BRIGHTNESS; L.ripples = RIPPLES; L.stars = STARS; L.rimSmooth = RIM_SMOOTH; L.fadeOn = FADE_ON;
+  L.style = STYLE; L.crossFill = CROSS_FILL; L.crossRipple = CROSS_RIPPLE; L.beam = BEAM; L.crossW = CROSS_W; L.bar = BAR;
 }
 void putLook(const Look &L) {
   RADIUS = L.radius; OVAL = L.oval; TWIST = L.twist; SPEED = L.speed; RIP_SPEED = L.ripSpeed; GLOW_SIZE = L.glow;
   COLOR_CORE = L.core; COLOR_RIM = L.rim; for (int k = 0; k < 4; k++) SPACE_COLS[k] = L.spaceCols[k];
   ARMS = L.arms; NUM_SPARKS = L.sparks; DRIFT = L.drift; BRIGHTNESS = L.bright; RIPPLES = L.ripples; STARS = L.stars; RIM_SMOOTH = L.rimSmooth; FADE_ON = L.fadeOn;
+  STYLE = L.style; CROSS_FILL = L.crossFill; CROSS_RIPPLE = L.crossRipple; BEAM = L.beam; CROSS_W = L.crossW; BAR = L.bar;   // (a cross scene: its cross is drawn as the main style)
 }
 void useSceneLook(int id) {              // load a scene's settings (or the main ones) and rebuild what depends on them
   if (id == curLook) return;
@@ -703,7 +708,7 @@ void useSceneLook(int id) {              // load a scene's settings (or the main
   curLook = id;
 }
 void saveScenes() {
-  SceneSaved z; z.id = BUILD_ID;
+  SceneSaved z; z.id = BUILD_ID ^ 0x5CE20002UL;   // (^: this layout of scene settings)
   for (int k = 0; k < 8; k++) { z.has[k] = SCENE_HAS[k]; z.look[k] = SCENE_LOOKS[k]; }
   EEPROM.put(128, z);
 ${EEPROM_BEGIN_GUARD}
@@ -713,18 +718,19 @@ ${EEPROM_BEGIN_GUARD}
 void loadScenes() {                      // after loadSettings()
   grabLook(mainLook); curLook = -1;
   SceneSaved z; EEPROM.get(128, z);
-  if (z.id == BUILD_ID) for (int k = 0; k < 8; k++) {
+  if (z.id == (BUILD_ID ^ 0x5CE20002UL)) for (int k = 0; k < 8; k++) {
     const Look &L = z.look[k];
     bool ok = z.has[k] == 1 && L.radius >= 6 && L.radius <= RADIUS_MAX && L.oval >= 1 && L.oval <= 2 && L.arms >= 1 && L.arms <= 8 && L.twist >= 0 && L.twist <= 6 &&
               L.speed >= 0 && L.speed <= 0.4f && L.sparks <= MAX_SPARKS && L.bright >= 10 && L.bright <= 100 && L.stars >= 1 && L.stars <= 6 && L.ripples <= 6 &&
-              L.ripSpeed >= 0.03f && L.ripSpeed <= 0.3f && L.glow >= 0.3f && L.glow <= 0.9f && L.rimSmooth <= 100;
+              L.ripSpeed >= 0.03f && L.ripSpeed <= 0.3f && L.glow >= 0.3f && L.glow <= 0.9f && L.rimSmooth <= 100 &&
+              L.style <= 17 && validFill(L.crossFill) && L.crossRipple <= 10 && L.beam >= 5 && L.beam <= 30 && L.crossW >= 25 && L.crossW <= 100 && L.bar >= 20 && L.bar <= 50;
     SCENE_HAS[k] = ok; if (ok) SCENE_LOOKS[k] = L;
   }
   for (int k = 0; k < 8; k++) { pendHas[k] = SCENE_HAS[k]; pendLook[k] = SCENE_LOOKS[k]; }
 }
 inline int lookOf(int idx, uint8_t code) {
   if (idx >= 0 && idx < 8 && SCENE_HAS[idx] && isStyleScene(code)) return idx;   // its own settings
-  if (isStyleScene(code) && ((STYLE >= 8 && STYLE <= 13) || STYLE == 17)) return -3;   // another style while the main one is a cross: portal-sized
+  if (isStyleScene(code) && !isCrossSt(code - 200) && isCrossSt(mainLook.style)) return -3;   // another style while the main one is a cross: portal-sized
   return -1;
 }
 void pickSceneLook() {                   // load the settings of the scene showing; scenes with different settings fade through black
@@ -736,6 +742,8 @@ void pickSceneLook() {                   // load the settings of the scene showi
     sceneB = sceneA; ageB = ageA; sceneMix = 0;
   } else if (sceneMix >= 128 && sceneA == sceneB) ia = ib;
   useSceneLook(ia);
+  if (isStyleScene(sceneA) && isCrossSt(sceneA - 200)) sceneA = PORTAL;   // a cross scene: its cross is now the main style, so draw it as that
+  if (isStyleScene(sceneB) && isCrossSt(sceneB - 200)) sceneB = PORTAL;   // (one with no settings of its own shows the main style)
 }
 
 
@@ -1038,7 +1046,7 @@ bool galaxyTexFlash() {                 // the galaxy picture in the end of the 
   int a = 3UL * GT_R * 256 <= room ? 256 : 128;
   if (3UL * GT_R * a > room) return false;
   uint32_t key = (uint32_t)lroundf(galK * 1000) * 1024 + a + 2;   // (+2: the points' three values side by side)
-  const uint8_t *base = planeMap + (off - crossOff);
+  const uint8_t *base = planeMap + (off - planesOff);
   if (galFlashKey != key) {
     const uint32_t *h = (const uint32_t *)base;
     if (!(h[0] == GAL_MAGIC && h[1] == key)) {   // not there yet (or the Spiral setting changed): work it out once and store it
@@ -1326,7 +1334,7 @@ void frameStart() {
 #if TURNS
   if (wantPortrait != PORTRAIT) turnScreen(wantPortrait);
 #endif
-  bool isCross = (STYLE >= 8 && STYLE <= 13) || STYLE == 17;   // 17: Wooden cross
+  bool isCross = ((STYLE >= 8 && STYLE <= 13) || STYLE == 17) && curLook != -3;   // 17: Wooden cross (-3: another style is showing, sized as a portal: no cross needed)
   if (isCross && crossAvailable() && edgeBuf) prepareCross();
   crossOn = isCross && crossReady;
   woodOn = crossOn && STYLE == 17;

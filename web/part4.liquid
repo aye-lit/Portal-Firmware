@@ -374,7 +374,7 @@ const STYLES = [
 ];
 const isCrossStyle = i => (i >= 8 && i <= 13) || i === 17, isSpaceStyle = i => (i >= 3 && i <= 5) || (i >= 14 && i <= 16), hasSpaceCols = i => i === 4 || (i >= 14 && i <= 16);
 function markStyle() {
-  $("style").querySelectorAll("button").forEach(b => { b.setAttribute("aria-pressed", +b.dataset.i === S.style); b.disabled = editIdx >= 0 && !!STYLES[+b.dataset.i].cross; });   // a scene can't be a cross
+  $("style").querySelectorAll("button").forEach(b => { b.setAttribute("aria-pressed", +b.dataset.i === S.style); b.disabled = false; });
   $("edit-bar").hidden = editIdx === -1;
   if (editIdx !== -1) $("edit-what").innerHTML = editIdx >= 0
     ? `<b>Editing scene ${editIdx + 1}: ${STYLES[S.style].name}</b>Changes below are for this scene only. Press Save when you're done.`
@@ -466,7 +466,7 @@ STYLES.forEach((st, i) => {
     if (st.sparks) S.sparks = st.sparks;
     if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.crossw = DEFAULTS.crossw; S.radius = crossMax(M); }
     if (editIdx >= 0) { S.scenes[editIdx] = 200 + i; renderScenes(); }   // editing a scene: this is its style now
-    else if (st.wood) S.crossFill = 7;                         // Wooden cross: starts with the warm glow behind it
+    if (st.wood) { if (!((S.crossFill >= 7 && S.crossFill <= 10) || S.crossFill === 18)) S.crossFill = 7; }   // Wooden cross: starts with the warm glow behind it
     else if ((S.crossFill >= 7 && S.crossFill <= 10) || S.crossFill === 18) S.crossFill = 0;   // (Solid colour, 11, is kept for the other crosses)   // crosses fill the screen, each with its own proportions
     bindAll(); markStyle(); changed(true);
   });
@@ -816,6 +816,10 @@ function renderScenes() {
   $("scene-box").hidden = !S.pics.length && !S.scenes.length;
   const box = $("scenes"); box.innerHTML = "";
   const mainP = mainSnap || S, mainStyle = mainSnap ? mainSnap.style : S.style;
+  S.scenes.forEach((x, i) => { if (x >= 200 && isCrossStyle(x - 200) && !S.sceneSets[i] && i !== editIdx) S.sceneSets[i] = defaultSetFor(x - 200, mainP); });   // crosses always carry their own cross settings
+  let planes = 0; S.scenes.forEach((x, i) => { if (x >= 200 && isCrossStyle(x - 200)) planes += x === 217 ? 2 : 1; });
+  if (isCrossStyle(mainStyle)) planes += mainStyle === 17 ? 2 : 1;
+  $("cross-many").hidden = planes <= 10;
   S.scenes.forEach((sc, i) => {
     const editing = i === editIdx || (editIdx === -2 && sc === -1), canEdit = sc === -1 || sc >= 200;
     const row = document.createElement("div"); row.className = "scene" + (round ? " round" : "") + (editing ? " editing" : "");
@@ -830,7 +834,9 @@ function renderScenes() {
     thumb(row.querySelector("canvas"), sc >= 0 && sc < 200 ? S.pics[sc % 100] : null, 34, sc >= 100 && sc < 200, sc >= 200 ? sc - 200 : mainStyle, own);
     row.querySelector("select").addEventListener("change", e => {
       if (editIdx === i || (editIdx === -2 && sc === -1)) endEdit(true);
-      const v = +e.target.value; S.scenes[i] = v; if (v < 200) S.sceneSets[i] = null;   // (a style keeps its own settings)
+      const v = +e.target.value; S.scenes[i] = v;
+      if (v < 200) S.sceneSets[i] = null;                                   // (a style keeps its own settings)
+      else if (isCrossStyle(v - 200)) S.sceneSets[i] = defaultSetFor(v - 200, S.sceneSets[i] || mainP);   // a cross: sized and shaped for it
       renderScenes(); markStyle(); changed();
     });
     const move = d => {
@@ -864,7 +870,7 @@ function beginEdit(i) {                             // i: scene position (-2: th
   endEdit(true);
   if (i >= 0) {
     mainSnap = snapMain();
-    Object.assign(S, pickLook(S.sceneSets[i] || mainSnap), { style: S.scenes[i] - 200, fade: false });
+    Object.assign(S, pickLook(S.sceneSets[i] || defaultSetFor(S.scenes[i] - 200, mainSnap)), { style: S.scenes[i] - 200, fade: false });
   }
   editIdx = i;
   bindAll(); markStyle(); renderScenes(); changed(true);
@@ -1032,11 +1038,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.10.24";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/af83c2a5b354502d334f2c5db4e30e5590dfe38f/";
+const FW_VERSION = "1.11.0";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/3c66d39d9de36cd0f592649f8e4ff3f63c129bba/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "bbbb0bb519d3d93ba4d40537dff2f6e0e4bc876515f579040c8701f245fe4097" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "1712e60e95ea7ce480c3a612933d107c59b7ebac61cb14dc1f06364e42d0acb2" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "c7fac3b5c03051e5190c03dfa28acdfc55a0bd7b9e9a9b0bebd8d0ed5e63e48f" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "ef49ca3c2a5f81505003b0cdedf4aca708c72dacb06292b33b513a67b0955a1a" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
