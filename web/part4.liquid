@@ -442,7 +442,7 @@ function markStyle() {
   }
   $("reverse-wrap").hidden = !use.has("reverse");
   const sky = tft && S.style === 17 && ((S.crossFill >= 8 && S.crossFill <= 10) || S.crossFill === 18);   // Wooden cross with a cloud sky: the speed slider moves the clouds
-  $("speed").closest("label").querySelector("span").firstChild.nodeValue = sky ? "Cloud speed " : "Spin speed ";
+  $("speed").closest("label").querySelector("span").firstChild.nodeValue = sky ? "Cloud speed " : tft && eff === 14 ? "Colour speed " : "Spin speed ";   // the Nebula stays still; its colours move
   $("speed-hint").hidden = !sky;
   ["fdLen", "fdStars", "fdClouds", "fdGlow"].forEach(k => { $(k).closest("label").hidden = !use.has("fd"); });   // Full day's own settings
   const sl = $("sparks").closest("label");                   // Meteor Shower: the Sparks setting is the number of meteors
@@ -1047,11 +1047,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.11.2";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/191aec099d8f0b62ff3d9f5b0973c9f2b8faa0be/";
+const FW_VERSION = "1.12.0";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/c37d03e7731d5b782f608929681e01e873c99090/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "a49a14a28b069a36121c6f37b0dceea87026162b4f24f8fce9bdf6c794ae0c13" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "ac33bc6bbc1a828efbf983227161aa383f1aa143d0eb6e94738c72ad554397f0" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "5a7485e7514b61ae00309b4ddcc3e10327ad292688078559a38995589dd8fe90" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "9583d0ac2daa6bf4b8b21e451c0f7d30cd3f117661249915567420058a8d0bd6" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));

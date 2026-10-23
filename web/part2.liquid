@@ -133,6 +133,7 @@ uint8_t  nPlanes = 0;
 uint32_t planesOff = 0;                   // the first one (they sit just before the staging area)
 uint32_t planeMagic[MAX_PLANES], planeKeyOf[MAX_PLANES], planeUse[MAX_PLANES], planeTick = 0;
 int8_t   crossSlot = -1, woodSlot = -1;   // the ones in use now
+int8_t   nebHSlot = -1, nebVSlot = -1;   // the Nebula's colour and brightness planes
 volatile uint32_t picId[MAX_PICS];        // 0 = empty slot
 uint16_t picW[MAX_PICS];                  // the width each picture was made for (the screen may have been turned since)
 volatile bool uploading = false;
@@ -339,7 +340,7 @@ int findPlane(uint32_t magic, uint32_t key) {
 int freePlane() {                               // one to (re)build: never the cross or wood in use, otherwise the longest unused
   int best = -1;
   for (int i = 0; i < nPlanes; i++) {
-    if (i == crossSlot || i == woodSlot) continue;
+    if (i == crossSlot || i == woodSlot || i == nebHSlot || i == nebVSlot) continue;
     if (best < 0 || planeUse[i] < planeUse[best]) best = i;
   }
   return best >= 0 ? best : (crossSlot == 0 && nPlanes > 1 ? 1 : 0);
@@ -1008,6 +1009,62 @@ function fastAtan2(y, x) {                           // quick angle, good to abo
   return y < 0 ? -r : r;
 }
 const whRingT = new Uint8Array(256), whNearT = new Uint8Array(256), whOffT = new Int16Array(256), whCoreT = new Int16Array(256), whHueT = new Int32Array(256);
+// Nebula: worked out once in detail (wisps, haze, dust lanes), then it stays still while its colours slowly cycle
+let nebTex = null, nebKey = "";
+const nbSS = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+function nbFbm(x, y, o) { let s = 0, a = 0.5, n = 0; for (let i = 0; i < o; i++) { s += vn(x, y) * a; n += a; x = x * 2.03 + 17.1; y = y * 2.03 - 9.7; a *= 0.5; } return s / n; }
+function nebulaTex(W, H) {                            // same maths as the board
+  const Hh = new Uint8Array(W * H), V = new Uint8Array(W * H), Sc = Math.min(W, H) / 2.2, seed = 3.1;
+  for (let y = 0, i = 0; y < H; y++) for (let x = 0; x < W; x++, i++) {
+    const px = (x - W / 2) / Sc + seed, py = (y - H / 2) / Sc + seed * 0.7;
+    const qx = nbFbm(px, py, 4), qy = nbFbm(px + 5.2, py + 1.3, 4);
+    const rx = nbFbm(px + 2.4 * qx + 1.7, py + 2.4 * qy + 9.2, 4), ry = nbFbm(px + 2.4 * qx + 8.3, py + 2.4 * qy + 2.8, 4);
+    const f = nbFbm(px + 2.4 * rx, py + 2.4 * ry, 5);
+    const haze = nbSS(0.3, 0.85, nbFbm(px * 0.55 + 30, py * 0.55 - 12, 3)) * 0.5;
+    const n2 = nbFbm(px * 2.2 + 2 * rx + 3, py * 2.2 + 2 * ry - 4, 4), ridge = Math.pow(1 - Math.abs(2 * n2 - 1), 5);
+    let d = Math.pow(nbSS(0.4, 0.85, f), 1.4) * 1.1 + ridge * 0.5 * nbSS(0.3, 0.6, f);   // gas, with thin glowing filaments
+    d = Math.max(d, haze * (0.6 + 0.8 * f));
+    d *= 1 - 0.8 * nbSS(0.52, 0.72, nbFbm(px * 1.4 + 3 * qx + 11, py * 1.4 + 3 * qy - 5, 5));   // dark dust lanes
+    d *= 0.35 + 0.65 * nbSS(1.0, 0.15, Math.hypot((x - W / 2) / (W / 2), (y - H / 2) / (H / 2)));
+    let hue = Math.min(1, Math.max(0, (qx * 0.6 + rx * 0.6 - 0.32) * 2.4)) * 32;
+    if (d > 0.75) hue += (d - 0.75) * 4 * (48 - hue) * 0.6;   // the brightest knots toward the highlight colour
+    Hh[i] = Math.max(0, Math.min(63, Math.round(hue))); V[i] = Math.max(0, Math.min(63, Math.round(Math.pow(Math.min(1, d), 1.15) * 63)));
+  }
+  return { Hh, V };
+}
+function nebulaBigStars(W, H) {                       // a few bright stars with a soft glow and small spikes
+  const n = Math.max(4, Math.round(9 * W * H / 153600)), k = Math.min(W, H) / 320, L = [];
+  for (let i = 0; i < n; i++) { const h = hash32(Math.imul(i + 1, 7919) >>> 0), h2 = hash32(h ^ 0x9e3779b9); L.push([h % W, h2 % H, (2 + ((h >>> 12) & 255) / 85) * k, (h2 >>> 9) & 1, ((h2 >>> 12) & 255) / 40]); }
+  return L;
+}
+function nebulaFrame(out, T, spTw) {
+  const key = TW + "x" + TH;
+  if (key !== nebKey) { nebKey = key; nebTex = nebulaTex(TW, TH); nebTex.big = nebulaBigStars(TW, TH); }
+  const hs = Math.trunc(T * 0.0198) & 63;             // colours move round the four space colours (about 2 minutes at the usual speed)
+  const dens = Math.trunc(7 * S.stars / 3), gapMax = dens > 0 ? Math.max(2, Math.trunc(2048 / dens)) : 0;
+  for (let y = 0, p = 0; y < TH; y++) {
+    let rs = hash32((Math.imul(y, 2654435761) + 0x5bd1e995) >>> 0), sx = gapMax ? rs % gapMax : TW;
+    for (let x = 0; x < TW; x++, p++) {
+      let hi = (nebTex.Hh[p] + hs) & 63, vi = nebTex.V[p];
+      if (x === sx) {
+        const h = hash32(Math.imul(y * TW + x, 2654435761) >>> 0), svi = 47 + Math.trunc(sinT[(spTw + (h >>> 10)) & 255] / 10);
+        if (svi > vi) { hi = (h >>> 20) & 63; vi = Math.min(63, svi + 13); }
+        rs = (Math.imul(rs, 1664525) + 1013904223) >>> 0; sx += 1 + ((rs >>> 16) % (gapMax - 1));
+      }
+      out[p] = spaceLUT[hi * 64 + vi];
+    }
+  }
+  for (const [cx, cy, R0, warm, ph] of nebTex.big) {
+    const R = R0 * (0.9 + 0.15 * Math.sin(spTw / 40.74 * 5.2 + ph)), tr = warm ? 255 : 200, tg = warm ? 235 : 220, tb = warm ? 200 : 255, E = Math.ceil(R * 4);
+    for (let y = cy - E; y <= cy + E; y++) for (let x = cx - E; x <= cx + E; x++) {
+      if (x < 0 || y < 0 || x >= TW || y >= TH) continue;
+      const dx = x - cx, dy = y - cy, r2 = dx * dx + dy * dy, spike = (dx === 0 || dy === 0) ? Math.exp(-Math.sqrt(r2) / (R * 1.6)) * 0.6 : 0, a = Math.min(1, Math.exp(-r2 / (R * R * 0.35)) + spike) * S.bright / 100;
+      if (a < 0.02) continue;
+      const i = y * TW + x, c = out[i];
+      out[i] = (255 << 24) | (Math.min(255, ((c >> 16) & 255) + tb * a) << 16) | (Math.min(255, ((c >> 8) & 255) + tg * a) << 8) | Math.min(255, (c & 255) + tr * a);
+    }
+  }
+}
 function spaceFrame(out, style = S.style, cyc = QY) {   // cyc: centre row (crosses centre on the crossing)
   buildSpaceLUT();
   const spU = style === 15 ? 118 / spaceExt(M) : 236 / Math.min(TW, TH), spExt = spaceExt(M) * spU, T = spaceT;
@@ -1019,6 +1076,7 @@ function spaceFrame(out, style = S.style, cyc = QY) {   // cyc: centre row (cros
     if ((h & 1023) >= density) return null;
     return [(h >>> 20) & 63, 47 + Math.trunc(sinT[(spTw + (h >>> 10)) & 255] / 10)];
   };
+  if (style === 14) { nebulaFrame(out, T, spTw); return; }   // Nebula
   if (style === 15) {                                // Wormhole
     const rev = S.reverse ? -1 : 1, whPh = Math.trunc(rev * ((T * 0.06) % TWO_PI) * 40.74), off = rev * ((T * 0.09) % 100);
     for (let r = 0; r < 256; r++) {

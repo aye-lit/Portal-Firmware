@@ -1085,8 +1085,109 @@ bool galaxyTexFlash() {                 // the galaxy picture in the end of the 
   gtH = (uint8_t *)(base + 16); gtV = gtH + 1; gtX = gtH + 2;   // (read only)
   return true;
 }
+// ---------- Nebula (14): worked out once in detail (wisps, haze, dust lanes) and kept in flash; it stays still while its colours cycle ----------
+const uint32_t NEBH_MAGIC = 0x4842454EUL, NEBV_MAGIC = 0x5642454EUL;   // "NEBH", "NEBV"
+bool     nebReady = false;
+uint32_t nebKey = 0, nebHOff = 0, nebVOff = 0;
+int      nebHue = 0;                     // how far the colours have moved round
+#define NEB_BIG 12
+int16_t  nbBX[NEB_BIG], nbBY[NEB_BIG]; float nbBR[NEB_BIG], nbBP[NEB_BIG]; uint8_t nbBW[NEB_BIG], nbBN = 0;   // the bright stars
+inline float nbSS(float a, float b, float x) { float t = (x - a) / (b - a); t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); }
+float nbFbm(float x, float y, int o) { float s = 0, a = 0.5f, n = 0; for (int i = 0; i < o; i++) { s += vn(x, y) * a; n += a; x = x * 2.03f + 17.1f; y = y * 2.03f - 9.7f; a *= 0.5f; } return s / n; }
+void nebulaPixel(int x, int y, uint8_t &h, uint8_t &v) {   // same maths as the Studio
+  const float Sc = min(SCR_W, SCR_H) / 2.2f, seed = 3.1f;
+  float px = (x - SCR_W / 2.0f) / Sc + seed, py = (y - SCR_H / 2.0f) / Sc + seed * 0.7f;
+  float qx = nbFbm(px, py, 4), qy = nbFbm(px + 5.2f, py + 1.3f, 4);
+  float rx = nbFbm(px + 2.4f * qx + 1.7f, py + 2.4f * qy + 9.2f, 4), ry = nbFbm(px + 2.4f * qx + 8.3f, py + 2.4f * qy + 2.8f, 4);
+  float f = nbFbm(px + 2.4f * rx, py + 2.4f * ry, 5);
+  float haze = nbSS(0.3f, 0.85f, nbFbm(px * 0.55f + 30, py * 0.55f - 12, 3)) * 0.5f;
+  float n2 = nbFbm(px * 2.2f + 2 * rx + 3, py * 2.2f + 2 * ry - 4, 4), rg = 1 - fabsf(2 * n2 - 1), ridge = rg * rg * rg * rg * rg;
+  float d = powf(nbSS(0.4f, 0.85f, f), 1.4f) * 1.1f + ridge * 0.5f * nbSS(0.3f, 0.6f, f);   // gas, with thin glowing filaments
+  d = max(d, haze * (0.6f + 0.8f * f));
+  d *= 1 - 0.8f * nbSS(0.52f, 0.72f, nbFbm(px * 1.4f + 3 * qx + 11, py * 1.4f + 3 * qy - 5, 5));   // dark dust lanes
+  float ex = (x - SCR_W / 2.0f) / (SCR_W / 2.0f), ey = (y - SCR_H / 2.0f) / (SCR_H / 2.0f);
+  d *= 0.35f + 0.65f * nbSS(1.0f, 0.15f, sqrtf(ex * ex + ey * ey));
+  float hue = min(1.0f, max(0.0f, (qx * 0.6f + rx * 0.6f - 0.32f) * 2.4f)) * 32;
+  if (d > 0.75f) hue += (d - 0.75f) * 4 * (48 - hue) * 0.6f;   // the brightest knots toward the highlight colour
+  h = (uint8_t)constrain((int)lroundf(hue), 0, 63);
+  v = (uint8_t)constrain((int)lroundf(powf(min(1.0f, d), 1.15f) * 63), 0, 63);
+}
+bool prepareNebula() {                  // once per frame while the Nebula shows (the slow part only the first time)
+  nebHue = (int)(spaceT * 0.0198) & 63;  // colours move round the four space colours (about 2 minutes at the usual speed)
+  if (!picPart || !planeMap || nPlanes < 4) return false;   // no room: the simpler Nebula
+  uint32_t key = 2166136261UL;
+  uint32_t parts[] = { (uint32_t)SCR_W, (uint32_t)SCR_H, 1 };
+  for (uint32_t v : parts) key = (key ^ v) * 16777619UL;
+  if (nebReady && key == nebKey) return true;
+  nebReady = false;
+  int sh = findPlane(NEBH_MAGIC, key), sv = findPlane(NEBV_MAGIC, key);
+  if (sh < 0 || sv < 0) {
+    if (sh < 0) { sh = freePlane(); } nebHSlot = sh;
+    if (sv < 0 || sv == sh) { sv = freePlane(); } nebVSlot = sv;
+    if (sv == sh) return false;
+    planeMagic[sh] = planeMagic[sv] = 0;
+    uint32_t ho = planesOff + (uint32_t)sh * crossPlane, vo = planesOff + (uint32_t)sv * crossPlane;
+    esp_partition_erase_range(picPart, ho, crossPlane); esp_partition_erase_range(picPart, vo, crossPlane);
+    static uint8_t rh[SCR_WMAX], rv[SCR_WMAX];
+    for (int y = 0; y < SCR_H; y++) {
+      for (int x = 0; x < SCR_W; x++) nebulaPixel(x, y, rh[x], rv[x]);
+      esp_partition_write(picPart, ho + 16 + (uint32_t)y * SCR_W, rh, SCR_W);
+      esp_partition_write(picPart, vo + 16 + (uint32_t)y * SCR_W, rv, SCR_W);
+      if (y & 1) delay(1);
+    }
+    uint32_t h1[4] = { NEBH_MAGIC, key, 0, 0 }, h2[4] = { NEBV_MAGIC, key, 0, 0 };
+    esp_partition_write(picPart, ho, h1, 16); esp_partition_write(picPart, vo, h2, 16);
+    planeMagic[sh] = NEBH_MAGIC; planeKeyOf[sh] = key; planeMagic[sv] = NEBV_MAGIC; planeKeyOf[sv] = key;
+  }
+  nebHSlot = sh; nebVSlot = sv; planeUse[sh] = ++planeTick; planeUse[sv] = ++planeTick;
+  nebHOff = planesOff + (uint32_t)sh * crossPlane; nebVOff = planesOff + (uint32_t)sv * crossPlane;
+  nbBN = max(4, min(NEB_BIG, (int)lroundf(9.0f * SCR_W * SCR_H / 153600)));   // a few bright stars, same places as the Studio
+  float k = min(SCR_W, SCR_H) / 320.0f;
+  for (int i = 0; i < nbBN; i++) {
+    uint32_t h = hash32((uint32_t)(i + 1) * 7919u), h2 = hash32(h ^ 0x9e3779b9u);
+    nbBX[i] = h % SCR_W; nbBY[i] = h2 % SCR_H; nbBR[i] = (2 + ((h >> 12) & 255) / 85.0f) * k; nbBW[i] = (h2 >> 9) & 1; nbBP[i] = ((h2 >> 12) & 255) / 40.0f;
+  }
+  nebKey = key; nebReady = true;
+  return true;
+}
+HOT void nebulaStrip(int y0, int rows, uint16_t *strip) {
+  const uint8_t *H0 = planeMap + (nebHOff - planesOff) + 16, *V0 = planeMap + (nebVOff - planesOff) + 16;
+  const int hs = nebHue, dens = 7 * STARS / 3, gapMax = dens > 0 ? max(2, 2048 / dens) : 0;
+  uint16_t *p = strip;
+  for (int y = y0; y < y0 + rows; y++) {
+    const uint8_t *hr = H0 + (uint32_t)y * SCR_W, *vr = V0 + (uint32_t)y * SCR_W;
+    uint32_t rs = hash32((uint32_t)y * 2654435761UL + 0x5bd1e995UL);
+    int sx = gapMax ? (int)(rs % (uint32_t)gapMax) : SCR_W;
+    for (int x = 0; x < SCR_W; x++) {
+      int hi = (hr[x] + hs) & 63, vi = vr[x];
+      if (x == sx) {                    // a twinkling star here
+        uint32_t h = hash32((uint32_t)(y * SCR_W + x) * 2654435761UL);
+        int svi = 47 + sinT[(spTw + (h >> 10)) & 255] / 10;
+        if (svi > vi) { hi = (h >> 20) & 63; vi = min(63, svi + 13); }
+        rs = rs * 1664525UL + 1013904223UL; sx += 1 + (int)((rs >> 16) % (uint32_t)(gapMax - 1));
+      }
+      *p++ = spaceLUT[hi * 64 + vi];
+    }
+  }
+  for (int i = 0; i < nbBN; i++) {      // the bright stars: soft glow and small spikes
+    float R = nbBR[i] * (0.9f + 0.15f * sinf(spTw / 40.74f * 5.2f + nbBP[i]));
+    int E = (int)ceilf(R * 4), cx = nbBX[i], cy = nbBY[i];
+    if (cy + E < y0 || cy - E >= y0 + rows) continue;
+    const float tr = nbBW[i] ? 255 : 200, tg = nbBW[i] ? 235 : 220, tb = nbBW[i] ? 200 : 255, b = BRIGHTNESS / 100.0f;
+    for (int y = max(y0, cy - E); y <= min(y0 + rows - 1, cy + E); y++) for (int x = max(0, cx - E); x <= min(SCR_W - 1, cx + E); x++) {
+      float dx = x - cx, dy = y - cy, r2 = dx * dx + dy * dy, spike = (dx == 0 || dy == 0) ? expf(-sqrtf(r2) / (R * 1.6f)) * 0.6f : 0, a = min(1.0f, expf(-r2 / (R * R * 0.35f)) + spike) * b;
+      if (a < 0.02f) continue;
+      uint16_t &c = strip[(y - y0) * SCR_W + x], s = to565((uint8_t)(tr * a), (uint8_t)(tg * a), (uint8_t)(tb * a));
+      int rr = (c >> 11) + (s >> 11), gg = ((c >> 5) & 63) + ((s >> 5) & 63), bb = (c & 31) + (s & 31);
+      c = (min(rr, 31) << 11) | (min(gg, 63) << 5) | min(bb, 31);
+    }
+  }
+}
 #else
 bool galaxyTexFlash() { return false; }
+const bool nebReady = false;
+bool prepareNebula() { return false; }
+void nebulaStrip(int, int, uint16_t *) {}
 #endif
 
 HOT void spaceNode(float X, float Y, uint8_t &h, uint8_t &v, uint8_t &x8) {   // gas and dust at one point
@@ -1150,6 +1251,7 @@ void prepareSpace() {                   // once per frame
     gRot = rot;
     gtReady = galaxyTex();
   }
+  if (look == 14) prepareNebula();       // Nebula: the detailed picture (made once)
   if (look == 15) {                     // Wormhole: rings falling away, worked out per distance
     whCoreR = 0;
     float rev = DRIFT ? -1 : 1;          // Reverse: rings fly out toward you
@@ -1215,6 +1317,7 @@ HOT void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
     }
     return;
   }
+  if (look == 14 && nebReady) { nebulaStrip(y0, rows, strip); return; }   // Nebula: the stored picture
   // Galaxy, Nebula and Meteor Shower: gas worked out on a coarse grid, smoothed in between
   uint8_t *gH = spH, *gV = spV, *gX = spX;
 #if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
@@ -1375,7 +1478,7 @@ void frameStart() {
   }
   if (!needB && sceneMix < 128) lookB = lookA;
   {
-    auto gridLook = [](int L) { return L == 4 || L == 14 || L == 16; };
+    auto gridLook = [](int L) { return L == 4 || (L == 14 && !nebReady) || L == 16; };
     if (lookA != 3 && lookB != 3 && warpB) {        // Hyperspace not showing: give its star tables back
       free(warpOn); free(warpRR); free(warpLen); free(warpB); warpOn = NULL; warpRR = warpLen = warpB = NULL;
     }
@@ -2180,7 +2283,7 @@ bool shareable(uint8_t s, int L, bool cross) {   // one scene: can both cores dr
   if (isFramed(s)) return false;                        // portal around a picture keeps one strip buffer
   if (cross && !planeMap) return false;                 // crosses: both cores read the outline and wood straight from mapped flash
   if (isPicture(s)) return true;
-  return spX1 || !(L == 4 || L == 14 || L == 16);       // Galaxy, Nebula and Meteor Shower need core 1's own gas grid
+  return spX1 || !(L == 4 || L == 14 || L == 16) || (L == 14 && nebReady);       // Galaxy, Nebula and Meteor Shower need core 1's own gas grid (not the stored Nebula)
 }
 
 bool canShare() {                        // styles whose drawing can be split between the two cores
