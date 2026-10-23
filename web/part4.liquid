@@ -396,10 +396,10 @@ function markStyle() {
   $("woodgrain").value = S.woodGrain;
   $("woodgrain").closest("label").hidden = !cross || !woodSel;
   $("crossripple").closest("label").hidden = !cross || woodSel;   // the Wooden cross has no ripple
-  $("ripgrad").value = S.ripGrad; $("ripc1").value = S.ripC1; $("ripc2").value = S.ripC2;
+  $("ripgrad").value = S.ripGrad; ["ripC1", "ripC2", "ripC3", "ripC4"].forEach(k => { $(k.toLowerCase()).value = S[k]; });
   $("ripgrad").closest("label").hidden = !cross || woodSel || !S.crossRipple;   // ripple colour: only with a ripple on
   $("rip-cols").hidden = !cross || woodSel || !S.crossRipple || S.ripGrad !== 1;
-  $("ripgrad-hint").textContent = ["Rings in the cross's own colours", "Rings fade from one colour to another", "Rings cycle through the rainbow"][S.ripGrad];
+  $("ripgrad-hint").textContent = ["Rings in the cross's own colours", "Rings change through four colours"][S.ripGrad];
   $("cross-row").hidden = !picturesAllowed() && !isCrossStyle(S.style);
   const sc = tft && (hasSpaceCols(eff) || (editIdx < 0 && sceneList().some((c, k) => c >= 200 && c < 255 && !S.sceneSets[k] && hasSpaceCols(c - 200))));                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
   $("space-colors").hidden = !sc;
@@ -453,6 +453,8 @@ $("crossripple").addEventListener("change", e => { S.crossRipple = +e.target.val
 $("ripgrad").addEventListener("change", e => { S.ripGrad = +e.target.value; markStyle(); changed(); });
 $("ripc1").addEventListener("input", e => { S.ripC1 = e.target.value; changed(); });
 $("ripc2").addEventListener("input", e => { S.ripC2 = e.target.value; changed(); });
+$("ripc3").addEventListener("input", e => { S.ripC3 = e.target.value; changed(); });
+$("ripc4").addEventListener("input", e => { S.ripC4 = e.target.value; changed(); });
 $("woodgrain").addEventListener("change", e => { S.woodGrain = +e.target.value; changed(true); });
 $("crossfill").addEventListener("change", e => {
   S.crossFill = +e.target.value;
@@ -1045,11 +1047,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.11.1";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/65b5e5d5a3e7cfbe1df56241dd1644dab48db98e/";
+const FW_VERSION = "1.11.2";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/191aec099d8f0b62ff3d9f5b0973c9f2b8faa0be/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "f758b9fc1835da2fc26deef34d6d3645386d39c6082f79e13c9ce6b9b4e8dd5c" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "88675f63fbb71f628d6c61ab32b45e11ede4ead7b0ab0cc170dfa60f75025655" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "a49a14a28b069a36121c6f37b0dceea87026162b4f24f8fce9bdf6c794ae0c13" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "ac33bc6bbc1a828efbf983227161aa383f1aa143d0eb6e94738c72ad554397f0" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -1174,7 +1176,7 @@ const setLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFi
 function sceneArgs() {
   const L = sceneList(), cols = " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" "), rip = ripCode(S.style, S);
   const space = hasSpaceCols(S.style) || L.some(c => c >= 200 && c < 255 && hasSpaceCols(c - 200));
-  const tail = turns(M) ? `${cols} ${S.crossFill} ${rip} ${S.portrait ? 1 : 0} ${S.tone} ${S.warm} ${S.tapnext ? 1 : 0} ${S.fdLen} ${S.fdStars} ${S.fdClouds} ${S.fdGlow}${S.ripGrad === 1 && isCrossStyle(S.style) && S.style !== 17 ? ` ${parseInt(hex6(S.ripC1), 16)} ${parseInt(hex6(S.ripC2), 16)}` : ""}`   // screens that turn: everything, then portrait / landscape
+  const tail = turns(M) ? `${cols} ${S.crossFill} ${rip} ${S.portrait ? 1 : 0} ${S.tone} ${S.warm} ${S.tapnext ? 1 : 0} ${S.fdLen} ${S.fdStars} ${S.fdClouds} ${S.fdGlow}${S.ripGrad === 1 && isCrossStyle(S.style) && S.style !== 17 ? " " + [S.ripC1, S.ripC2, S.ripC3, S.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""}`   // screens that turn: everything, then portrait / landscape
     : isCrossStyle(S.style) ? `${cols} ${S.crossFill} ${rip}` : space ? cols : "";
   return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${tail}`;
 }   // space colours only when needed, so older boards still accept the rest
