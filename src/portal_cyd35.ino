@@ -93,13 +93,12 @@ uint8_t  NUM_SPARKS = 28;      // particles being sucked in
 bool     DRIFT      = false;    // Wormhole: true = Reverse, the rings fly out toward you (LCDs don't need burn-in drift)
 uint32_t COLOR_CORE = 0x3B1CFF;  // inner colour
 uint32_t COLOR_RIM  = 0x38F0FF;  // outer colour
-uint32_t RIP_C1     = 0xFFD36B;  // crosses, Gradient ripple: each ring starts this colour...
-uint32_t RIP_C2     = 0xFF2D8A;  // ...and turns into this one
+uint32_t RIP_C[4]   = { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF };   // crosses, Gradient ripple: each ring changes through these four colours
 uint8_t  BRIGHTNESS = 100;     // 10-100 %: dims the portal's colours
 uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy (Hubble-style spiral), 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
                                 // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
                                 // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
-uint8_t  CROSS_RIPPLE = 0;      // crosses: Ripple, rings echoing the outline inside the cross (0 off, 1 outward, 2 inward; +3 Gradient colours, +6 Rainbow); the Wooden cross: its wood (0 classic, 1 pine, 2 rustic oak, 3 walnut, 4 cherry, 5 mahogany, 6 cedar, 7 driftwood, 8 ebony, 9 maple, 10 olive wood)
+uint8_t  CROSS_RIPPLE = 0;      // crosses: Ripple, rings echoing the outline inside the cross (0 off, 1 outward, 2 inward; +3 Gradient colours); the Wooden cross: its wood (0 classic, 1 pine, 2 rustic oak, 3 walnut, 4 cherry, 5 mahogany, 6 cedar, 7 driftwood, 8 ebony, 9 maple, 10 olive wood)
 uint8_t  CROSS_FILL = 0;       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower, 11 Solid colour; the Wooden cross: what's behind it, 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
 uint32_t SPACE_COLS[4] = { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF };   // Galaxy, Nebula, Wormhole, Meteor Shower: four colours blended together
 uint8_t  CROSS_W    = 46;      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
@@ -123,7 +122,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x42C8AB99UL;
+const uint32_t BUILD_ID = 0xD23055CAUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -196,22 +195,22 @@ struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, spar
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // Scenes with their own settings: each "another style" scene can keep its own size, colours, speed...
-struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn, style, crossFill, crossRipple, beam, crossW, bar; uint32_t ripC1, ripC2; };
-struct Extra { uint32_t id; uint32_t ripC1, ripC2; };   // settings that don't fit the first 128 bytes
+struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn, style, crossFill, crossRipple, beam, crossW, bar; uint32_t ripC[4]; };
+struct Extra { uint32_t id; uint32_t ripC[4]; };   // settings that don't fit the first 128 bytes
 struct SceneSaved { uint32_t id; uint8_t has[8]; Look look[8]; };
 #define EE_SIZE (128 + sizeof(SceneSaved) + sizeof(Extra))   // main settings, the scenes' own settings, then the extras
 #define EXTRA_AT (128 + sizeof(SceneSaved))
-uint32_t pendRipC1 = 0, pendRipC2 = 0; bool pendRip = false;
+uint32_t pendRipC[4]; bool pendRip = false;
 uint8_t  SCENE_HAS[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };   // 1 = that scene has its own settings
 Look     SCENE_LOOKS[8] = {
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, 0xFFD36B, 0xFF2D8A },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, 0xFFD36B, 0xFF2D8A },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, 0xFFD36B, 0xFF2D8A },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, 0xFFD36B, 0xFF2D8A },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, 0xFFD36B, 0xFF2D8A },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, 0xFFD36B, 0xFF2D8A },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, 0xFFD36B, 0xFF2D8A },
-  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, 0xFFD36B, 0xFF2D8A }
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF } },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF } },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF } },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF } },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF } },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF } },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF } },
+  { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF } }
 };
 Look mainLook;                           // your main settings (the scenes without their own use these)
 Look pendLook[8]; uint8_t pendHas[8];    // scene settings from live tuning, applied between frames
@@ -931,11 +930,11 @@ uint32_t rebootAt = 0;                   // set by the REBOOT command
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strcasecmp(line, "TAP") == 0) { tapCount++; return "OK"; }   // same as tapping the screen: the next style (or scene)
   if (strncasecmp(line, "SET ", 4) == 0) {
-    float v[56];
+    float v[58];
     uint8_t n = 0;
     char *p = strtok(line + 4, " ");
-    while (p && n < 56) { v[n++] = atof(p); p = strtok(NULL, " "); }
-    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46 || n == 47 || n == 48 || n == 49 || n == 50 || n == 54 || n == 56) {
+    while (p && n < 58) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46 || n == 47 || n == 48 || n == 49 || n == 50 || n == 54 || n == 58) {
       Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
       for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
       s.fadeSecs = v[23];
@@ -961,7 +960,7 @@ const char* handleCommand(char *line) {   // returns the reply to send back
       if (n >= 40) { s.crossW = (uint8_t)v[37]; s.beam = (uint8_t)v[38]; s.bar = (uint8_t)v[39]; }
       clampSettings(s);                  // anything out of range is brought back inside instead of refusing the update
       if (valid(s)) {
-        if (n == 56) { pendRipC1 = (uint32_t)v[54] & 0xFFFFFF; pendRipC2 = (uint32_t)v[55] & 0xFFFFFF; pendRip = true; }   // Gradient ripple colours
+        if (n == 58) { for (int j = 0; j < 4; j++) pendRipC[j] = (uint32_t)v[54 + j] & 0xFFFFFF; pendRip = true; }   // Gradient ripple colours
         pendingSettings = s;
         havePending = true;              // the drawing loop picks it up before the next frame
         return "OK";
@@ -970,13 +969,13 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     return "ERR";
   }
   if (strncasecmp(line, "SCN ", 4) == 0) {   // SCN k radius oval arms twist speed sparks drift core rim bright ripples ripspeed glow stars rimsmooth space1..4 style crossfill ripple beam crossw bar  (or SCN k OFF)
-    float v[28];                         // no reply: older boards ignore it the same way
+    float v[30];                         // no reply: older boards ignore it the same way
     uint8_t n = 0; bool off = false;
     char *p = strtok(line + 4, " ");
-    while (p && n < 28) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
+    while (p && n < 30) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
     int k = n ? (int)v[0] : -1;
     if (k < 0 || k > 7) return NULL;
-    if (off || (n != 26 && n != 28) || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
+    if (off || (n != 26 && n != 30) || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
     Look &L = pendLook[k];
     L.radius = clampf(v[1], 6, RADIUS_MAX); L.oval = clampf(v[2], 1, 2); L.arms = clampb((uint8_t)v[3], 1, 8);
     L.twist = clampf(v[4], 0, 6); L.speed = clampf(v[5], 0, 0.4f); L.sparks = min((int)v[6], MAX_SPARKS); L.drift = v[7] ? 1 : 0;
@@ -987,7 +986,7 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     L.fadeOn = 0;                        // a scene's own colours don't fade through the colour sets
     L.style = (uint8_t)v[20]; L.crossFill = (uint8_t)v[21]; L.crossRipple = min((int)v[22], 10);
     L.beam = clampb((uint8_t)v[23], 5, 30); L.crossW = clampb((uint8_t)v[24], 25, 100); L.bar = clampb((uint8_t)v[25], 20, 50);
-    L.ripC1 = n == 28 ? (uint32_t)v[26] & 0xFFFFFF : RIP_C1; L.ripC2 = n == 28 ? (uint32_t)v[27] & 0xFFFFFF : RIP_C2;   // Gradient ripple colours
+    for (int j = 0; j < 4; j++) L.ripC[j] = n == 30 ? (uint32_t)v[26 + j] & 0xFFFFFF : RIP_C[j];   // Gradient ripple colours
     pendHas[k] = 1; scenePending = true;
     return NULL;
   }
@@ -1106,14 +1105,14 @@ void grabLook(Look &L) {                 // the settings in use now
   L.core = COLOR_CORE; L.rim = COLOR_RIM; for (int k = 0; k < 4; k++) L.spaceCols[k] = SPACE_COLS[k];
   L.arms = ARMS; L.sparks = NUM_SPARKS; L.drift = DRIFT; L.bright = BRIGHTNESS; L.ripples = RIPPLES; L.stars = STARS; L.rimSmooth = RIM_SMOOTH; L.fadeOn = FADE_ON;
   L.style = STYLE; L.crossFill = CROSS_FILL; L.crossRipple = CROSS_RIPPLE; L.beam = BEAM; L.crossW = CROSS_W; L.bar = BAR;
-  L.ripC1 = RIP_C1; L.ripC2 = RIP_C2;
+  for (int j = 0; j < 4; j++) L.ripC[j] = RIP_C[j];
 }
 void putLook(const Look &L) {
   RADIUS = L.radius; OVAL = L.oval; TWIST = L.twist; SPEED = L.speed; RIP_SPEED = L.ripSpeed; GLOW_SIZE = L.glow;
   COLOR_CORE = L.core; COLOR_RIM = L.rim; for (int k = 0; k < 4; k++) SPACE_COLS[k] = L.spaceCols[k];
   ARMS = L.arms; NUM_SPARKS = L.sparks; DRIFT = L.drift; BRIGHTNESS = L.bright; RIPPLES = L.ripples; STARS = L.stars; RIM_SMOOTH = L.rimSmooth; FADE_ON = L.fadeOn;
   STYLE = L.style; CROSS_FILL = L.crossFill; CROSS_RIPPLE = L.crossRipple; BEAM = L.beam; CROSS_W = L.crossW; BAR = L.bar;
-  RIP_C1 = L.ripC1; RIP_C2 = L.ripC2;   // (a cross scene: its cross is drawn as the main style)
+  for (int j = 0; j < 4; j++) RIP_C[j] = L.ripC[j];   // (a cross scene: its cross is drawn as the main style)
 }
 void useSceneLook(int id) {              // load a scene's settings (or the main ones) and rebuild what depends on them
   if (id == curLook) return;
@@ -1126,7 +1125,7 @@ void useSceneLook(int id) {              // load a scene's settings (or the main
   curLook = id;
 }
 void saveScenes() {
-  SceneSaved z; z.id = BUILD_ID ^ 0x5CE20003UL;   // (^: this layout of scene settings)
+  SceneSaved z; z.id = BUILD_ID ^ 0x5CE20004UL;   // (^: this layout of scene settings)
   for (int k = 0; k < 8; k++) { z.has[k] = SCENE_HAS[k]; z.look[k] = SCENE_LOOKS[k]; }
   EEPROM.put(128, z);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
@@ -1134,17 +1133,17 @@ void saveScenes() {
 #endif
 }
 void saveExtra() {
-  Extra x = { BUILD_ID ^ 0xE7A00001UL, RIP_C1, RIP_C2 };
+  Extra x; x.id = BUILD_ID ^ 0xE7A00002UL; for (int j = 0; j < 4; j++) x.ripC[j] = RIP_C[j];
   EEPROM.put(EXTRA_AT, x);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
   EEPROM.commit();
 #endif
 }
 void loadScenes() {                      // after loadSettings()
-  { Extra x; EEPROM.get(EXTRA_AT, x); if (x.id == (BUILD_ID ^ 0xE7A00001UL)) { RIP_C1 = x.ripC1 & 0xFFFFFF; RIP_C2 = x.ripC2 & 0xFFFFFF; } }
+  { Extra x; EEPROM.get(EXTRA_AT, x); if (x.id == (BUILD_ID ^ 0xE7A00002UL)) for (int j = 0; j < 4; j++) RIP_C[j] = x.ripC[j] & 0xFFFFFF; }
   grabLook(mainLook); curLook = -1;
   SceneSaved z; EEPROM.get(128, z);
-  if (z.id == (BUILD_ID ^ 0x5CE20003UL)) for (int k = 0; k < 8; k++) {
+  if (z.id == (BUILD_ID ^ 0x5CE20004UL)) for (int k = 0; k < 8; k++) {
     const Look &L = z.look[k];
     bool ok = z.has[k] == 1 && L.radius >= 6 && L.radius <= RADIUS_MAX && L.oval >= 1 && L.oval <= 2 && L.arms >= 1 && L.arms <= 8 && L.twist >= 0 && L.twist <= 6 &&
               L.speed >= 0 && L.speed <= 0.4f && L.sparks <= MAX_SPARKS && L.bright >= 10 && L.bright <= 100 && L.stars >= 1 && L.stars <= 6 && L.ripples <= 6 &&
@@ -1742,7 +1741,7 @@ void frameStart() {
   if (havePending) {
     apply(pendingSettings);
     saveSettings();
-    if (pendRip) { pendRip = false; RIP_C1 = pendRipC1; RIP_C2 = pendRipC2; saveExtra(); }
+    if (pendRip) { pendRip = false; for (int j = 0; j < 4; j++) RIP_C[j] = pendRipC[j]; saveExtra(); }
     grabLook(mainLook); curLook = -1;      // the main settings are loaded now
     buildTone();
     if (spaceLUT) buildSpaceLUT();       // space colours go through the colour curve too
@@ -1922,26 +1921,22 @@ inline uint16_t max565(uint16_t a, uint16_t b) {   // brighter of two colours, c
 // ---------- Ripple (glowing crosses): copies of the outline echo through the inside of the cross ----------
 uint8_t crossRipT[128];                 // extra brightness by distance inside the cross edge, this frame
 float   ripplePh = 0;
-uint16_t ripC565[128];                  // Gradient / Rainbow ripple: each ring's colour by distance inside the cross edge
+uint16_t ripC565[128];                  // Gradient ripple: each ring's colour by distance inside the cross edge
 bool     ripColOn = false;
 HOT inline uint16_t add565(uint16_t a, uint16_t b) {   // brighten a by b, channel by channel
   int r = (a >> 11) + (b >> 11), g = ((a >> 5) & 63) + ((b >> 5) & 63), bl = (a & 31) + (b & 31);
   return (min(r, 31) << 11) | (min(g, 63) << 5) | min(bl, 31);
 }
-void ripRGB(float ph, float *c) {         // a ring's colour for how far it has travelled (0-1)
-  if (CROSS_RIPPLE / 3 == 2) {           // Rainbow: the hue moves along as the ring travels
-    float h = fmodf(ph + millis() / 12000.0f, 1.0f) * 6, f = h - floorf(h), q = 1 - f; int i = (int)h % 6;
-    const float T[6][3] = { { 1, f, 0 }, { q, 1, 0 }, { 0, 1, f }, { 0, q, 1 }, { f, 0, 1 }, { 1, 0, q } };
-    for (int k = 0; k < 3; k++) c[k] = T[i][k] * 255;
-    return;
-  }
-  for (int k = 0; k < 3; k++) { float a = (RIP_C1 >> (16 - 8 * k)) & 255, b = (RIP_C2 >> (16 - 8 * k)) & 255; c[k] = a + (b - a) * ph; }   // Gradient
+void ripRGB(float ph, float *c) {         // Gradient: a ring's colour for how far it has travelled (0-1), through the four colours
+  float x = min(2.999f, max(0.0f, ph) * 3); int i = (int)x; float f = x - i;
+  for (int k = 0; k < 3; k++) { float a = (RIP_C[i] >> (16 - 8 * k)) & 255, b = (RIP_C[i + 1] >> (16 - 8 * k)) & 255; c[k] = a + (b - a) * f; }
 }
 void buildCrossRipple() {
   memset(crossRipT, 0, sizeof(crossRipT));
   ripColOn = false;
-  int dir = CROSS_RIPPLE % 3, mode = CROSS_RIPPLE / 3;   // ripple direction (1 out, 2 in) and colour (0 glow, 1 gradient, 2 rainbow)
-  if (!dir || mode > 2) return;
+  int dir = CROSS_RIPPLE % 3, mode = CROSS_RIPPLE / 3;   // ripple direction (1 out, 2 in) and colour (0 glow, 1 gradient)
+  if (!dir) return;
+  if (mode > 1) mode = 0;                // (the old Rainbow setting: plain glow)
   static float acc[128 * 3];
   if (mode) memset(acc, 0, sizeof(acc));
   float R = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100), AW = max(2.0f, R * BEAM / 100.0f), s = R / 149.0f;
@@ -2468,7 +2463,7 @@ HOT void renderStrip(int y0, int rows, uint16_t *strip) {
         int h = haloT[k > 255 ? 255 : k]; if (h > v) v = h;   // outer halo
       }
       uint16_t px = pal[v > 255 ? 255 : v];
-      if (rk && ripColOn && ripC565[rk]) px = add565(px, ripC565[rk]);   // Gradient / Rainbow ripple
+      if (rk && ripColOn && ripC565[rk]) px = add565(px, ripC565[rk]);   // Gradient ripple
       *p++ = px;
     }
   }
