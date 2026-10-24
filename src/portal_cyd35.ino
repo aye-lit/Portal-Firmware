@@ -122,7 +122,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xC9FB8A6FUL;
+const uint32_t BUILD_ID = 0xE44551BCUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -2212,9 +2212,9 @@ void prepareWood() {
         woodPal8[tn * 8 + sh] = to565raw((uint8_t)min(255.0f, c[0] * k), (uint8_t)min(255.0f, c[1] * k), (uint8_t)min(255.0f, c[2] * k));
       }
     }
-    for (int k = 0; k < 128; k++) { woodGlowT[k] = (uint8_t)(200 * expf(-k / (14 * woodS))); woodShT[k] = (uint8_t)(255 * (1 - 0.8f * expf(-k / 3.0f))); }
+    for (int k = 0; k < 128; k++) { woodGlowT[k] = (uint8_t)(150 * expf(-k / (8 * woodS))); woodShT[k] = (uint8_t)(255 * (1 - 0.8f * expf(-k / 3.0f))); }
     for (int r = 0; r < 256; r++) {
-      woodWideT[r] = (uint8_t)(90 * fmaxf(0, 1 - r / (1.3f * woodBot)));
+      woodWideT[r] = (uint8_t)(45 * fmaxf(0, 1 - r / (1.05f * woodBot)));
       float q = r / (1.3f * woodBot); woodVigT[r] = (uint8_t)(255 * fmaxf(0, 1 - q * q));   // a portal behind fades out toward the screen edge
     }
   }
