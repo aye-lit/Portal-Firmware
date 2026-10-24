@@ -123,7 +123,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xF22E0B6EUL;
+const uint32_t BUILD_ID = 0x4D32AD86UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -1187,7 +1187,7 @@ void pickSceneLook() {                   // load the settings of the scene showi
 }
 
 
-const uint8_t TAP_STYLES[] = { 0, 1, 2, 3, 4, 6, 7, 14, 15, 16 };   // styles a tap steps through (after your own)
+const uint8_t TAP_STYLES[] = { 0, 1, 2, 3, 4, 6, 14, 15, 16 };   // styles a tap steps through (after your own)
 const int TAP_N = sizeof(TAP_STYLES);
 
 void onTap() {
