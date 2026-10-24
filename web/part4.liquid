@@ -365,7 +365,7 @@ const STYLES = [
   { name: "Galaxy", c: PRESETS.Nebula },
   { name: "Black hole", c: PRESETS.Event, removed: true },   // (no longer offered: kept so the style numbers stay the same)
   { name: "Cartoon Swirl", c: PRESETS.Slime, arms: 2, twist: 1.8 },
-  { name: "Cartoon Sticker", c: PRESETS.Slime, arms: 2, twist: 1.8 },
+  { name: "Cartoon Sticker", c: PRESETS.Slime, arms: 2, twist: 1.8, removed: true },   // (no longer offered)
   ...CROSS_NAMES.map((name, k) => ({ name, cross: CROSS_SHAPE[k] })),
   { name: "Nebula" },
   { name: "Wormhole" },
@@ -1049,11 +1049,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.12.5";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/d61a5af484f4d6dd872fbaac1939594f66209224/";
+const FW_VERSION = "1.12.6";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/f13307258f4d19bf2a71ed3f161b2d334ec1d5aa/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "6d95c6f41033b3e4d853199af93431e555041eafcb85a6a895e84ae9ff8e5958" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "809a29ca65e2f503101c6ecd8ea4d97e98db3358024ab7f09b69d433573d09c3" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "5208f266ec903c0b7893a109902392f503d8a6ea4ff2c00293a7b29e271ff7dc" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "d74fa2067a96f92258a2d7889a95cf1c678170e36674c960c7ce86ef65ea0c1a" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
