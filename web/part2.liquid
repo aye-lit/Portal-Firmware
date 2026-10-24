@@ -464,7 +464,7 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 // Scenes for the sketch and the SET command: 255 = the portal, 0-7 = picture slots
 function picturesAllowed() { const B = boardOf(); return M.kind === "tft" && (/^ESP32/.test(B.family) || !!B.custom); }
 function turns(m) { return m.kind === "tft" && !!m.rect && m.w !== m.h; }   // rectangles can be turned live (portrait / landscape)
-const SCENE_STYLES = [0, 1, 2, 3, 4, 5, 6, 7, 14, 15, 16, 8, 9, 10, 11, 12, 13, 17];   // styles a scene can switch to (crosses too: each keeps its own cross settings)
+const SCENE_STYLES = [0, 1, 2, 3, 4, 6, 7, 14, 15, 16, 8, 9, 10, 11, 12, 13, 17];   // styles a scene can switch to (crosses too: each keeps its own cross settings)
 const isStyleScene = x => x >= 200 && SCENE_STYLES.includes(x - 200);
 const isPicScene = x => x >= 0 && x < 200 && x % 100 < S.pics.length;
 function sceneList() {
@@ -600,6 +600,8 @@ const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, ov
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
+if (S.style === 5) S.style = 3;                       // Black hole is gone: Hyperspace instead
+if (S.crossFill === 5) S.crossFill = 3;
 if (S.board === "s3mini") S.board = "esp32s3";
 if (!BOARDS[S.board]) S.board = DEFAULTS.board;
 if (!S.custom || typeof S.custom !== "object") S.custom = {};
