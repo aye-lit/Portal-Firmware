@@ -1047,11 +1047,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.12.0";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/c37d03e7731d5b782f608929681e01e873c99090/";
+const FW_VERSION = "1.12.1";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/60d8aabfe318041e36dd152a5bc85c29ed04fcf3/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "5a7485e7514b61ae00309b4ddcc3e10327ad292688078559a38995589dd8fe90" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "9583d0ac2daa6bf4b8b21e451c0f7d30cd3f117661249915567420058a8d0bd6" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "0daa8f180100e2a0e3b91678d6bcdce3ee7aa8071d4565d8f3e97145373920da" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "bec75939c88f11de79a2dd6a6408b3b0a5e4df1d4acfe860df5c0b6bec2d541a" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -1176,7 +1176,8 @@ const setLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFi
 function sceneArgs() {
   const L = sceneList(), cols = " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" "), rip = ripCode(S.style, S);
   const space = hasSpaceCols(S.style) || L.some(c => c >= 200 && c < 255 && hasSpaceCols(c - 200));
-  const tail = turns(M) ? `${cols} ${S.crossFill} ${rip} ${S.portrait ? 1 : 0} ${S.tone} ${S.warm} ${S.tapnext ? 1 : 0} ${S.fdLen} ${S.fdStars} ${S.fdClouds} ${S.fdGlow}${S.ripGrad === 1 && isCrossStyle(S.style) && S.style !== 17 ? " " + [S.ripC1, S.ripC2, S.ripC3, S.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""}`   // screens that turn: everything, then portrait / landscape
+  const grad = S.ripGrad === 1 && isCrossStyle(S.style) && S.style !== 17;   // Gradient ripple: its four colours ride at the very end, so send everything
+  const tail = turns(M) || grad ? `${cols} ${S.crossFill} ${rip} ${S.portrait ? 1 : 0} ${S.tone} ${S.warm} ${S.tapnext ? 1 : 0} ${S.fdLen} ${S.fdStars} ${S.fdClouds} ${S.fdGlow}${S.ripGrad === 1 && isCrossStyle(S.style) && S.style !== 17 ? " " + [S.ripC1, S.ripC2, S.ripC3, S.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""}`   // screens that turn: everything, then portrait / landscape
     : isCrossStyle(S.style) ? `${cols} ${S.crossFill} ${rip}` : space ? cols : "";
   return `${L.length} ${[...L, ...Array(8).fill(255)].slice(0, 8).join(" ")} ${S.holdsec} ${S.scenefade} ${S.frame} ${S.crossw} ${S.beam} ${S.bar}${tail}`;
 }   // space colours only when needed, so older boards still accept the rest
@@ -1304,13 +1305,18 @@ async function sendBle() {
   if (busy) { pending = true; return; }
   busy = true;
   try {
-    const data = new TextEncoder().encode(cmdLine());
+    const lines = cmdLine().split("\n").filter(Boolean), last = lines.pop();
+    const put = async text => {
+      const data = new TextEncoder().encode(text + "\n");
+      for (let i = 0; i < data.length; i += 20) {        // small chunks fit any Bluetooth packet size
+        const part = data.slice(i, i + 20);
+        if (bleRx.writeValueWithResponse) await bleRx.writeValueWithResponse(part); else await bleRx.writeValue(part);
+      }
+    };
+    for (const l of lines) { await put(l); await sleep(150); }   // the scenes' own settings first, one line at a time (the board takes one Bluetooth line per frame)
     bleText = "";
     const reply = new Promise(res => { bleWait = res; setTimeout(() => res(bleText), 2500); });
-    for (let i = 0; i < data.length; i += 20) {          // small chunks fit any Bluetooth packet size
-      const part = data.slice(i, i + 20);
-      if (bleRx.writeValueWithResponse) await bleRx.writeValueWithResponse(part); else await bleRx.writeValue(part);
-    }
+    await put(last);
     const r = await reply;
     if (/\bOK\b/.test(r)) say("Sent over Bluetooth and saved on the board.", "ok");
     else if (/\bERR\b/.test(r)) say("The board rejected those settings. If you changed the display model, copy and upload the new sketch first.", "warn");
