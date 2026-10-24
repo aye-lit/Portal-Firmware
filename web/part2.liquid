@@ -474,7 +474,7 @@ function sceneList() {
 
 // ---------- scenes with their own settings ----------
 const ripCode = (st, o) => st === 17 ? o.woodGrain : o.crossRipple ? o.crossRipple + 3 * (o.ripGrad || 0) : 0;   // board: ripple direction + 3 x ripple colour (the Wooden cross: its wood style)
-const LOOK_KEYS = ["radius", "oval", "arms", "twist", "speed", "sparks", "reverse", "c1", "c2", "bright", "ripples", "rspeed", "glow", "stars", "rimsmooth", "spaceCols", "crossFill", "crossRipple", "woodGrain", "beam", "crossw", "bar", "ripGrad", "ripC1", "ripC2", "ripC3", "ripC4"];
+const LOOK_KEYS = ["radius", "oval", "arms", "twist", "speed", "sparks", "reverse", "c1", "c2", "bright", "ripples", "rspeed", "glow", "stars", "rimsmooth", "rimw", "spaceCols", "crossFill", "crossRipple", "woodGrain", "beam", "crossw", "bar", "ripGrad", "ripC1", "ripC2", "ripC3", "ripC4"];
 const pickLook = src => { const o = {}; LOOK_KEYS.forEach(k => { o[k] = Array.isArray(src[k]) ? src[k].slice() : src[k]; }); return o; };
 const snapMain = () => ({ ...pickLook(S), style: S.style, fade: S.fade });
 function defaultSetFor(st, base) {                  // a scene's settings to start from: the main ones, sized for that style
@@ -501,8 +501,8 @@ function sceneLooksBlock() {                        // firmware: each scene's ow
   for (let k = 0; k < 8; k++) {
     const st = sceneSetAt(k);
     has.push(st ? 1 : 0);
-    rows.push(st ? `{ ${f2(st.radius)}f, ${f2(st.oval)}f, ${f2(st.twist)}f, ${f2(st.speed)}f, ${f2(st.rspeed)}f, ${f2(st.glow)}f, 0x${hex6(st.c1)}, 0x${hex6(st.c2)}, { ${st.spaceCols.map(c => "0x" + hex6(c)).join(", ")} }, ${st.arms}, ${st.sparks}, ${st.reverse ? 1 : 0}, ${st.bright}, ${st.ripples}, ${st.stars}, ${st.rimsmooth}, 0, ${sceneList()[k] - 200}, ${st.crossFill}, ${ripCode(sceneList()[k] - 200, st)}, ${st.beam}, ${st.crossw}, ${st.bar}, { 0x${hex6(st.ripC1)}, 0x${hex6(st.ripC2)}, 0x${hex6(st.ripC3)}, 0x${hex6(st.ripC4)} } }`
-                 : "{ 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF } }");
+    rows.push(st ? `{ ${f2(st.radius)}f, ${f2(st.oval)}f, ${f2(st.twist)}f, ${f2(st.speed)}f, ${f2(st.rspeed)}f, ${f2(st.glow)}f, 0x${hex6(st.c1)}, 0x${hex6(st.c2)}, { ${st.spaceCols.map(c => "0x" + hex6(c)).join(", ")} }, ${st.arms}, ${st.sparks}, ${st.reverse ? 1 : 0}, ${st.bright}, ${st.ripples}, ${st.stars}, ${st.rimsmooth}, 0, ${sceneList()[k] - 200}, ${st.crossFill}, ${ripCode(sceneList()[k] - 200, st)}, ${st.beam}, ${st.crossw}, ${st.bar}, { 0x${hex6(st.ripC1)}, 0x${hex6(st.ripC2)}, 0x${hex6(st.ripC3)}, 0x${hex6(st.ripC4)} }, ${st.rimw} }`
+                 : "{ 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF }, 100 }");
   }
   return `uint8_t  SCENE_HAS[8] = { ${has.join(", ")} };   // 1 = that scene has its own settings
 Look     SCENE_LOOKS[8] = {
@@ -513,7 +513,7 @@ function sceneLines() {                             // live tuning: each scene's
   let out = "";
   for (let k = 0; k < 8; k++) {
     const st = sceneSetAt(k);
-    out += st ? `SCN ${k} ${st.radius} ${f2(st.oval)} ${st.arms} ${(+st.twist).toFixed(1)} ${f2(st.speed)} ${st.sparks} ${st.reverse ? 1 : 0} ${parseInt(hex6(st.c1), 16)} ${parseInt(hex6(st.c2), 16)} ${st.bright} ${st.ripples} ${f2(st.rspeed)} ${f2(st.glow)} ${st.stars} ${st.rimsmooth} ${st.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ")} ${sceneList()[k] - 200} ${st.crossFill} ${ripCode(sceneList()[k] - 200, st)} ${st.beam} ${st.crossw} ${st.bar}${st.ripGrad === 1 ? " " + [st.ripC1, st.ripC2, st.ripC3, st.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""}\n`
+    out += st ? `SCN ${k} ${st.radius} ${f2(st.oval)} ${st.arms} ${(+st.twist).toFixed(1)} ${f2(st.speed)} ${st.sparks} ${st.reverse ? 1 : 0} ${parseInt(hex6(st.c1), 16)} ${parseInt(hex6(st.c2), 16)} ${st.bright} ${st.ripples} ${f2(st.rspeed)} ${f2(st.glow)} ${st.stars} ${st.rimsmooth} ${st.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ")} ${sceneList()[k] - 200} ${st.crossFill} ${ripCode(sceneList()[k] - 200, st)} ${st.beam} ${st.crossw} ${st.bar}${st.ripGrad === 1 ? " " + [st.ripC1, st.ripC2, st.ripC3, st.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""} ${st.rimw}\n`
               : `SCN ${k} OFF\n`;
   }
   return out;
@@ -596,7 +596,7 @@ const crossMax = (M, st = S.style) => M.rect ? Math.floor((M.h - 8) * 0.8) : Mat
 const radiusMax = M => (S.style >= 8 && S.style <= 13) || S.style === 17 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossRipple: 0, ripGrad: 0, ripC1: "#ffd36b", ripC2: "#ff2d8a", ripC3: "#8a3dff", ripC4: "#3de0ff", woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossRipple: 0, rimw: 100, ripGrad: 0, ripC1: "#ffd36b", ripC2: "#ff2d8a", ripC3: "#8a3dff", ripC4: "#3de0ff", woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -630,6 +630,7 @@ if (!(Number.isInteger(S.woodGrain) && S.woodGrain >= 0 && S.woodGrain <= 10)) S
 if (S.c1 === "#c02ad0" && S.c2 === "#f9c8ff") { S.c1 = PRESETS.Bloom[0]; S.c2 = PRESETS.Bloom[1]; }   // the old pale Bloom colours
 if (!(S.fadesec >= 1 && S.fadesec <= 3600)) S.fadesec = 8;
 if (!(S.rimsmooth >= 0 && S.rimsmooth <= 100)) S.rimsmooth = 0;
+if (!(S.rimw >= 25 && S.rimw <= 200)) S.rimw = 100;
 const isHex = c => /^#[0-9a-f]{6}$/i.test(c || "");
 if (!(Array.isArray(S.spaceCols) && S.spaceCols.length === 4 && S.spaceCols.every(isHex))) S.spaceCols = [...DEFAULTS.spaceCols];
 if (!Array.isArray(S.fadeSets)) S.fadeSets = isHex(S.c3) && isHex(S.c4) ? [{ core: S.c3, rim: S.c4 }] : [{ core: "#ff3d00", rim: "#ffd36b" }];
@@ -892,7 +893,7 @@ function buildTftParams() {
     bhDiskT[r] = (dn >= 0 && dn < 1) ? Math.trunc(235 - dn * 200) : 0;
     bhStarT[r] = dn > 0.85 ? 1 : 0;
   }
-  for (let d = 0; d < 64; d++) rimT[d] = Math.trunc(255 * Math.exp(-Math.pow(d * 9 / R, 2)));
+  for (let d = 0; d < 64; d++) rimT[d] = Math.trunc(255 * Math.exp(-Math.pow(d * 9 / (R * S.rimw / 100), 2)));   // Rim thickness
   for (let x = 0; x < TW; x++) { const dx = x < QX ? QX - 1 - x : x - QX; colMap[x] = Math.min(TQX - 1, Math.round(dx / S.oval)); }
 }
 function buildTftPalette() {           // black → core → rim → near-white, quantised to RGB565
@@ -1713,7 +1714,7 @@ function tftRender(out, style) {                      // one frame of one style 
       } else if (style === 7) {                         // Cartoon Sticker: ragged edge, light outline, no glow
         const jag = (((nz(nzB, a * 4 + (phase >> 1)) - 128) * 7 + (nz(nzC, a * 16 + phase) - 128) * 4) >> 7) * (100 - S.rimsmooth) / 100;
         const e2 = Math.trunc(R * 1.02 + jag / 4);
-        v = r >= e2 ? 0 : r >= e2 - 4 ? 235 : cartoonV(a, r, arms, phase);
+        v = r >= e2 ? 0 : r >= e2 - Math.max(1, Math.round(4 * S.rimw / 100)) ? 235 : cartoonV(a, r, arms, phase);   // outline: Rim thickness
       } else if (r < e) {
         v = styleV(style, a, r, arms, phase, phase2, tw);
         const k = e - r; if (k < 64 && rimT[k] > v) v = rimT[k];

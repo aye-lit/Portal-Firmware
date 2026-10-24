@@ -132,6 +132,7 @@ bool     FADE_ON    = ${S.fade};    // fade through the colour sets
 uint8_t  FADE_COUNT = ${S.fadeSets.length};       // extra colour sets after the main colours (1-3)
 uint32_t FADE_COLS[6] = { ${[0,1,2].map(i => S.fadeSets[i] ? `0x${hex6(S.fadeSets[i].core)}, 0x${hex6(S.fadeSets[i].rim)}` : "0x000000, 0x000000").join(", ")} };   // core, rim pairs
 uint8_t  RIM_SMOOTH = ${S.rimsmooth};       // 0 = wobbly energy edge, 100 = perfectly smooth ring
+uint8_t  RIM_W      = ${S.rimw};      // Rim thickness, % (25-200): the glowing edge, or the Cartoon Sticker's outline
 float    FADE_SECS  = ${S.fadesec};       // seconds for each fade (${Math.floor(S.fadesec / 60)} min ${S.fadesec % 60} sec)
 uint8_t  RIPPLES    = ${S.ripples};       // Starburst: rings expanding at once (0-6)
 float    RIP_SPEED  = ${f2(S.rspeed)};    // Starburst: ripple speed (0.03-0.30)
@@ -219,12 +220,13 @@ struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, spar
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // Scenes with their own settings: each "another style" scene can keep its own size, colours, speed...
-struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn, style, crossFill, crossRipple, beam, crossW, bar; uint32_t ripC[4]; };
-struct Extra { uint32_t id; uint32_t ripC[4]; };   // settings that don't fit the first 128 bytes
+struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn, style, crossFill, crossRipple, beam, crossW, bar; uint32_t ripC[4]; uint8_t rimW; };
+struct Extra { uint32_t id; uint32_t ripC[4]; uint8_t rimW; };   // settings that don't fit the first 128 bytes
 struct SceneSaved { uint32_t id; uint8_t has[8]; Look look[8]; };
 #define EE_SIZE (128 + sizeof(SceneSaved) + sizeof(Extra))   // main settings, the scenes' own settings, then the extras
 #define EXTRA_AT (128 + sizeof(SceneSaved))
 uint32_t pendRipC[4]; bool pendRip = false;
+uint8_t  pendRimW = 100; bool pendRim = false;
 ${sceneLooksBlock()}
 Look mainLook;                           // your main settings (the scenes without their own use these)
 Look pendLook[8]; uint8_t pendHas[8];    // scene settings from live tuning, applied between frames
@@ -295,7 +297,7 @@ void buildParams() {
     bhDiskT[r]  = (dn >= 0 && dn < 1) ? (uint8_t)(235 - dn * 200) : 0;
     bhStarT[r]  = dn > 0.85f ? 1 : 0;
   }
-  for (int d = 0; d < 64; d++) rimT[d] = (uint8_t)(255 * expf(-powf(d * 9.0f / R, 2)));
+  for (int d = 0; d < 64; d++) rimT[d] = (uint8_t)(255 * expf(-powf(d * 9.0f / (R * RIM_W / 100.0f), 2)));   // Rim thickness
   for (int x = 0; x < SCR_W; x++) {
     int dx = x < QX ? QX - 1 - x : x - QX;
     colMap[x] = (uint8_t)min((long)(TQX - 1), lroundf(dx / OVAL));
@@ -645,7 +647,7 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     while (p && n < 30) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
     int k = n ? (int)v[0] : -1;
     if (k < 0 || k > 7) return NULL;
-    if (off || (n != 26 && n != 30) || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
+    if (off || (n != 26 && n != 27 && n != 30 && n != 31) || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
     Look &L = pendLook[k];
     L.radius = clampf(v[1], 6, RADIUS_MAX); L.oval = clampf(v[2], 1, 2); L.arms = clampb((uint8_t)v[3], 1, 8);
     L.twist = clampf(v[4], 0, 6); L.speed = clampf(v[5], 0, 0.4f); L.sparks = min((int)v[6], MAX_SPARKS); L.drift = v[7] ? 1 : 0;
@@ -656,9 +658,13 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     L.fadeOn = 0;                        // a scene's own colours don't fade through the colour sets
     L.style = (uint8_t)v[20]; L.crossFill = (uint8_t)v[21]; L.crossRipple = min((int)v[22], 10);
     L.beam = clampb((uint8_t)v[23], 5, 30); L.crossW = clampb((uint8_t)v[24], 25, 100); L.bar = clampb((uint8_t)v[25], 20, 50);
-    for (int j = 0; j < 4; j++) L.ripC[j] = n == 30 ? (uint32_t)v[26 + j] & 0xFFFFFF : RIP_C[j];   // Gradient ripple colours
+    for (int j = 0; j < 4; j++) L.ripC[j] = n >= 30 ? (uint32_t)v[26 + j] & 0xFFFFFF : RIP_C[j];   // Gradient ripple colours
+    L.rimW = (n == 27 || n == 31) ? (uint8_t)constrain((int)v[n - 1], 25, 200) : RIM_W;   // Rim thickness
     pendHas[k] = 1; scenePending = true;
     return NULL;
+  }
+  if (strncasecmp(line, "RIM ", 4) == 0) {   // RIM percent: Rim thickness (no reply; it's applied with the SET that follows)
+    pendRimW = (uint8_t)constrain(atoi(line + 4), 25, 200); pendRim = true; return NULL;
   }
   if (strcasecmp(line, "PING") == 0) return "PORTAL";
 #if defined(ESP32)
@@ -703,13 +709,15 @@ void grabLook(Look &L) {                 // the settings in use now
   L.arms = ARMS; L.sparks = NUM_SPARKS; L.drift = DRIFT; L.bright = BRIGHTNESS; L.ripples = RIPPLES; L.stars = STARS; L.rimSmooth = RIM_SMOOTH; L.fadeOn = FADE_ON;
   L.style = STYLE; L.crossFill = CROSS_FILL; L.crossRipple = CROSS_RIPPLE; L.beam = BEAM; L.crossW = CROSS_W; L.bar = BAR;
   for (int j = 0; j < 4; j++) L.ripC[j] = RIP_C[j];
+  L.rimW = RIM_W;
 }
 void putLook(const Look &L) {
   RADIUS = L.radius; OVAL = L.oval; TWIST = L.twist; SPEED = L.speed; RIP_SPEED = L.ripSpeed; GLOW_SIZE = L.glow;
   COLOR_CORE = L.core; COLOR_RIM = L.rim; for (int k = 0; k < 4; k++) SPACE_COLS[k] = L.spaceCols[k];
   ARMS = L.arms; NUM_SPARKS = L.sparks; DRIFT = L.drift; BRIGHTNESS = L.bright; RIPPLES = L.ripples; STARS = L.stars; RIM_SMOOTH = L.rimSmooth; FADE_ON = L.fadeOn;
   STYLE = L.style; CROSS_FILL = L.crossFill; CROSS_RIPPLE = L.crossRipple; BEAM = L.beam; CROSS_W = L.crossW; BAR = L.bar;
-  for (int j = 0; j < 4; j++) RIP_C[j] = L.ripC[j];   // (a cross scene: its cross is drawn as the main style)
+  for (int j = 0; j < 4; j++) RIP_C[j] = L.ripC[j];
+  RIM_W = L.rimW >= 25 && L.rimW <= 200 ? L.rimW : 100;   // (a cross scene: its cross is drawn as the main style)
 }
 void useSceneLook(int id) {              // load a scene's settings (or the main ones) and rebuild what depends on them
   if (id == curLook) return;
@@ -722,7 +730,7 @@ void useSceneLook(int id) {              // load a scene's settings (or the main
   curLook = id;
 }
 void saveScenes() {
-  SceneSaved z; z.id = BUILD_ID ^ 0x5CE20004UL;   // (^: this layout of scene settings)
+  SceneSaved z; z.id = BUILD_ID ^ 0x5CE20005UL;   // (^: this layout of scene settings)
   for (int k = 0; k < 8; k++) { z.has[k] = SCENE_HAS[k]; z.look[k] = SCENE_LOOKS[k]; }
   EEPROM.put(128, z);
 ${EEPROM_BEGIN_GUARD}
@@ -730,17 +738,17 @@ ${EEPROM_BEGIN_GUARD}
 #endif
 }
 void saveExtra() {
-  Extra x; x.id = BUILD_ID ^ 0xE7A00002UL; for (int j = 0; j < 4; j++) x.ripC[j] = RIP_C[j];
+  Extra x; x.id = BUILD_ID ^ 0xE7A00003UL; for (int j = 0; j < 4; j++) x.ripC[j] = RIP_C[j]; x.rimW = RIM_W;
   EEPROM.put(EXTRA_AT, x);
 ${EEPROM_BEGIN_GUARD}
   EEPROM.commit();
 #endif
 }
 void loadScenes() {                      // after loadSettings()
-  { Extra x; EEPROM.get(EXTRA_AT, x); if (x.id == (BUILD_ID ^ 0xE7A00002UL)) for (int j = 0; j < 4; j++) RIP_C[j] = x.ripC[j] & 0xFFFFFF; }
+  { Extra x; EEPROM.get(EXTRA_AT, x); if (x.id == (BUILD_ID ^ 0xE7A00003UL)) { for (int j = 0; j < 4; j++) RIP_C[j] = x.ripC[j] & 0xFFFFFF; if (x.rimW >= 25 && x.rimW <= 200) RIM_W = x.rimW; } }
   grabLook(mainLook); curLook = -1;
   SceneSaved z; EEPROM.get(128, z);
-  if (z.id == (BUILD_ID ^ 0x5CE20004UL)) for (int k = 0; k < 8; k++) {
+  if (z.id == (BUILD_ID ^ 0x5CE20005UL)) for (int k = 0; k < 8; k++) {
     const Look &L = z.look[k];
     bool ok = z.has[k] == 1 && L.radius >= 6 && L.radius <= RADIUS_MAX && L.oval >= 1 && L.oval <= 2 && L.arms >= 1 && L.arms <= 8 && L.twist >= 0 && L.twist <= 6 &&
               L.speed >= 0 && L.speed <= 0.4f && L.sparks <= MAX_SPARKS && L.bright >= 10 && L.bright <= 100 && L.stars >= 1 && L.stars <= 6 && L.ripples <= 6 &&
@@ -1442,6 +1450,7 @@ void frameStart() {
     apply(pendingSettings);
     saveSettings();
     if (pendRip) { pendRip = false; for (int j = 0; j < 4; j++) RIP_C[j] = pendRipC[j]; saveExtra(); }
+    if (pendRim) { pendRim = false; if (pendRimW != RIM_W) { RIM_W = pendRimW; saveExtra(); buildParams(); } }
     grabLook(mainLook); curLook = -1;      // the main settings are loaded now
     buildTone();
     if (spaceLUT) buildSpaceLUT();       // space colours go through the colour curve too
@@ -2157,7 +2166,7 @@ HOT void renderStrip(int y0, int rows, uint16_t *strip) {
       } else if (look == 7) {                                // Cartoon Sticker: ragged edge, light outline, no glow
         int jag = (((nz(nzB, 63, a * 4 + (phase >> 1)) - 128) * 7 + (nz(nzC, 255, a * 16 + phase) - 128) * 4) >> 7) * (100 - RIM_SMOOTH) / 100;
         int e2 = (int)(RADIUS * 1.02f + jag / 4.0f);
-        v = r >= e2 ? 0 : r >= e2 - 4 ? 235 : cartoonV(a, r, phase);
+        v = r >= e2 ? 0 : r >= e2 - max(1, (int)lroundf(4 * RIM_W / 100.0f)) ? 235 : cartoonV(a, r, phase);   // outline: Rim thickness
       } else if (r < e) {
         v = styleV(look, a, r, phase, phase2);
         int k = e - r; if (k < 64 && rimT[k] > v) v = rimT[k];

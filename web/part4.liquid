@@ -307,7 +307,7 @@ ${frame}
 // ---------------- UI ----------------
 
 const codeEl = $("code");
-const fmt = { crossw: v => v + "%", beam: v => v + "%", bar: v => v + "%", radius: v => v + " px", oval: v => f2(v), arms: v => v, twist: v => (+v).toFixed(1), speed: v => f2(v), sparks: v => v, bright: v => v + "%", tone: v => v + "%", warm: v => v + "%", ripples: v => v, rspeed: v => f2(v), glow: v => f2(v), stars: v => v, rimsmooth: v => v + "%", fdLen: v => v + " min", fdStars: v => v + "%", fdClouds: v => v + "%", fdGlow: v => v + "%" };
+const fmt = { crossw: v => v + "%", beam: v => v + "%", bar: v => v + "%", radius: v => v + " px", oval: v => f2(v), arms: v => v, twist: v => (+v).toFixed(1), speed: v => f2(v), sparks: v => v, bright: v => v + "%", tone: v => v + "%", warm: v => v + "%", ripples: v => v, rspeed: v => f2(v), glow: v => f2(v), stars: v => v, rimsmooth: v => v + "%", rimw: v => v + "%", fdLen: v => v + " min", fdStars: v => v + "%", fdClouds: v => v + "%", fdGlow: v => v + "%" };
 let codeTimer;
 const refreshCode = () => { clearTimeout(codeTimer); codeTimer = setTimeout(() => codeEl.textContent = withMain(sketch), 120); };
 
@@ -431,6 +431,7 @@ function markStyle() {
     $("fade").closest("label").hidden = !use.has("colours") || editIdx >= 0;   // a scene's own colours don't fade through the sets
     $("fade-opts").hidden = !S.fade || !use.has("colours") || editIdx >= 0;
     $("rimsmooth-wrap").hidden = !use.has("rimsmooth");
+    $("rimw-wrap").hidden = !use.has("rimsmooth");   // the same portal styles have a rim
     ["oval", "arms", "twist", "sparks"].forEach(k => { const l = $(k).closest("label"); if (l) l.hidden = !use.has(k); });
   }
   const gal = tft && eff === 4, wh = tft && eff === 15, met = tft && eff === 16;
@@ -1048,11 +1049,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.12.4";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/155418213184fcae0fb202e073f5f47e7bb543b3/";
+const FW_VERSION = "1.12.5";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/d61a5af484f4d6dd872fbaac1939594f66209224/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "5eeb2a7eedb1585ff9464db995c628f4d60115771d2759cf2ccd50e10d0477fb" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "ab3434dd888f490d20eb54103acf5befb0a69d748695dc8f905bcd6ddd15f3ea" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "6d95c6f41033b3e4d853199af93431e555041eafcb85a6a895e84ae9ff8e5958" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "809a29ca65e2f503101c6ecd8ea4d97e98db3358024ab7f09b69d433573d09c3" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -1172,7 +1173,7 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   for (let i = 0; i < 3; i++) { const st = S.fadeSets[i]; cols.push(st ? parseInt(hex6(st.core), 16) : 0, st ? parseInt(hex6(st.rim), 16) : 0); }
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
-const cmdLine = () => withMain(() => (M.kind === "tft" ? sceneLines() : "") + setLine());
+const cmdLine = () => withMain(() => (M.kind === "tft" ? sceneLines() + `RIM ${S.rimw}\n` : "") + setLine());   // (older boards ignore SCN and RIM lines)
 const setLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${(M.kind === "tft" ? S.reverse : S.drift) ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
 function sceneArgs() {
   const L = sceneList(), cols = " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" "), rip = ripCode(S.style, S);
