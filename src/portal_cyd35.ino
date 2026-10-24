@@ -122,7 +122,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x560BD775UL;
+const uint32_t BUILD_ID = 0xC9FB8A6FUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -2025,6 +2025,7 @@ inline uint16_t max565(uint16_t a, uint16_t b) {   // brighter of two colours, c
 // ---------- Ripple (glowing crosses): copies of the outline echo through the inside of the cross ----------
 uint8_t crossRipT[128];                 // extra brightness by distance inside the cross edge, this frame
 float   ripplePh = 0;
+uint8_t  ripA[128];                     // how strongly each ring covers what's below
 uint16_t ripC565[128];                  // Gradient ripple: each ring's colour by distance inside the cross edge
 bool     ripColOn = false;
 HOT inline uint16_t add565(uint16_t a, uint16_t b) {   // brighten a by b, channel by channel
@@ -2041,7 +2042,7 @@ void buildCrossRipple() {
   int dir = CROSS_RIPPLE % 3, mode = CROSS_RIPPLE / 3;   // ripple direction (1 out, 2 in) and colour (0 glow, 1 gradient)
   if (!dir) return;
   if (mode > 1) mode = 0;                // (the old Rainbow setting: plain glow)
-  static float acc[128 * 3];
+  static float acc[128 * 4];
   if (mode) memset(acc, 0, sizeof(acc));
   float R = min(RADIUS, (SCR_H - 8) * (100.0f - BAR) / 100), AW = max(2.0f, R * BEAM / 100.0f), s = R / 149.0f;
   float rw = max(1.5f, AW * 0.18f), span = AW - rw;
@@ -2050,17 +2051,19 @@ void buildCrossRipple() {
     float b = 150 * (0.35f + 0.65f * sinf(ph * PI));
     if (mode) {                          // coloured rings
       float c[3]; ripRGB(dir == 1 ? ph : 1 - ph, c);
-      for (int k = 1; k < 128; k++) { float q = (k - 0.5f - e0) / (1.4f * s), w = b / 150 * expf(-q * q) * BRIGHTNESS / 100.0f; if (w > 0.01f) for (int m = 0; m < 3; m++) acc[k * 3 + m] += c[m] * w; }
+      for (int k = 1; k < 128; k++) { float q = (k - 0.5f - e0) / (1.4f * s), w = b / 150 * expf(-q * q); if (w > 0.01f) { for (int m = 0; m < 3; m++) acc[k * 4 + m] += c[m] * w; acc[k * 4 + 3] += w; } }
       continue;
     }
     for (int k = 1; k < 128; k++) { float q = (k - 0.5f - e0) / (1.4f * s); crossRipT[k] = (uint8_t)min(255.0f, crossRipT[k] + b * expf(-q * q)); }
   }
-  if (mode) {                            // the coloured rings as screen colours, lifting toward white where they're strong
+  if (mode) {                            // each ring in its own colour, covering what's below where it's strong
     for (int k = 0; k < 128; k++) {
-      float r = acc[k * 3], g = acc[k * 3 + 1], bl = acc[k * 3 + 2];
-      if (r + g + bl < 3) { ripC565[k] = 0; continue; }
-      float w = max(0.0f, max(r, max(g, bl)) - 200) * 0.6f;
-      ripC565[k] = to565((uint8_t)min(255.0f, r + w), (uint8_t)min(255.0f, g + w), (uint8_t)min(255.0f, bl + w));
+      float W = acc[k * 4 + 3];
+      if (W < 0.02f) { ripC565[k] = 0; ripA[k] = 0; continue; }
+      float m = BRIGHTNESS / 100.0f / W;
+      ripC565[k] = to565((uint8_t)min(255.0f, acc[k * 4] * m), (uint8_t)min(255.0f, acc[k * 4 + 1] * m), (uint8_t)min(255.0f, acc[k * 4 + 2] * m)) | 0;
+      ripA[k] = (uint8_t)min(255.0f, W * 1.6f * 256);
+      if (!ripA[k]) ripC565[k] = 0;
     }
     ripColOn = true;
   }
@@ -2070,7 +2073,7 @@ HOT void crossMask(int y0, int rows, uint16_t *strip) {   // glowing cross outli
   const int8_t *edgeBuf = edgeRows(y0);
   for (int i = 0; i < rows * SCR_W; i++) {
     int ce = edgeBuf[i];
-    if (ce > 0) { int rv = max((int)crossRimT[ce], crossRipT[ce] > 8 ? min(255, crossRipT[ce] + 60) : 0); if (rv > 8) strip[i] = max565(strip[i], pal[rv]); if (ripColOn && ripC565[ce]) strip[i] = add565(strip[i], ripC565[ce]); }
+    if (ce > 0) { int rv = max((int)crossRimT[ce], crossRipT[ce] > 8 ? min(255, crossRipT[ce] + 60) : 0); if (rv > 8) strip[i] = max565(strip[i], pal[rv]); if (ripColOn && ripA[ce]) strip[i] = mix565(strip[i], ripC565[ce], ripA[ce]); }
     else strip[i] = pal[max(crossRimT[-ce], crossHaloT[-ce])];
   }
 }
@@ -2567,7 +2570,7 @@ HOT void renderStrip(int y0, int rows, uint16_t *strip) {
         int h = haloT[k > 255 ? 255 : k]; if (h > v) v = h;   // outer halo
       }
       uint16_t px = pal[v > 255 ? 255 : v];
-      if (rk && ripColOn && ripC565[rk]) px = add565(px, ripC565[rk]);   // Gradient ripple
+      if (rk && ripColOn && ripA[rk]) px = mix565(px, ripC565[rk], ripA[rk]);   // Gradient ripple
       *p++ = px;
     }
   }
