@@ -122,7 +122,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xF51A3601UL;
+const uint32_t BUILD_ID = 0xD67817E1UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -149,8 +149,8 @@ uint8_t  depthT[256], coreT[256], haloT[256], rimT[64], centerT[256];
 uint8_t  sbGlowT[256], sbRingT[256], sbOuterT[256], ripCrestT[256], ripTroughT[256];
 uint8_t  spCoreT[256], bhRingT[256], bhDiskT[256], bhStarT[256];
 uint16_t galFadeT[256];
-uint8_t *warpOn = NULL;                 // Hyperspace stars: made when Hyperspace is first shown (saves memory otherwise)
-float   *warpRR = NULL, *warpLen = NULL, *warpB = NULL;
+uint8_t  warpOn[768];                   // Hyperspace stars (kept, small: a big memory request could fail once memory is broken up, and Hyperspace fell back to the Vortex)
+float    warpRR[768];                   // where each streak's head is (its length and brightness follow from that)
 int      bhHole = 20, twinkle = 0;
 int16_t  linT[256];
 uint16_t pal[256];
@@ -1179,7 +1179,7 @@ void pickSceneLook() {                   // load the settings of the scene showi
 }
 
 
-const uint8_t TAP_STYLES[] = { 0, 1, 2, 3, 4, 5, 6, 7, 14, 15, 16 };   // styles a tap steps through (after your own)
+const uint8_t TAP_STYLES[] = { 0, 1, 2, 3, 4, 6, 7, 14, 15, 16 };   // styles a tap steps through (after your own)
 const int TAP_N = sizeof(TAP_STYLES);
 
 void onTap() {
@@ -1895,9 +1895,7 @@ void frameStart() {
   if (!needB && sceneMix < 128) lookB = lookA;
   {
     auto gridLook = [](int L) { return L == 4 || (L == 14 && !nebReady) || L == 16; };
-    if (lookA != 3 && lookB != 3 && warpB) {        // Hyperspace not showing: give its star tables back
-      free(warpOn); free(warpRR); free(warpLen); free(warpB); warpOn = NULL; warpRR = warpLen = warpB = NULL;
-    }
+
     if (gridLook(lookA) || gridLook(lookB)) ringMemory(); else if (ringTried) freeRing();
   }
   look = lookA;
@@ -1913,14 +1911,6 @@ void frameStart() {
   // Hyperspace: where each streaking star is this frame (3 layers x 256 directions)
   bhHole = (int)(0.22f * RADIUS);
   twinkle = (int)(t * 25);
-  if ((lookA == 3 || lookB == 3) && !warpB) {
-    warpOn = (uint8_t *)malloc(768); warpRR = (float *)malloc(768 * 4); warpLen = (float *)malloc(768 * 4); warpB = (float *)malloc(768 * 4);
-    if ((!warpOn || !warpRR || !warpLen || !warpB) && ringTried) {   // no room: hand over the shared grid rows and try again
-      free(warpOn); free(warpRR); free(warpLen); free(warpB); freeRing();
-      warpOn = (uint8_t *)malloc(768); warpRR = (float *)malloc(768 * 4); warpLen = (float *)malloc(768 * 4); warpB = (float *)malloc(768 * 4);
-    }
-    if (!warpOn || !warpRR || !warpLen || !warpB) { free(warpOn); free(warpRR); free(warpLen); free(warpB); warpOn = NULL; warpRR = warpLen = warpB = NULL; if (lookA == 3) lookA = 0; if (lookB == 3) lookB = 0; }   // no room: the Vortex
-  }
   if (lookA == 3 || lookB == 3) {
     for (int L = 0; L < 3; L++) {
       for (int a = 0; a < 256; a++) {
@@ -1930,8 +1920,6 @@ void frameStart() {
         float pos = fmodf((float)((h >> 8) & 1023) + t * (60 + L * 25), 1024.0f) / 1024.0f;
         float rr = pos * pos * 1.15f * RADIUS;
         warpRR[i] = rr;
-        warpLen[i] = 1.5f + rr * 0.22f;
-        warpB[i] = 145 * min(1.0f, rr / (0.8f * RADIUS));
       }
     }
   }
@@ -1995,9 +1983,9 @@ inline int styleV(int look, int a, int r, int phase, int phase2) {   // brightne
     for (int L = 0; L < 3; L++) {
       int i = L * 256 + a;
       if (!warpOn[i]) continue;
-      float rr = warpRR[i], len = warpLen[i];
+      float rr = warpRR[i], len = 1.5f + rr * 0.22f;
       if (r <= rr && r > rr - len) {
-        int sv = (int)(110 + warpB[i] * (1 - (rr - r) / len * 0.6f));
+        int sv = (int)(110 + 145 * min(1.0f, rr / (0.8f * RADIUS)) * (1 - (rr - r) / len * 0.6f));
         if (sv > v) v = sv;
       }
     }
