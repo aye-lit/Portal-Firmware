@@ -1300,6 +1300,15 @@ async function sendUsb() {
 }
 $("send").addEventListener("click", sendUsb);
 $("fw-usb").addEventListener("click", sendUsb);   // the same, right under Install
+async function refreshUsb() {                       // drop a stuck link, recheck plugged-in boards, open the USB list again
+  if (installing) { say("Wait for the install to finish first.", "warn"); return; }
+  const old = port; port = null; busy = false; pending = false;
+  if (old) { try { await old.close(); } catch (_) {} }
+  say("Refreshing USB…");
+  await countPlugged();
+  sendUsb();
+}
+document.querySelectorAll(".usb-refresh").forEach(b => b.addEventListener("click", refreshUsb));
 
 // ---------------- live tuning over Bluetooth (Web Bluetooth) ----------------
 const send = () => bleRx ? sendBle() : sendUsb();
