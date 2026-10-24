@@ -864,7 +864,7 @@ function starAt(a, r, density, tw) {   // one twinkling star per small patch of 
   return 120 + ((sinT[((h >>> 12) + tw) & 255] + 127) >> 1);
 }
 const sbGlowT = new Uint8Array(256), sbRingT = new Uint8Array(256), sbOuterT = new Uint8Array(256), ripCrestT = new Uint8Array(256), ripTroughT = new Uint8Array(256);
-let tftPal = new Uint32Array(256);
+let tftPal = new Uint32Array(256), tftPalRGB = new Float32Array(256 * 3);   // (RGB before rounding to the screen's colours: smooth glows)
 function buildTftParams() {
   const R = S.radius;
   for (let r = 0; r < 256; r++) {
@@ -905,7 +905,7 @@ function buildTftPalette() {           // black → core → rim → near-white,
   }
   for (let i = 0; i < 256; i++) {
     const c = i < 110 ? lerp([0, 0, 0], a, i / 110) : i < 200 ? lerp(a, b, (i - 110) / 90) : lerp(b, [255, 255, 255], (i - 200) / 55 * 0.6);
-    for (let k = 0; k < 3; k++) c[k] = Math.trunc(c[k] * S.bright / 100);
+    for (let k = 0; k < 3; k++) { tftPalRGB[i * 3 + k] = c[k] * S.bright / 100; c[k] = Math.trunc(c[k] * S.bright / 100); }
     const r5 = c[0] & 0xF8, g6 = c[1] & 0xFC, b5 = c[2] & 0xF8;
     tftPal[i] = (255 << 24) | ((b5 | b5 >> 5) << 16) | ((g6 | g6 >> 6) << 8) | (r5 | r5 >> 5);   // ABGR for ImageData
   }
@@ -1243,7 +1243,15 @@ function crossEdges() {
 }
 
 // ---------------- Wooden cross (style 17): carved wood, crossbar joined flush; same maths as the board ----------------
-const woodGT = new Uint8Array(256), woodGlowT = new Uint8Array(128), woodShT = new Uint8Array(128), woodWideT = new Uint8Array(256), woodVigT = new Uint8Array(256);
+const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];   // ordered dither: smooth glows without colour bands
+function glowPx(vf, x, y) {                           // vf: palette position in 1/16ths -> a dithered screen colour (ABGR)
+  if (vf > 255 * 16) vf = 255 * 16;
+  const i = vf >> 4, f = (vf & 15) / 16, j = Math.min(255, i + 1), d = BAYER4[(y & 3) * 4 + (x & 3)];
+  const ch = k => { const v = tftPalRGB[i * 3 + k] + (tftPalRGB[j * 3 + k] - tftPalRGB[i * 3 + k]) * f; return v; };
+  const r = Math.min(255, ch(0) + d / 2) & 0xF8, g = Math.min(255, ch(1) + d / 4) & 0xFC, b = Math.min(255, ch(2) + d / 2) & 0xF8;
+  return (255 << 24) | ((b | b >> 5) << 16) | ((g | g >> 6) << 8) | (r | r >> 5);
+}
+const woodGT = new Uint8Array(256), woodGlowT = new Uint16Array(128), woodShT = new Uint8Array(128), woodWideT = new Uint16Array(256), woodVigT = new Uint8Array(256);
 const woodWobT = [new Int16Array(1024), new Int16Array(1024)];
 const W8 = { AW: 10, HHL: 20, bot: 100, top: 50, s: 1, VS: 51, FS: 384, US: 51, key: "" };
 function woodNoise(x, seed) {
@@ -1323,8 +1331,8 @@ function prepareWood(CE) {
       const c = woodColorOf(grain, tn);
       for (let sh = 0; sh < 8; sh++) { const k = WOOD_SHADE[sh] * S.bright / 100, q = c.map(v => Math.trunc(Math.min(255, v * k))); woodPal8[tn * 8 + sh] = rgb32(q[0], q[1], q[2]); }
     }
-    for (let k = 0; k < 128; k++) { woodGlowT[k] = Math.trunc(150 * Math.exp(-k / (8 * W8.s))); woodShT[k] = Math.trunc(255 * (1 - 0.8 * Math.exp(-k / 3))); }
-    for (let r = 0; r < 256; r++) { woodWideT[r] = Math.trunc(45 * Math.max(0, 1 - r / (1.05 * W8.bot))); const q = r / (1.3 * W8.bot); woodVigT[r] = Math.trunc(255 * Math.max(0, 1 - q * q)); }
+    for (let k = 0; k < 128; k++) { woodGlowT[k] = Math.trunc(16 * 150 * Math.exp(-k / (11 * W8.s))); woodShT[k] = Math.trunc(255 * (1 - 0.8 * Math.exp(-k / 3))); }
+    for (let r = 0; r < 256; r++) { const qw = Math.max(0, 1 - r / (1.35 * W8.bot)); woodWideT[r] = Math.trunc(16 * 50 * qw * qw); const q = r / (1.3 * W8.bot); woodVigT[r] = Math.trunc(255 * Math.max(0, 1 - q * q)); }
   }
   const pk = [R, S.crossw, S.beam, S.bar, TW, TH, grain, crossYC].join(",");
   if (pk === woodPlaneKey && woodBytes) return;
@@ -1524,7 +1532,7 @@ function woodFrame(out, CE, fill, arms, phase, phase2, tw) {
     if (ce > 0) { let c = woodPx(p); if (fill === 7 && ce <= 3) c = max32(c, tftPal[Math.min(255, ((3 - ce) * 60 * pulse) >> 8)]); out[p] = c; continue; }
     const k = -ce, [r, a] = polarAt(x, y, crossYC);
     let v;
-    if (fill === 7) v = ((woodGlowT[k] + woodWideT[r]) * pulse) >> 8;
+    if (fill === 7) { out[p] = glowPx(((woodGlowT[k] + woodWideT[r]) * pulse) >> 8, x, y); continue; }   // warm glow, smooth (dithered)
     else {
       const e = edgeT[a];
       if (r < e) { v = styleV(fill, a, r, arms, phase, phase2, tw); const kk = e - r; if (kk < 64 && rimT[kk] > v) v = rimT[kk]; }
