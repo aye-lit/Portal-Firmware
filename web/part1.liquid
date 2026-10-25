@@ -77,6 +77,9 @@
 #vps .seg button:disabled { opacity: .35; cursor: not-allowed; }
 #vps .styles { margin: 0 0 14px; }
 #vps .styles-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+#vps .colors { margin: 0 0 14px; }
+#vps .colors .below { justify-content: flex-start; margin-top: 0; margin-bottom: 10px; }
+#vps .colors .ctitle { font-weight: 700; color: var(--ink); min-width: 4.5em; }
 #vps .style-groups { display: grid; gap: 8px; }
 #vps .srow { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 10px; }
 #vps .srow .seg { justify-self: start; }
@@ -256,22 +259,6 @@
           <div class="pins" id="vps-pins" aria-hidden="true"></div>
           <div class="glass"><canvas id="vps-oled" aria-label="Simulated display showing the portal animation"></canvas></div>
         </div>
-        <div class="below" id="vps-mono-colors">
-          <span>Pixel colour of your module</span>
-          <div class="seg" role="group" aria-label="Pixel colour" id="vps-tint"></div>
-        </div>
-        <div class="below" id="vps-rgb-colors" hidden>
-          <div class="swatches" id="vps-presets" role="group" aria-label="Colour presets"></div>
-          <div class="btns" style="margin:0">
-            <label class="pick" for="vps-c1">Core <input id="vps-c1" type="color"></label>
-            <label class="pick" for="vps-c2">Rim <input id="vps-c2" type="color"></label>
-          </div>
-        </div>
-        <div class="below spacecols" id="vps-space-colors" hidden>
-          <span>Space colours</span>
-          <div class="chips" id="vps-space-sets" role="group" aria-label="Space colour sets"></div>
-          <div class="btns" style="margin:0" id="vps-space-picks"></div>
-        </div>
         <p class="fps" id="vps-fps" hidden></p>
       </section>
 
@@ -361,6 +348,25 @@ Takes about a minute.</p>
             <div class="srow"><span class="slab">Portal</span><div class="seg" role="group" aria-label="Portal styles" id="vps-style-portal"></div></div>
             <div class="srow"><span class="slab">Space</span><div class="seg" role="group" aria-label="Space styles" id="vps-style-space"></div></div>
             <div class="srow" id="vps-cross-row"><span class="slab">Cross</span><div class="seg" role="group" aria-label="Cross styles" id="vps-style-cross"></div></div>
+          </div>
+        </div>
+        <div class="colors" id="vps-colors-wrap">
+          <div class="below" id="vps-mono-colors">
+            <span class="ctitle">Pixel colour of your module</span>
+            <div class="seg" role="group" aria-label="Pixel colour" id="vps-tint"></div>
+          </div>
+          <div class="below" id="vps-rgb-colors" hidden>
+            <span class="ctitle">Colours</span>
+            <div class="swatches" id="vps-presets" role="group" aria-label="Colour presets"></div>
+            <div class="btns" style="margin:0">
+              <label class="pick" for="vps-c1">Core <input id="vps-c1" type="color"></label>
+              <label class="pick" for="vps-c2">Rim <input id="vps-c2" type="color"></label>
+            </div>
+          </div>
+          <div class="below spacecols" id="vps-space-colors" hidden>
+            <span class="ctitle">Space colours</span>
+            <div class="chips" id="vps-space-sets" role="group" aria-label="Space colour sets"></div>
+            <div class="btns" style="margin:0" id="vps-space-picks"></div>
           </div>
         </div>
         <div class="grid">
