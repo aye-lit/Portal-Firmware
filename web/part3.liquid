@@ -132,6 +132,7 @@ bool     FADE_ON    = ${S.fade};    // fade through the colour sets
 uint8_t  FADE_COUNT = ${S.fadeSets.length};       // extra colour sets after the main colours (1-3)
 uint32_t FADE_COLS[6] = { ${[0,1,2].map(i => S.fadeSets[i] ? `0x${hex6(S.fadeSets[i].core)}, 0x${hex6(S.fadeSets[i].rim)}` : "0x000000, 0x000000").join(", ")} };   // core, rim pairs
 uint8_t  RIM_SMOOTH = ${S.rimsmooth};       // 0 = wobbly energy edge, 100 = perfectly smooth ring
+uint32_t CROSS_COL  = 0x${colCode(S.crossCol).toString(16).toUpperCase()};   // glowing crosses: the outline colour (0x1000000: the main colours)
 uint8_t  CROSS_OUT  = ${S.crossOut};       // glowing crosses: what's drawn outside (255 black, or a portal or space style)
 uint8_t  RIM_W      = ${S.rimw};      // Rim thickness, % (25-200): the glowing edge, or the Cartoon Sticker's outline
 float    FADE_SECS  = ${S.fadesec};       // seconds for each fade (${Math.floor(S.fadesec / 60)} min ${S.fadesec % 60} sec)
@@ -221,14 +222,15 @@ struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, spar
 static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
 
 // Scenes with their own settings: each "another style" scene can keep its own size, colours, speed...
-struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn, style, crossFill, crossRipple, beam, crossW, bar; uint32_t ripC[4]; uint8_t rimW, crossOut; };
-struct Extra { uint32_t id; uint32_t ripC[4]; uint8_t rimW, crossOut; };   // settings that don't fit the first 128 bytes
+struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn, style, crossFill, crossRipple, beam, crossW, bar; uint32_t ripC[4]; uint8_t rimW, crossOut; uint32_t crossCol; };
+struct Extra { uint32_t id; uint32_t ripC[4]; uint8_t rimW, crossOut; uint32_t crossCol; };   // settings that don't fit the first 128 bytes
 struct SceneSaved { uint32_t id; uint8_t has[8]; Look look[8]; };
 #define EE_SIZE (128 + sizeof(SceneSaved) + sizeof(Extra))   // main settings, the scenes' own settings, then the extras
 #define EXTRA_AT (128 + sizeof(SceneSaved))
 uint32_t pendRipC[4]; bool pendRip = false;
 uint8_t  pendRimW = 100; bool pendRim = false;
 uint8_t  pendOut = 255; bool pendXout = false;
+uint32_t pendCol = 0x1000000; bool pendXcol = false;
 ${sceneLooksBlock()}
 Look mainLook;                           // your main settings (the scenes without their own use these)
 Look pendLook[8]; uint8_t pendHas[8];    // scene settings from live tuning, applied between frames
@@ -378,7 +380,27 @@ void buildSpaceLUT() {
   }
 }
 
-void buildPalette() { buildPaletteFrom(COLOR_CORE, COLOR_RIM); buildSpaceLUT(); }
+uint16_t xPalOwn[256];                    // the cross outline in its own colour
+uint16_t *xpal = pal;                     // what the cross outline is drawn with
+bool xOwn = false;
+void buildCrossPal() {                    // black -> the cross colour -> a lighter one -> near-white
+  xOwn = CROSS_COL <= 0xFFFFFF; xpal = xOwn ? xPalOwn : pal;
+  if (!xOwn) return;
+  uint8_t a[3], b[3];
+  for (int i = 0; i < 3; i++) { a[i] = (CROSS_COL >> (16 - 8 * i)) & 0xFF; b[i] = a[i] + (255 - a[i]) * 35 / 100; }
+  for (int i = 0; i < 256; i++) {
+    uint8_t c[3];
+    for (int k = 0; k < 3; k++) {
+      float v;
+      if (i < 110)      v = a[k] * (i / 110.0f);
+      else if (i < 200) v = a[k] + (b[k] - a[k]) * ((i - 110) / 90.0f);
+      else              v = b[k] + (255 - b[k]) * ((i - 200) / 55.0f * 0.6f);
+      c[k] = (uint8_t)(v * BRIGHTNESS / 100.0f);
+    }
+    xPalOwn[i] = to565(c[0], c[1], c[2]);
+  }
+}
+void buildPalette() { buildPaletteFrom(COLOR_CORE, COLOR_RIM); buildCrossPal(); buildSpaceLUT(); }
 
 void updateColourFade() {             // fade through the colour sets in order, FADE_SECS per fade
   if (!FADE_ON || FADE_COUNT < 1) return;
@@ -644,13 +666,13 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     return "ERR";
   }
   if (strncasecmp(line, "SCN ", 4) == 0) {   // SCN k radius oval arms twist speed sparks drift core rim bright ripples ripspeed glow stars rimsmooth space1..4 style crossfill ripple beam crossw bar  (or SCN k OFF)
-    float v[32];                         // no reply: older boards ignore it the same way
+    float v[34];                         // no reply: older boards ignore it the same way
     uint8_t n = 0; bool off = false;
     char *p = strtok(line + 4, " ");
-    while (p && n < 32) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
+    while (p && n < 34) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
     int k = n ? (int)v[0] : -1;
     if (k < 0 || k > 7) return NULL;
-    if (off || (n != 26 && n != 27 && n != 28 && n != 30 && n != 31 && n != 32) || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
+    if (off || (n < 26 || n > 33) || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
     Look &L = pendLook[k];
     L.radius = clampf(v[1], 6, RADIUS_MAX); L.oval = clampf(v[2], 1, 2); L.arms = clampb((uint8_t)v[3], 1, 8);
     L.twist = clampf(v[4], 0, 6); L.speed = clampf(v[5], 0, 0.4f); L.sparks = min((int)v[6], MAX_SPARKS); L.drift = v[7] ? 1 : 0;
@@ -662,9 +684,10 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     L.style = (uint8_t)v[20]; L.crossFill = (uint8_t)v[21]; L.crossRipple = min((int)v[22], 10);
     L.beam = clampb((uint8_t)v[23], 5, 30); L.crossW = clampb((uint8_t)v[24], 25, 100); L.bar = clampb((uint8_t)v[25], 20, 50);
     for (int j = 0; j < 4; j++) L.ripC[j] = n >= 30 ? (uint32_t)v[26 + j] & 0xFFFFFF : RIP_C[j];   // Gradient ripple colours
-    bool hasOut = n == 28 || n == 32;    // ... rimw [crossout]
-    L.rimW = (n == 27 || n == 31 || hasOut) ? (uint8_t)constrain((int)v[n - 1 - hasOut], 25, 200) : RIM_W;   // Rim thickness
-    L.crossOut = hasOut && validOut((uint8_t)v[n - 1]) ? (uint8_t)v[n - 1] : CROSS_OUT;   // Outside the cross
+    int base = n >= 30 ? 30 : 26, tail = n - base;   // ... [rimw [crossout [crosscol]]]
+    L.rimW = tail >= 1 ? (uint8_t)constrain((int)v[base], 25, 200) : RIM_W;   // Rim thickness
+    L.crossOut = tail >= 2 && validOut((uint8_t)v[base + 1]) ? (uint8_t)v[base + 1] : CROSS_OUT;   // Background
+    L.crossCol = tail >= 3 ? ((uint32_t)v[base + 2] > 0xFFFFFF ? 0x1000000 : (uint32_t)v[base + 2]) : CROSS_COL;   // Cross colour
     pendHas[k] = 1; scenePending = true;
     return NULL;
   }
@@ -673,6 +696,10 @@ const char* handleCommand(char *line) {   // returns the reply to send back
   }
   if (strncasecmp(line, "XOUT ", 5) == 0) {   // XOUT style: what's outside a glowing cross (no reply; applied with the SET that follows)
     int o = atoi(line + 5); if (o >= 0 && o <= 255 && validOut((uint8_t)o)) { pendOut = (uint8_t)o; pendXout = true; }
+    return NULL;
+  }
+  if (strncasecmp(line, "XCOL ", 5) == 0) {   // XCOL rgb: the cross outline colour (16777216: the main colours; no reply, applied with the SET that follows)
+    long c = atol(line + 5); pendCol = (c < 0 || c > 0xFFFFFF) ? 0x1000000 : (uint32_t)c; pendXcol = true;
     return NULL;
   }
   if (strcasecmp(line, "PING") == 0) return "PORTAL";
@@ -718,7 +745,7 @@ void grabLook(Look &L) {                 // the settings in use now
   L.arms = ARMS; L.sparks = NUM_SPARKS; L.drift = DRIFT; L.bright = BRIGHTNESS; L.ripples = RIPPLES; L.stars = STARS; L.rimSmooth = RIM_SMOOTH; L.fadeOn = FADE_ON;
   L.style = STYLE; L.crossFill = CROSS_FILL; L.crossRipple = CROSS_RIPPLE; L.beam = BEAM; L.crossW = CROSS_W; L.bar = BAR;
   for (int j = 0; j < 4; j++) L.ripC[j] = RIP_C[j];
-  L.rimW = RIM_W; L.crossOut = CROSS_OUT;
+  L.rimW = RIM_W; L.crossOut = CROSS_OUT; L.crossCol = CROSS_COL;
 }
 void putLook(const Look &L) {
   RADIUS = L.radius; OVAL = L.oval; TWIST = L.twist; SPEED = L.speed; RIP_SPEED = L.ripSpeed; GLOW_SIZE = L.glow;
@@ -728,6 +755,7 @@ void putLook(const Look &L) {
   for (int j = 0; j < 4; j++) RIP_C[j] = L.ripC[j];
   RIM_W = L.rimW >= 25 && L.rimW <= 200 ? L.rimW : 100;   // (a cross scene: its cross is drawn as the main style)
   CROSS_OUT = validOut(L.crossOut) ? L.crossOut : 255;
+  CROSS_COL = L.crossCol > 0xFFFFFF ? 0x1000000 : L.crossCol;
 }
 void useSceneLook(int id) {              // load a scene's settings (or the main ones) and rebuild what depends on them
   if (id == curLook) return;
@@ -740,7 +768,7 @@ void useSceneLook(int id) {              // load a scene's settings (or the main
   curLook = id;
 }
 void saveScenes() {
-  SceneSaved z; z.id = BUILD_ID ^ 0x5CE20006UL;   // (^: this layout of scene settings)
+  SceneSaved z; z.id = BUILD_ID ^ 0x5CE20007UL;   // (^: this layout of scene settings)
   for (int k = 0; k < 8; k++) { z.has[k] = SCENE_HAS[k]; z.look[k] = SCENE_LOOKS[k]; }
   EEPROM.put(128, z);
 ${EEPROM_BEGIN_GUARD}
@@ -748,17 +776,17 @@ ${EEPROM_BEGIN_GUARD}
 #endif
 }
 void saveExtra() {
-  Extra x; x.id = BUILD_ID ^ 0xE7A00004UL; for (int j = 0; j < 4; j++) x.ripC[j] = RIP_C[j]; x.rimW = RIM_W; x.crossOut = CROSS_OUT;
+  Extra x; x.id = BUILD_ID ^ 0xE7A00005UL; for (int j = 0; j < 4; j++) x.ripC[j] = RIP_C[j]; x.rimW = RIM_W; x.crossOut = CROSS_OUT; x.crossCol = CROSS_COL;
   EEPROM.put(EXTRA_AT, x);
 ${EEPROM_BEGIN_GUARD}
   EEPROM.commit();
 #endif
 }
 void loadScenes() {                      // after loadSettings()
-  { Extra x; EEPROM.get(EXTRA_AT, x); if (x.id == (BUILD_ID ^ 0xE7A00004UL)) { for (int j = 0; j < 4; j++) RIP_C[j] = x.ripC[j] & 0xFFFFFF; if (x.rimW >= 25 && x.rimW <= 200) RIM_W = x.rimW; if (validOut(x.crossOut)) CROSS_OUT = x.crossOut; } }
+  { Extra x; EEPROM.get(EXTRA_AT, x); if (x.id == (BUILD_ID ^ 0xE7A00005UL)) { for (int j = 0; j < 4; j++) RIP_C[j] = x.ripC[j] & 0xFFFFFF; if (x.rimW >= 25 && x.rimW <= 200) RIM_W = x.rimW; if (validOut(x.crossOut)) CROSS_OUT = x.crossOut; CROSS_COL = x.crossCol > 0xFFFFFF ? 0x1000000 : x.crossCol; } }
   grabLook(mainLook); curLook = -1;
   SceneSaved z; EEPROM.get(128, z);
-  if (z.id == (BUILD_ID ^ 0x5CE20006UL)) for (int k = 0; k < 8; k++) {
+  if (z.id == (BUILD_ID ^ 0x5CE20007UL)) for (int k = 0; k < 8; k++) {
     const Look &L = z.look[k];
     bool ok = z.has[k] == 1 && L.radius >= 6 && L.radius <= RADIUS_MAX && L.oval >= 1 && L.oval <= 2 && L.arms >= 1 && L.arms <= 8 && L.twist >= 0 && L.twist <= 6 &&
               L.speed >= 0 && L.speed <= 0.4f && L.sparks <= MAX_SPARKS && L.bright >= 10 && L.bright <= 100 && L.stars >= 1 && L.stars <= 6 && L.ripples <= 6 &&
@@ -1464,6 +1492,7 @@ void frameStart() {
     if (pendRip) { pendRip = false; for (int j = 0; j < 4; j++) RIP_C[j] = pendRipC[j]; saveExtra(); }
     if (pendRim) { pendRim = false; if (pendRimW != RIM_W) { RIM_W = pendRimW; saveExtra(); buildParams(); } }
     if (pendXout) { pendXout = false; if (pendOut != CROSS_OUT) { CROSS_OUT = pendOut; saveExtra(); } }
+    if (pendXcol) { pendXcol = false; if (pendCol != CROSS_COL) { CROSS_COL = pendCol; saveExtra(); } }
     grabLook(mainLook); curLook = -1;      // the main settings are loaded now
     buildTone();
     if (spaceLUT) buildSpaceLUT();       // space colours go through the colour curve too
@@ -1691,14 +1720,14 @@ HOT void crossMask(int y0, int rows, uint16_t *strip, int look, int phase, int p
   for (int i = 0; i < rows * SCR_W; i++) {
     int ce = edgeBuf[i];
     if (ce <= 0 && outLook != 255) {                  // something outside the cross
-      uint16_t g = pal[max(crossRimT[-ce], crossHaloT[-ce])];
+      uint16_t g = xpal[max(crossRimT[-ce], crossHaloT[-ce])];
       if (outLook == look) strip[i] = max565(dim565(strip[i], OUT_DIM), g);
       else if (!isGridSpace(outLook)) strip[i] = max565(pal[min(255, outV(i % SCR_W, y0 + i / SCR_W, phase, phase2))], g);
       else strip[i] = g;
       continue;
     }
-    if (ce > 0) { int rv = max((int)crossRimT[ce], crossRipT[ce] > 8 ? min(255, crossRipT[ce] + 60) : 0); if (rv > 8) strip[i] = max565(strip[i], pal[rv]); if (ripColOn && ripA[ce]) strip[i] = mix565(strip[i], ripC565[ce], ripA[ce]); }
-    else strip[i] = pal[max(crossRimT[-ce], crossHaloT[-ce])];
+    if (ce > 0) { int rv = max((int)crossRimT[ce], crossRipT[ce] > 8 ? min(255, crossRipT[ce] + 60) : 0); if (rv > 8) strip[i] = max565(strip[i], xpal[rv]); if (ripColOn && ripA[ce]) strip[i] = mix565(strip[i], ripC565[ce], ripA[ce]); }
+    else strip[i] = xpal[max(crossRimT[-ce], crossHaloT[-ce])];
   }
 }
 
@@ -2187,16 +2216,17 @@ HOT void renderStrip(int y0, int rows, uint16_t *strip) {
       int qi = qy * TQX + colMap[x], r = rT[qi], a0 = aT[qi];
       int a = (x >= QX ? (low ? a0 : 256 - a0) : (low ? 128 - a0 : 128 + a0)) & 255;
       int e = edgeT[a];
-      int v, rk = 0;
+      int v, rk = 0, gx = 0;
       if (eb) {                                        // Cross: the chosen style inside, glowing rim along the cross edge
         int ce = eb[x];
         if (ce > 0) {
           if (outLook != look) polarAt(x, y, crossYC, r, a);   // centred on the crossing (the same style behind the whole cross: one picture, centred on the screen)
           v = styleV(look, a, r, phase, phase2) + crossRipT[ce];   // Ripple rings on top of the fill
-          if (crossRimT[ce] > v) v = crossRimT[ce];
+          if (xOwn) gx = crossRimT[ce]; else if (crossRimT[ce] > v) v = crossRimT[ce];   // (its own colour: the rim goes on top below)
           rk = ce;
         } else {
-          v = max(crossRimT[-ce], crossHaloT[-ce]);
+          int g = max(crossRimT[-ce], crossHaloT[-ce]);
+          if (xOwn) { gx = g; v = 0; } else v = g;
           if (outPortal) { int ov = (styleV(outLook, a, r, phase, phase2) * OUT_DIM) >> 8; if (ov > v) v = ov; }   // a portal style outside (centred on the screen)
         }
       } else if (look == 7) {                                // Cartoon Sticker: ragged edge, light outline, no glow
@@ -2213,6 +2243,7 @@ HOT void renderStrip(int y0, int rows, uint16_t *strip) {
       uint16_t px = pal[v > 255 ? 255 : v];
       if (rk && ripColOn && ripA[rk]) px = mix565(px, ripC565[rk], ripA[rk]);   // Gradient ripple
       if (outSpace && !rk) px = max565(dim565(*p, OUT_DIM), px);              // the space picture outside, under the glow
+      if (gx) px = max565(px, xpal[gx]);                                      // the cross outline in its own colour
       *p++ = px;
     }
   }

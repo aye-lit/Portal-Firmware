@@ -477,7 +477,7 @@ function sceneList() {
 
 // ---------- scenes with their own settings ----------
 const ripCode = (st, o) => st === 17 ? o.woodGrain : o.crossRipple ? o.crossRipple + 3 * (o.ripGrad || 0) : 0;   // board: ripple direction + 3 x ripple colour (the Wooden cross: its wood style)
-const LOOK_KEYS = ["radius", "oval", "arms", "twist", "speed", "sparks", "reverse", "c1", "c2", "bright", "ripples", "rspeed", "glow", "stars", "rimsmooth", "rimw", "spaceCols", "crossFill", "crossOut", "crossRipple", "woodGrain", "beam", "crossw", "bar", "ripGrad", "ripC1", "ripC2", "ripC3", "ripC4"];
+const LOOK_KEYS = ["radius", "oval", "arms", "twist", "speed", "sparks", "reverse", "c1", "c2", "bright", "ripples", "rspeed", "glow", "stars", "rimsmooth", "rimw", "spaceCols", "crossFill", "crossOut", "crossCol", "crossRipple", "woodGrain", "beam", "crossw", "bar", "ripGrad", "ripC1", "ripC2", "ripC3", "ripC4"];
 const pickLook = src => { const o = {}; LOOK_KEYS.forEach(k => { o[k] = Array.isArray(src[k]) ? src[k].slice() : src[k]; }); return o; };
 const snapMain = () => ({ ...pickLook(S), style: S.style, fade: S.fade });
 function defaultSetFor(st, base) {                  // a scene's settings to start from: the main ones, sized for that style
@@ -499,13 +499,14 @@ function withMain(fn) {                             // run fn with the main sett
   try { return fn(); } finally { Object.assign(S, pickLook(cur), { style: cur.style, fade: cur.fade }); }
 }
 const sceneSetAt = k => { const L = sceneList(); return L[k] >= 200 && L[k] < 255 ? S.sceneSets[k] || null : null; };
+const colCode = c => c ? parseInt(c.slice(1), 16) : 0x1000000;   // the cross colour (0x1000000: the main colours)
 function sceneLooksBlock() {                        // firmware: each scene's own settings
   const rows = [], has = [];
   for (let k = 0; k < 8; k++) {
     const st = sceneSetAt(k);
     has.push(st ? 1 : 0);
-    rows.push(st ? `{ ${f2(st.radius)}f, ${f2(st.oval)}f, ${f2(st.twist)}f, ${f2(st.speed)}f, ${f2(st.rspeed)}f, ${f2(st.glow)}f, 0x${hex6(st.c1)}, 0x${hex6(st.c2)}, { ${st.spaceCols.map(c => "0x" + hex6(c)).join(", ")} }, ${st.arms}, ${st.sparks}, ${st.reverse ? 1 : 0}, ${st.bright}, ${st.ripples}, ${st.stars}, ${st.rimsmooth}, 0, ${sceneList()[k] - 200}, ${st.crossFill}, ${ripCode(sceneList()[k] - 200, st)}, ${st.beam}, ${st.crossw}, ${st.bar}, { 0x${hex6(st.ripC1)}, 0x${hex6(st.ripC2)}, 0x${hex6(st.ripC3)}, 0x${hex6(st.ripC4)} }, ${st.rimw}, ${st.crossOut ?? 255} }`
-                 : "{ 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF }, 100, 255 }");
+    rows.push(st ? `{ ${f2(st.radius)}f, ${f2(st.oval)}f, ${f2(st.twist)}f, ${f2(st.speed)}f, ${f2(st.rspeed)}f, ${f2(st.glow)}f, 0x${hex6(st.c1)}, 0x${hex6(st.c2)}, { ${st.spaceCols.map(c => "0x" + hex6(c)).join(", ")} }, ${st.arms}, ${st.sparks}, ${st.reverse ? 1 : 0}, ${st.bright}, ${st.ripples}, ${st.stars}, ${st.rimsmooth}, 0, ${sceneList()[k] - 200}, ${st.crossFill}, ${ripCode(sceneList()[k] - 200, st)}, ${st.beam}, ${st.crossw}, ${st.bar}, { 0x${hex6(st.ripC1)}, 0x${hex6(st.ripC2)}, 0x${hex6(st.ripC3)}, 0x${hex6(st.ripC4)} }, ${st.rimw}, ${st.crossOut ?? 255}, ${colCode(st.crossCol)} }`
+                 : "{ 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF }, 100, 255, 0x1000000 }");
   }
   return `uint8_t  SCENE_HAS[8] = { ${has.join(", ")} };   // 1 = that scene has its own settings
 Look     SCENE_LOOKS[8] = {
@@ -516,7 +517,7 @@ function sceneLines() {                             // live tuning: each scene's
   let out = "";
   for (let k = 0; k < 8; k++) {
     const st = sceneSetAt(k);
-    out += st ? `SCN ${k} ${st.radius} ${f2(st.oval)} ${st.arms} ${(+st.twist).toFixed(1)} ${f2(st.speed)} ${st.sparks} ${st.reverse ? 1 : 0} ${parseInt(hex6(st.c1), 16)} ${parseInt(hex6(st.c2), 16)} ${st.bright} ${st.ripples} ${f2(st.rspeed)} ${f2(st.glow)} ${st.stars} ${st.rimsmooth} ${st.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ")} ${sceneList()[k] - 200} ${st.crossFill} ${ripCode(sceneList()[k] - 200, st)} ${st.beam} ${st.crossw} ${st.bar}${st.ripGrad === 1 ? " " + [st.ripC1, st.ripC2, st.ripC3, st.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""} ${st.rimw} ${st.crossOut ?? 255}\n`
+    out += st ? `SCN ${k} ${st.radius} ${f2(st.oval)} ${st.arms} ${(+st.twist).toFixed(1)} ${f2(st.speed)} ${st.sparks} ${st.reverse ? 1 : 0} ${parseInt(hex6(st.c1), 16)} ${parseInt(hex6(st.c2), 16)} ${st.bright} ${st.ripples} ${f2(st.rspeed)} ${f2(st.glow)} ${st.stars} ${st.rimsmooth} ${st.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ")} ${sceneList()[k] - 200} ${st.crossFill} ${ripCode(sceneList()[k] - 200, st)} ${st.beam} ${st.crossw} ${st.bar}${st.ripGrad === 1 ? " " + [st.ripC1, st.ripC2, st.ripC3, st.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""} ${st.rimw} ${st.crossOut ?? 255} ${colCode(st.crossCol)}\n`
               : `SCN ${k} OFF\n`;
   }
   return out;
@@ -599,7 +600,7 @@ const crossMax = (M, st = S.style) => M.rect ? Math.floor((M.h - 8) * 0.8) : Mat
 const radiusMax = M => (S.style >= 8 && S.style <= 13) || S.style === 17 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossOut: 255, crossRipple: 0, rimw: 100, ripGrad: 0, ripC1: "#ffd36b", ripC2: "#ff2d8a", ripC3: "#8a3dff", ripC4: "#3de0ff", woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossOut: 255, crossCol: "", crossRipple: 0, rimw: 100, ripGrad: 0, ripC1: "#ffd36b", ripC2: "#ff2d8a", ripC3: "#8a3dff", ripC4: "#3de0ff", woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -620,6 +621,7 @@ if (!(S.fdClouds >= 0 && S.fdClouds <= 100)) S.fdClouds = 50;
 if (!(S.fdGlow >= 20 && S.fdGlow <= 150)) S.fdGlow = 100;
 if (!(Number.isInteger(S.style) && S.style >= 0 && S.style <= 17)) S.style = 0;
 if (!(S.crossw >= 25 && S.crossw <= 100)) S.crossw = 46;
+if (typeof S.crossCol !== "string" || !/^(#[0-9a-fA-F]{6})?$/.test(S.crossCol)) S.crossCol = "";   // "" = the cross uses the main colours
 if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
 if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
@@ -873,7 +875,8 @@ function starAt(a, r, density, tw) {   // one twinkling star per small patch of 
   return 120 + ((sinT[((h >>> 12) + tw) & 255] + 127) >> 1);
 }
 const sbGlowT = new Uint8Array(256), sbRingT = new Uint8Array(256), sbOuterT = new Uint8Array(256), ripCrestT = new Uint8Array(256), ripTroughT = new Uint8Array(256);
-let tftPal = new Uint32Array(256), tftPalRGB = new Float32Array(256 * 3);   // (RGB before rounding to the screen's colours: smooth glows)
+let tftPal = new Uint32Array(256), tftPalRGB = new Float32Array(256 * 3), xPal = tftPal;   // xPal: the cross outline (its own colour, or the main palette)
+const xPalOwn = new Uint32Array(256);   // (RGB before rounding to the screen's colours: smooth glows)
 function buildTftParams() {
   const R = S.radius;
   for (let r = 0; r < 256; r++) {
@@ -918,6 +921,16 @@ function buildTftPalette() {           // black → core → rim → near-white,
     const r5 = c[0] & 0xF8, g6 = c[1] & 0xFC, b5 = c[2] & 0xF8;
     tftPal[i] = (255 << 24) | ((b5 | b5 >> 5) << 16) | ((g6 | g6 >> 6) << 8) | (r5 | r5 >> 5);   // ABGR for ImageData
   }
+  if (S.crossCol) {                    // the cross's own colour: black -> it -> a lighter it -> near-white
+    const a = hexRGB(S.crossCol), b = a.map(v => Math.trunc(v + (255 - v) * 0.35));
+    for (let i = 0; i < 256; i++) {
+      const c = i < 110 ? lerp([0, 0, 0], a, i / 110) : i < 200 ? lerp(a, b, (i - 110) / 90) : lerp(b, [255, 255, 255], (i - 200) / 55 * 0.6);
+      for (let k = 0; k < 3; k++) c[k] = Math.trunc(c[k] * S.bright / 100);
+      const r5 = c[0] & 0xF8, g6 = c[1] & 0xFC, b5 = c[2] & 0xF8;
+      xPalOwn[i] = (255 << 24) | ((b5 | b5 >> 5) << 16) | ((g6 | g6 >> 6) << 8) | (r5 | r5 >> 5);
+    }
+    xPal = xPalOwn;
+  } else xPal = tftPal;
 }
 function polarAt(x, y, cyc) {                        // distance and angle (0-255) of a pixel from (centre column, row cyc)
   const cy = y < cyc ? cyc - 1 - y : y - cyc, low = y >= cyc;
@@ -1702,13 +1715,13 @@ function tftRender(out, style) {                      // one frame of one style 
     if (CE) for (let i = 0; i < out.length; i++) {   // glowing cross outline over the space picture
       const ce = CE[i];
       if (ce <= 0 && outL !== 255) {                 // something outside the cross
-        const g = tftPal[Math.max(crossRimT[-ce], crossHaloT[-ce])];
+        const g = xPal[Math.max(crossRimT[-ce], crossHaloT[-ce])];
         if (outL === fill) out[i] = maxC(dimC(out[i]), g);
         else { const [r, a] = screenPolar(i % TW, Math.trunc(i / TW)); out[i] = maxC(tftPal[Math.min(255, styleV(outL, a, r, arms, phase, phase2, tw) * OUT_DIM >> 8)], g); }
         continue;
       }
-      if (ce > 0) { const rv = Math.max(crossRimT[ce], crossRipT[ce] > 8 ? Math.min(255, crossRipT[ce] + 60) : 0); if (rv > 8) { const a = out[i], b = tftPal[rv]; out[i] = (255 << 24) | (Math.max(a & 0xFF0000, b & 0xFF0000)) | (Math.max(a & 0xFF00, b & 0xFF00)) | Math.max(a & 0xFF, b & 0xFF); } if (S.ripGrad && S.crossRipple) out[i] = addRip(out[i], ce); }
-      else out[i] = tftPal[Math.max(crossRimT[-ce], crossHaloT[-ce])];
+      if (ce > 0) { const rv = Math.max(crossRimT[ce], crossRipT[ce] > 8 ? Math.min(255, crossRipT[ce] + 60) : 0); if (rv > 8) { const a = out[i], b = xPal[rv]; out[i] = (255 << 24) | (Math.max(a & 0xFF0000, b & 0xFF0000)) | (Math.max(a & 0xFF00, b & 0xFF00)) | Math.max(a & 0xFF, b & 0xFF); } if (S.ripGrad && S.crossRipple) out[i] = addRip(out[i], ce); }
+      else out[i] = xPal[Math.max(crossRimT[-ce], crossHaloT[-ce])];
     }
     return;
   }
@@ -1731,14 +1744,16 @@ function tftRender(out, style) {                      // one frame of one style 
       }
       const a = (x >= QX ? (lo ? a0 : 256 - a0) : (lo ? 128 - a0 : 128 + a0)) & 255;
       const e = edgeT[a];
-      let v;
+      let v, gx = 0;
+      const own = xPal !== tftPal;                 // the cross has its own colour: its glow goes on top in that colour
       if (CE) {                                  // Cross: the chosen style inside, glowing rim along the cross edge
         const ce = CE[p];
         if (ce > 0) {
           v = styleV(fill, a, r, arms, phase, phase2, tw) + crossRipT[ce];   // Ripple rings on top of the fill
-          if (crossRimT[ce] > v) v = crossRimT[ce];
+          if (own) gx = crossRimT[ce]; else if (crossRimT[ce] > v) v = crossRimT[ce];
         } else {
-          const k = -ce; v = Math.max(crossRimT[k], crossHaloT[k]);
+          const k = -ce, g = Math.max(crossRimT[k], crossHaloT[k]);
+          if (own) { gx = g; v = 0; } else v = g;
           if (outPortal) { const ov = styleV(outL, a, r, arms, phase, phase2, tw) * OUT_DIM >> 8; if (ov > v) v = ov; }
         }
       } else if (style === 7) {                         // Cartoon Sticker: ragged edge, light outline, no glow
@@ -1755,6 +1770,7 @@ function tftRender(out, style) {                      // one frame of one style 
       let o = tftPal[v > 255 ? 255 : v];
       if (CE && CE[p] > 0 && S.ripGrad && S.crossRipple) o = addRip(o, CE[p]);
       if (spOut && CE[p] <= 0) o = maxC(dimC(spOut[p]), o);
+      if (gx) o = maxC(o, xPal[gx]);
       out[p++] = o;
     }
   }
