@@ -394,9 +394,8 @@ function markStyle() {
   $("fill-plain").querySelectorAll("option").forEach(o => { o.hidden = o.disabled = woodSel; });
   if ($("crossfill")) $("crossfill").value = S.crossFill;
   $("crossripple").value = S.crossRipple;
-  $("crossout").querySelectorAll("option").forEach(o => { const v = +o.value; o.disabled = isGridSpace(v) && isGridSpace(S.crossFill) && v !== S.crossFill; });   // one space picture at a time
-  $("crossout").value = outOf(S.crossFill, S.crossOut);
-  $("crossout").closest("label").hidden = !cross || woodSel;
+  $("crossbg").checked = S.crossOut !== 255;
+  $("crossbg").closest("label").hidden = !cross || woodSel;
   $("woodgrain").value = S.woodGrain;
   $("woodgrain").closest("label").hidden = !cross || !woodSel;
   $("crossripple").closest("label").hidden = !cross || woodSel;   // the Wooden cross has no ripple
@@ -465,10 +464,10 @@ $("ripc2").addEventListener("input", e => { S.ripC2 = e.target.value; changed();
 $("ripc3").addEventListener("input", e => { S.ripC3 = e.target.value; changed(); });
 $("ripc4").addEventListener("input", e => { S.ripC4 = e.target.value; changed(); });
 $("woodgrain").addEventListener("change", e => { S.woodGrain = +e.target.value; changed(true); });
-$("crossout").addEventListener("change", e => { S.crossOut = +e.target.value; if (S.crossOut === 16 && S.sparks < 2) S.sparks = 14; markStyle(); changed(true); });
+$("crossbg").addEventListener("change", e => { S.crossOut = e.target.checked ? S.crossFill : 255; markStyle(); changed(true); });
 $("crossfill").addEventListener("change", e => {
   S.crossFill = +e.target.value;
-  S.crossOut = outOf(S.crossFill, S.crossOut);              // a different space picture outside can't stay: back to black
+  if (S.crossOut !== 255) S.crossOut = S.crossFill;          // the background follows the style inside
   if (S.crossFill === 16 && S.sparks < 2) S.sparks = 14;
   bindAll(); markStyle(); changed(true);
 });
@@ -1059,11 +1058,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.13.0";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/8d47b8c982c293f78ceaefee43a714a8431160b1/";
+const FW_VERSION = "1.13.1";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/042de9b0a8b1cc0df0d2cb6bec90732113c1ab4c/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "5fd11f7ebbcaf2de7d6cd465be2f173d8ef1802ae2160ee9cc4fa85d475d62b1" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "08d04b0af6777cce5824609d4bf973727daac8f4f37b01f592a924e1d3286bc9" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "f903198e6b14ea9fa186f5c82f00180efe5a0a0b7ab33e2d4dc9117c34c8eaa5" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "bf9ea741dd09e059fc0e7b9a7ad1a7c6e22a7d6ce41a1d93fbcfe0cbbed1356c" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));

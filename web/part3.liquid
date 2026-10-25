@@ -441,7 +441,7 @@ void updateSparks() {
 }
 
 // ---------- saved settings (EEPROM) ----------
-bool validOut(uint8_t f) { return f == 255 || f <= 4 || f == 6 || (f >= 14 && f <= 16); }   // what can go outside a glowing cross
+bool validOut(uint8_t f) { return f == 255 || f <= 4 || f == 6 || f == 11 || (f >= 14 && f <= 16); }   // what can go outside a glowing cross
 bool validFill(uint8_t f) { return f <= 11 || (f >= 14 && f <= 16) || f == 18; }   // styles that can go inside a cross (Wooden cross only: 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light, 18 full day)
 
 inline bool isStyleScene(uint8_t c) { return c >= 200 && c <= 217; }   // 200 + style: another style to fade into (crosses too)
@@ -2191,7 +2191,7 @@ HOT void renderStrip(int y0, int rows, uint16_t *strip) {
       if (eb) {                                        // Cross: the chosen style inside, glowing rim along the cross edge
         int ce = eb[x];
         if (ce > 0) {
-          polarAt(x, y, crossYC, r, a);               // centred on the crossing
+          if (outLook != look) polarAt(x, y, crossYC, r, a);   // centred on the crossing (the same style behind the whole cross: one picture, centred on the screen)
           v = styleV(look, a, r, phase, phase2) + crossRipT[ce];   // Ripple rings on top of the fill
           if (crossRimT[ce] > v) v = crossRimT[ce];
           rk = ce;

@@ -465,7 +465,7 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 function picturesAllowed() { const B = boardOf(); return M.kind === "tft" && (/^ESP32/.test(B.family) || !!B.custom); }
 function turns(m) { return m.kind === "tft" && !!m.rect && m.w !== m.h; }   // rectangles can be turned live (portrait / landscape)
 const SCENE_STYLES = [0, 1, 2, 3, 4, 6, 14, 15, 16, 8, 9, 10, 11, 12, 13, 17];   // styles a scene can switch to (crosses too: each keeps its own cross settings)
-const OUT_OK = [255, 0, 1, 2, 3, 4, 6, 14, 15, 16];   // what can go outside a glowing cross (255: black)
+const OUT_OK = [255, 0, 1, 2, 3, 4, 6, 11, 14, 15, 16];   // what can go outside a glowing cross (255: black)
 const isGridSpace = f => f === 4 || (f >= 14 && f <= 16);
 const outOf = (fill, out) => isGridSpace(out) && isGridSpace(fill) && out !== fill ? 255 : out;   // one space picture at a time: the inside wins
 const isStyleScene = x => x >= 200 && SCENE_STYLES.includes(x - 200);
@@ -625,7 +625,7 @@ if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 S.reverse = S.reverse === true;
 if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 18].includes(S.crossFill)) S.crossFill = 0;
-if (!OUT_OK.includes(S.crossOut)) S.crossOut = 255;
+if (S.crossOut !== 255) S.crossOut = S.crossFill;          // the background is the same style as inside the cross
 if (![0, 1, 2].includes(S.crossRipple)) S.crossRipple = 0;
 if (![0, 1].includes(S.ripGrad)) S.ripGrad = 0;   // (Rainbow is gone: back to Glow)
 if (!/^#[0-9a-f]{6}$/i.test(S.ripC1 || "")) S.ripC1 = "#ffd36b";
@@ -1724,7 +1724,7 @@ function tftRender(out, style) {                      // one frame of one style 
     for (let x = 0; x < TW; x++) {
       const qi = qy * TQX + colMap[x];
       let r = rT[qi], a0 = aT[qi], lo = low;
-      if (CE && CE[p] > 0) {
+      if (CE && CE[p] > 0 && outL !== fill) {          // (the same style behind the whole cross: one picture, centred on the screen)
         lo = clow;
         if (cy < TQY) { const ci = cy * TQX + colMap[x]; r = rT[ci]; a0 = aT[ci]; }
         else { const fx = colMap[x] + 0.5, fy = cy + 0.5; r = Math.min(255, Math.round(Math.hypot(fx, fy))); a0 = Math.round(Math.atan2(fy, fx) / (Math.PI / 2) * 64); }
