@@ -123,7 +123,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x4D32AD86UL;
+const uint32_t BUILD_ID = 0x3AD83ED5UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -267,7 +267,7 @@ void buildParams() {
     twist2T[r] = (int16_t)(TWIST * 1.6f * lr * 40.74f);
     depthT[r]  = (uint8_t)(255 * x * x * (3 - 2 * x));
     coreT[r]   = (uint8_t)(210 * expf(-rn * rn * 18));
-    haloT[r]   = (uint8_t)(115 * expf(-r / R * 3.2f));
+    haloT[r]   = (uint8_t)(115 * expf(-r / R * 9.0f));   // outer glow: short on this rectangle screen
     linT[r]    = (int16_t)(r * TWIST * 1.2f * 256 / R);
     centerT[r] = (uint8_t)(55 * expf(-powf(rn * 2.2f, 2)));
     // Starburst: glowing centre, soft rings near the centre, rays toward the rim
