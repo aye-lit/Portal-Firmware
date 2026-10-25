@@ -118,7 +118,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x8851DE20UL;
+const uint32_t BUILD_ID = 0x75A9D3F2UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -2071,7 +2071,7 @@ void buildCrossRipple() {
   }
 }
 
-#define OUT_DIM 150                      // the outside of a glowing cross is a little dimmer, so the cross stands out
+#define OUT_DIM 256                      // the background around a glowing cross: the same colours as inside
 inline uint16_t dim565(uint16_t c, int m) {    // darken a colour (m: 0-255)
   return ((((c >> 11) * m) >> 8) << 11) | (((((c >> 5) & 63) * m) >> 8) << 5) | (((c & 31) * m) >> 8);
 }
