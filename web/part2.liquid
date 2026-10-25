@@ -878,7 +878,7 @@ function buildTftParams() {
     twist2T[r] = Math.trunc(S.twist * 1.6 * lr * 40.74);
     depthT[r] = Math.trunc(255 * x * x * (3 - 2 * x));
     coreT[r] = Math.trunc(210 * Math.exp(-rn * rn * 18));
-    haloT[r] = Math.trunc(115 * Math.exp(-r / R * 3.2));
+    haloT[r] = Math.trunc(115 * Math.exp(-r / R * (M.rect ? 9 : 3.2)));   // rectangle screens: a short glow (the open corners show it)
     linT[r] = Math.trunc(r * S.twist * 1.2 * 256 / R);
     centerT[r] = Math.trunc(55 * Math.exp(-Math.pow(rn * 2.2, 2)));
     // Starburst: glowing centre, soft rings near the centre, rays toward the rim

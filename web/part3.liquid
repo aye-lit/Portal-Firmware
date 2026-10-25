@@ -280,7 +280,7 @@ void buildParams() {
     twist2T[r] = (int16_t)(TWIST * 1.6f * lr * 40.74f);
     depthT[r]  = (uint8_t)(255 * x * x * (3 - 2 * x));
     coreT[r]   = (uint8_t)(210 * expf(-rn * rn * 18));
-    haloT[r]   = (uint8_t)(115 * expf(-r / R * 3.2f));
+    haloT[r]   = (uint8_t)(115 * expf(-r / R * ${M.rect ? "9.0f" : "3.2f"}));   // outer glow${M.rect ? ": short on this rectangle screen" : ""}
     linT[r]    = (int16_t)(r * TWIST * 1.2f * 256 / R);
     centerT[r] = (uint8_t)(55 * expf(-powf(rn * 2.2f, 2)));
     // Starburst: glowing centre, soft rings near the centre, rays toward the rim
