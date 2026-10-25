@@ -1681,7 +1681,7 @@ void buildCrossRipple() {
   }
 }
 
-#define OUT_DIM 150                      // the outside of a glowing cross is a little dimmer, so the cross stands out
+#define OUT_DIM 256                      // the background around a glowing cross: the same colours as inside
 inline uint16_t dim565(uint16_t c, int m) {    // darken a colour (m: 0-255)
   return ((((c >> 11) * m) >> 8) << 11) | (((((c >> 5) & 63) * m) >> 8) << 5) | (((c & 31) * m) >> 8);
 }

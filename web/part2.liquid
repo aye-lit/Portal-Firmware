@@ -1654,7 +1654,7 @@ function tftRender(out, style) {                      // one frame of one style 
   if (isCross && ((fill >= 7 && fill <= 10) || fill === 18) && !wood) fill = 0;   // the warm glow and the skies are only for the Wooden cross
   if (wood && fill === 11) fill = 7;                            // solid colour is for the glowing crosses
   const outL = isCross && !wood ? outOf(fill, S.crossOut) : 255;   // outside a glowing cross (255: black)
-  const OUT_DIM = 150;                                            // the outside is a little dimmer, so the cross stands out
+  const OUT_DIM = 256;                                            // the background: the same colours as inside
   const phase = Math.trunc(t * 1.5 * 40.74), phase2 = Math.trunc(-t * 40.74);
   for (let a = 0; a < 256; a++) {
     const ang = a * TWO_PI / 256;
