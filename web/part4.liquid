@@ -381,8 +381,9 @@ function markStyle() {
     : `<b>Editing scene ${S.scenes.indexOf(-1) + 1}: Main style (${STYLES[S.style].name})</b>Changes below are for the main style and every scene without its own settings.`;
   const tft = M.kind === "tft", cross = tft && isCrossStyle(S.style);
   const eff = cross ? S.crossFill : S.style;                 // the style being drawn (inside a cross: the chosen fill)
-  root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(tft && eff === 2); });
-  root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(tft && isSpaceStyle(eff)); });
+  const outE = cross && S.style !== 17 ? outOf(S.crossFill, S.crossOut) : 255;   // and outside a glowing cross
+  root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(tft && (eff === 2 || outE === 2)); });
+  root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(tft && (isSpaceStyle(eff) || (outE !== 255 && isSpaceStyle(outE)))); });
   root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !cross; });
   const woodSel = S.style === 17;                            // the Wooden cross picks what goes behind it
   $("crossfill-label").textContent = woodSel ? "Display behind the cross" : "Inside the cross";
@@ -393,6 +394,9 @@ function markStyle() {
   $("fill-plain").querySelectorAll("option").forEach(o => { o.hidden = o.disabled = woodSel; });
   if ($("crossfill")) $("crossfill").value = S.crossFill;
   $("crossripple").value = S.crossRipple;
+  $("crossout").querySelectorAll("option").forEach(o => { const v = +o.value; o.disabled = isGridSpace(v) && isGridSpace(S.crossFill) && v !== S.crossFill; });   // one space picture at a time
+  $("crossout").value = outOf(S.crossFill, S.crossOut);
+  $("crossout").closest("label").hidden = !cross || woodSel;
   $("woodgrain").value = S.woodGrain;
   $("woodgrain").closest("label").hidden = !cross || !woodSel;
   $("crossripple").closest("label").hidden = !cross || woodSel;   // the Wooden cross has no ripple
@@ -401,7 +405,7 @@ function markStyle() {
   $("rip-cols").hidden = !cross || woodSel || !S.crossRipple || S.ripGrad !== 1;
   $("ripgrad-hint").textContent = ["Rings in the cross's own colours", "Rings change through four colours"][S.ripGrad];
   $("cross-row").hidden = !picturesAllowed() && !isCrossStyle(S.style);
-  const sc = tft && (hasSpaceCols(eff) || (editIdx < 0 && sceneList().some((c, k) => c >= 200 && c < 255 && !S.sceneSets[k] && hasSpaceCols(c - 200))));                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
+  const sc = tft && (hasSpaceCols(eff) || (outE !== 255 && hasSpaceCols(outE)) || (editIdx < 0 && sceneList().some((c, k) => c >= 200 && c < 255 && !S.sceneSets[k] && hasSpaceCols(c - 200))));                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
   $("space-colors").hidden = !sc;
   $("radius").max = radiusMax(M);
   $("radius").closest("label").querySelector("span").firstChild.nodeValue = cross ? "Cross size " : "Portal size ";
@@ -414,6 +418,10 @@ function markStyle() {
     if (isC && !wood && ((f >= 7 && f <= 10) || f === 18)) f = 0;   // skies and warm glow are only behind the Wooden cross
     if (wood && f === 11) f = 7;
     const sky = wood && ((f >= 8 && f <= 10) || f === 18), spc = hasSpaceCols(f), glowC = isC && !wood;
+    const o = glowC ? outOf(f, S.crossOut) : 255;              // outside a glowing cross
+    if (o === 0 || o === 1 || o === 6) { use.add("arms"); use.add("twist"); }
+    if (o === 4 || o === 15) use.add("twist");
+    if (o === 15) use.add("reverse");
     if (!sky && (!spc || glowC)) use.add("colours");          // main colours (a glowing cross outline uses them too)
     if (f === 0 || f === 1 || f === 6 || (f === 7 && !isC)) { use.add("arms"); use.add("twist"); }
     if (f === 4 || f === 15) use.add("twist");                // Galaxy spiral, Wormhole walls
@@ -457,8 +465,10 @@ $("ripc2").addEventListener("input", e => { S.ripC2 = e.target.value; changed();
 $("ripc3").addEventListener("input", e => { S.ripC3 = e.target.value; changed(); });
 $("ripc4").addEventListener("input", e => { S.ripC4 = e.target.value; changed(); });
 $("woodgrain").addEventListener("change", e => { S.woodGrain = +e.target.value; changed(true); });
+$("crossout").addEventListener("change", e => { S.crossOut = +e.target.value; if (S.crossOut === 16 && S.sparks < 2) S.sparks = 14; markStyle(); changed(true); });
 $("crossfill").addEventListener("change", e => {
   S.crossFill = +e.target.value;
+  S.crossOut = outOf(S.crossFill, S.crossOut);              // a different space picture outside can't stay: back to black
   if (S.crossFill === 16 && S.sparks < 2) S.sparks = 14;
   bindAll(); markStyle(); changed(true);
 });
@@ -1049,11 +1059,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.12.7";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/b2d6bd178b9088085ab33493f76856ff2fc6eddd/";
+const FW_VERSION = "1.13.0";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/8d47b8c982c293f78ceaefee43a714a8431160b1/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "daa0aac7134f232393f6140cc1eda16e9bfa450b5229c2658b5c443353225157" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "8ac60afd727c6120d394013832e34cede590520f7d8934c4c68a6b0f44411c60" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "5fd11f7ebbcaf2de7d6cd465be2f173d8ef1802ae2160ee9cc4fa85d475d62b1" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "08d04b0af6777cce5824609d4bf973727daac8f4f37b01f592a924e1d3286bc9" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -1173,7 +1183,7 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   for (let i = 0; i < 3; i++) { const st = S.fadeSets[i]; cols.push(st ? parseInt(hex6(st.core), 16) : 0, st ? parseInt(hex6(st.rim), 16) : 0); }
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
-const cmdLine = () => withMain(() => (M.kind === "tft" ? sceneLines() + `RIM ${S.rimw}\n` : "") + setLine());   // (older boards ignore SCN and RIM lines)
+const cmdLine = () => withMain(() => (M.kind === "tft" ? sceneLines() + `RIM ${S.rimw}\nXOUT ${S.crossOut}\n` : "") + setLine());   // (older boards ignore SCN and RIM lines)
 const setLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${(M.kind === "tft" ? S.reverse : S.drift) ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
 function sceneArgs() {
   const L = sceneList(), cols = " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" "), rip = ripCode(S.style, S);

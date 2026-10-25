@@ -465,6 +465,9 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 function picturesAllowed() { const B = boardOf(); return M.kind === "tft" && (/^ESP32/.test(B.family) || !!B.custom); }
 function turns(m) { return m.kind === "tft" && !!m.rect && m.w !== m.h; }   // rectangles can be turned live (portrait / landscape)
 const SCENE_STYLES = [0, 1, 2, 3, 4, 6, 14, 15, 16, 8, 9, 10, 11, 12, 13, 17];   // styles a scene can switch to (crosses too: each keeps its own cross settings)
+const OUT_OK = [255, 0, 1, 2, 3, 4, 6, 14, 15, 16];   // what can go outside a glowing cross (255: black)
+const isGridSpace = f => f === 4 || (f >= 14 && f <= 16);
+const outOf = (fill, out) => isGridSpace(out) && isGridSpace(fill) && out !== fill ? 255 : out;   // one space picture at a time: the inside wins
 const isStyleScene = x => x >= 200 && SCENE_STYLES.includes(x - 200);
 const isPicScene = x => x >= 0 && x < 200 && x % 100 < S.pics.length;
 function sceneList() {
@@ -474,7 +477,7 @@ function sceneList() {
 
 // ---------- scenes with their own settings ----------
 const ripCode = (st, o) => st === 17 ? o.woodGrain : o.crossRipple ? o.crossRipple + 3 * (o.ripGrad || 0) : 0;   // board: ripple direction + 3 x ripple colour (the Wooden cross: its wood style)
-const LOOK_KEYS = ["radius", "oval", "arms", "twist", "speed", "sparks", "reverse", "c1", "c2", "bright", "ripples", "rspeed", "glow", "stars", "rimsmooth", "rimw", "spaceCols", "crossFill", "crossRipple", "woodGrain", "beam", "crossw", "bar", "ripGrad", "ripC1", "ripC2", "ripC3", "ripC4"];
+const LOOK_KEYS = ["radius", "oval", "arms", "twist", "speed", "sparks", "reverse", "c1", "c2", "bright", "ripples", "rspeed", "glow", "stars", "rimsmooth", "rimw", "spaceCols", "crossFill", "crossOut", "crossRipple", "woodGrain", "beam", "crossw", "bar", "ripGrad", "ripC1", "ripC2", "ripC3", "ripC4"];
 const pickLook = src => { const o = {}; LOOK_KEYS.forEach(k => { o[k] = Array.isArray(src[k]) ? src[k].slice() : src[k]; }); return o; };
 const snapMain = () => ({ ...pickLook(S), style: S.style, fade: S.fade });
 function defaultSetFor(st, base) {                  // a scene's settings to start from: the main ones, sized for that style
@@ -501,8 +504,8 @@ function sceneLooksBlock() {                        // firmware: each scene's ow
   for (let k = 0; k < 8; k++) {
     const st = sceneSetAt(k);
     has.push(st ? 1 : 0);
-    rows.push(st ? `{ ${f2(st.radius)}f, ${f2(st.oval)}f, ${f2(st.twist)}f, ${f2(st.speed)}f, ${f2(st.rspeed)}f, ${f2(st.glow)}f, 0x${hex6(st.c1)}, 0x${hex6(st.c2)}, { ${st.spaceCols.map(c => "0x" + hex6(c)).join(", ")} }, ${st.arms}, ${st.sparks}, ${st.reverse ? 1 : 0}, ${st.bright}, ${st.ripples}, ${st.stars}, ${st.rimsmooth}, 0, ${sceneList()[k] - 200}, ${st.crossFill}, ${ripCode(sceneList()[k] - 200, st)}, ${st.beam}, ${st.crossw}, ${st.bar}, { 0x${hex6(st.ripC1)}, 0x${hex6(st.ripC2)}, 0x${hex6(st.ripC3)}, 0x${hex6(st.ripC4)} }, ${st.rimw} }`
-                 : "{ 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF }, 100 }");
+    rows.push(st ? `{ ${f2(st.radius)}f, ${f2(st.oval)}f, ${f2(st.twist)}f, ${f2(st.speed)}f, ${f2(st.rspeed)}f, ${f2(st.glow)}f, 0x${hex6(st.c1)}, 0x${hex6(st.c2)}, { ${st.spaceCols.map(c => "0x" + hex6(c)).join(", ")} }, ${st.arms}, ${st.sparks}, ${st.reverse ? 1 : 0}, ${st.bright}, ${st.ripples}, ${st.stars}, ${st.rimsmooth}, 0, ${sceneList()[k] - 200}, ${st.crossFill}, ${ripCode(sceneList()[k] - 200, st)}, ${st.beam}, ${st.crossw}, ${st.bar}, { 0x${hex6(st.ripC1)}, 0x${hex6(st.ripC2)}, 0x${hex6(st.ripC3)}, 0x${hex6(st.ripC4)} }, ${st.rimw}, ${st.crossOut ?? 255} }`
+                 : "{ 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF }, 100, 255 }");
   }
   return `uint8_t  SCENE_HAS[8] = { ${has.join(", ")} };   // 1 = that scene has its own settings
 Look     SCENE_LOOKS[8] = {
@@ -513,7 +516,7 @@ function sceneLines() {                             // live tuning: each scene's
   let out = "";
   for (let k = 0; k < 8; k++) {
     const st = sceneSetAt(k);
-    out += st ? `SCN ${k} ${st.radius} ${f2(st.oval)} ${st.arms} ${(+st.twist).toFixed(1)} ${f2(st.speed)} ${st.sparks} ${st.reverse ? 1 : 0} ${parseInt(hex6(st.c1), 16)} ${parseInt(hex6(st.c2), 16)} ${st.bright} ${st.ripples} ${f2(st.rspeed)} ${f2(st.glow)} ${st.stars} ${st.rimsmooth} ${st.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ")} ${sceneList()[k] - 200} ${st.crossFill} ${ripCode(sceneList()[k] - 200, st)} ${st.beam} ${st.crossw} ${st.bar}${st.ripGrad === 1 ? " " + [st.ripC1, st.ripC2, st.ripC3, st.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""} ${st.rimw}\n`
+    out += st ? `SCN ${k} ${st.radius} ${f2(st.oval)} ${st.arms} ${(+st.twist).toFixed(1)} ${f2(st.speed)} ${st.sparks} ${st.reverse ? 1 : 0} ${parseInt(hex6(st.c1), 16)} ${parseInt(hex6(st.c2), 16)} ${st.bright} ${st.ripples} ${f2(st.rspeed)} ${f2(st.glow)} ${st.stars} ${st.rimsmooth} ${st.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ")} ${sceneList()[k] - 200} ${st.crossFill} ${ripCode(sceneList()[k] - 200, st)} ${st.beam} ${st.crossw} ${st.bar}${st.ripGrad === 1 ? " " + [st.ripC1, st.ripC2, st.ripC3, st.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""} ${st.rimw} ${st.crossOut ?? 255}\n`
               : `SCN ${k} OFF\n`;
   }
   return out;
@@ -596,7 +599,7 @@ const crossMax = (M, st = S.style) => M.rect ? Math.floor((M.h - 8) * 0.8) : Mat
 const radiusMax = M => (S.style >= 8 && S.style <= 13) || S.style === 17 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossRipple: 0, rimw: 100, ripGrad: 0, ripC1: "#ffd36b", ripC2: "#ff2d8a", ripC3: "#8a3dff", ripC4: "#3de0ff", woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossOut: 255, crossRipple: 0, rimw: 100, ripGrad: 0, ripC1: "#ffd36b", ripC2: "#ff2d8a", ripC3: "#8a3dff", ripC4: "#3de0ff", woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -622,6 +625,7 @@ if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 S.reverse = S.reverse === true;
 if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 18].includes(S.crossFill)) S.crossFill = 0;
+if (!OUT_OK.includes(S.crossOut)) S.crossOut = 255;
 if (![0, 1, 2].includes(S.crossRipple)) S.crossRipple = 0;
 if (![0, 1].includes(S.ripGrad)) S.ripGrad = 0;   // (Rainbow is gone: back to Glow)
 if (!/^#[0-9a-f]{6}$/i.test(S.ripC1 || "")) S.ripC1 = "#ffd36b";
@@ -1642,13 +1646,15 @@ function tftFrame() {
   t += S.speed;
   if (t > TWO_PI * 100) t -= TWO_PI * 100;
 }
-let tftOut2 = null;
+let tftOut2 = null, tftOutSp = null;
 function tftRender(out, style) {                      // one frame of one style into out
   const R = S.radius, arms = S.arms;
   const isCross = (style >= 8 && style <= 13) || style === 17, wood = style === 17;
   let fill = isCross ? S.crossFill : style;               // crosses: the chosen style is drawn inside (the Wooden cross: behind)
   if (isCross && ((fill >= 7 && fill <= 10) || fill === 18) && !wood) fill = 0;   // the warm glow and the skies are only for the Wooden cross
   if (wood && fill === 11) fill = 7;                            // solid colour is for the glowing crosses
+  const outL = isCross && !wood ? outOf(fill, S.crossOut) : 255;   // outside a glowing cross (255: black)
+  const OUT_DIM = 150;                                            // the outside is a little dimmer, so the cross stands out
   const phase = Math.trunc(t * 1.5 * 40.74), phase2 = Math.trunc(-t * 40.74);
   for (let a = 0; a < 256; a++) {
     const ang = a * TWO_PI / 256;
@@ -1657,7 +1663,7 @@ function tftRender(out, style) {                      // one frame of one style 
   }
   // Starburst ripples: rings expanding outward, precomputed per distance for this frame
   ripCrestT.fill(0); ripTroughT.fill(0);
-  if (fill === 2) for (let i = 0; i < S.ripples; i++) {
+  if (fill === 2 || outL === 2) for (let i = 0; i < S.ripples; i++) {
     const pr = (t * S.rspeed + i / S.ripples) % 1, rr = 0.16 + pr * 0.62, w = 0.04 + pr * 0.04, fade = Math.pow(1 - pr, 1.1);
     for (let r = 0; r < 256; r++) {
       const d = (r / R - rr) / w;
@@ -1668,7 +1674,7 @@ function tftRender(out, style) {                      // one frame of one style 
   // Hyperspace: where each streaking star is this frame (3 layers × 256 directions)
   bhHole = Math.trunc(0.22 * R);
   const tw = Math.trunc(t * 25);
-  if (fill === 3) for (let L = 0; L < 3; L++) for (let a = 0; a < 256; a++) {
+  if (fill === 3 || outL === 3) for (let L = 0; L < 3; L++) for (let a = 0; a < 256; a++) {
     const h = hash32(a * 3 + L * 7919), i = L * 256 + a;
     warpOn[i] = (h & 15) < S.stars + 1 ? 1 : 0;
     const pos = ((((h >>> 8) & 1023) + t * (60 + L * 25)) % 1024) / 1024;
@@ -1681,16 +1687,37 @@ function tftRender(out, style) {                      // one frame of one style 
     woodFrame(out, CE, fill, arms, phase, phase2, tw);
     return;
   }
+  const dimC = c => (255 << 24) | ((((c >> 16) & 255) * OUT_DIM >> 8) << 16) | ((((c >> 8) & 255) * OUT_DIM >> 8) << 8) | (((c & 255) * OUT_DIM) >> 8);
+  const maxC = (a, b) => (255 << 24) | Math.max(a & 0xFF0000, b & 0xFF0000) | Math.max(a & 0xFF00, b & 0xFF00) | Math.max(a & 0xFF, b & 0xFF);
+  const screenPolar = (x, y) => {                    // distance and angle around the screen centre (the outside style)
+    const cy = y < QY ? QY - 1 - y : y - QY, clow = y >= QY;
+    let r, a0;
+    if (cy < TQY) { const ci = cy * TQX + colMap[x]; r = rT[ci]; a0 = aT[ci]; }
+    else { const fx = colMap[x] + 0.5, fy = cy + 0.5; r = Math.min(255, Math.round(Math.hypot(fx, fy))); a0 = Math.round(Math.atan2(fy, fx) / (Math.PI / 2) * 64); }
+    return [r, (x >= QX ? (clow ? a0 : 256 - a0) : (clow ? 128 - a0 : 128 + a0)) & 255];
+  };
+  const outPortal = outL !== 255 && !isGridSpace(outL), outSpace = isGridSpace(outL);
   if (fill === 4 || fill >= 14) {                    // Galaxy, Nebula, Wormhole, Meteor Shower (also inside a cross)
     spaceFrame(out, fill, isCross ? crossYC : QY);
     if (CE) for (let i = 0; i < out.length; i++) {   // glowing cross outline over the space picture
       const ce = CE[i];
+      if (ce <= 0 && outL !== 255) {                 // something outside the cross
+        const g = tftPal[Math.max(crossRimT[-ce], crossHaloT[-ce])];
+        if (outL === fill) out[i] = maxC(dimC(out[i]), g);
+        else { const [r, a] = screenPolar(i % TW, Math.trunc(i / TW)); out[i] = maxC(tftPal[Math.min(255, styleV(outL, a, r, arms, phase, phase2, tw) * OUT_DIM >> 8)], g); }
+        continue;
+      }
       if (ce > 0) { const rv = Math.max(crossRimT[ce], crossRipT[ce] > 8 ? Math.min(255, crossRipT[ce] + 60) : 0); if (rv > 8) { const a = out[i], b = tftPal[rv]; out[i] = (255 << 24) | (Math.max(a & 0xFF0000, b & 0xFF0000)) | (Math.max(a & 0xFF00, b & 0xFF00)) | Math.max(a & 0xFF, b & 0xFF); } if (S.ripGrad && S.crossRipple) out[i] = addRip(out[i], ce); }
       else out[i] = tftPal[Math.max(crossRimT[-ce], crossHaloT[-ce])];
     }
     return;
   }
   let p = 0;
+  let spOut = null;
+  if (CE && outSpace) {                              // a space picture outside the cross: drawn first, the cross goes over it
+    if (!tftOutSp || tftOutSp.length !== TW * TH) tftOutSp = new Uint32Array(TW * TH);
+    spOut = tftOutSp; spaceFrame(spOut, outL, crossYC);
+  }
   for (let y = 0; y < TH; y++) {
     const qy = y < QY ? QY - 1 - y : y - QY, low = y >= QY;
     const cy = y < crossYC ? crossYC - 1 - y : y - crossYC, clow = y >= crossYC;   // crosses: swirl around the crossing
@@ -1712,6 +1739,7 @@ function tftRender(out, style) {                      // one frame of one style 
           if (crossRimT[ce] > v) v = crossRimT[ce];
         } else {
           const k = -ce; v = Math.max(crossRimT[k], crossHaloT[k]);
+          if (outPortal) { const ov = styleV(outL, a, r, arms, phase, phase2, tw) * OUT_DIM >> 8; if (ov > v) v = ov; }
         }
       } else if (style === 7) {                         // Cartoon Sticker: ragged edge, light outline, no glow
         const jag = (((nz(nzB, a * 4 + (phase >> 1)) - 128) * 7 + (nz(nzC, a * 16 + phase) - 128) * 4) >> 7) * (100 - S.rimsmooth) / 100;
@@ -1726,6 +1754,7 @@ function tftRender(out, style) {                      // one frame of one style 
       }
       let o = tftPal[v > 255 ? 255 : v];
       if (CE && CE[p] > 0 && S.ripGrad && S.crossRipple) o = addRip(o, CE[p]);
+      if (spOut && CE[p] <= 0) o = maxC(dimC(spOut[p]), o);
       out[p++] = o;
     }
   }
