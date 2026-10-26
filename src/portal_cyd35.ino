@@ -124,7 +124,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xD35D2971UL;
+const uint32_t BUILD_ID = 0x1C50E109UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -2392,12 +2392,12 @@ uint8_t  fdCol[16][3];                     // the clouds in the day's light
 int      fdStars = 0;                      // 0-256
 int      fdBodyX = 0, fdBodyY = 0, fdBodyR = 0, fdDisc = 0, fdBodyOn = 0, fdMoon = 0;   // the sun (or the moon): where, how big, how bright its disc is
 float    fdBodyRf = 1;
-const float MARIA[5][4] = { { -0.32f, -0.22f, 0.34f, 0.20f }, { 0.22f, -0.30f, 0.24f, 0.16f }, { 0.18f, 0.12f, 0.30f, 0.14f }, { -0.12f, 0.38f, 0.22f, 0.12f }, { -0.45f, 0.18f, 0.16f, 0.10f } };   // the moon's darker seas
+const float MARIA[5][4] = { { -0.30f, -0.20f, 0.42f, 0.14f }, { 0.24f, -0.28f, 0.32f, 0.11f }, { 0.18f, 0.14f, 0.38f, 0.10f }, { -0.10f, 0.38f, 0.30f, 0.08f }, { -0.46f, 0.20f, 0.24f, 0.07f } };   // the moon's darker seas
 inline int bodyPx(int dx, int dy) {        // the sun's or moon's disc at one pixel (0-255): smooth edges, the moon with its seas
   float d = sqrtf((float)(dx * dx + dy * dy)), R = fdBodyRf;
   if (!fdMoon) { float c = (R * 1.3f - d) / (R * 0.3f); return c <= 0 ? 0 : (int)(fdDisc * fminf(1, c)); }
-  float cov = R + 0.5f - d; if (cov <= 0) return 0; if (cov > 1) cov = 1;
-  float u = dx / R, v = dy / R, rr = fminf(1, u * u + v * v), sh = 0.80f + 0.20f * sqrtf(1 - rr);
+  float cov = (R + 1 - d) * 0.5f; if (cov <= 0) return 0; if (cov > 1) cov = 1;   // a 2-pixel soft edge
+  float u = dx / R, v = dy / R, rr = fminf(1, u * u + v * v), sh = 0.82f + 0.18f * sqrtf(1 - rr);
   for (int i = 0; i < 5; i++) { float a = u - MARIA[i][0], b = v - MARIA[i][1]; sh -= MARIA[i][3] * expf(-(a * a + b * b) / (MARIA[i][2] * MARIA[i][2])); }
   return (int)(fdDisc * cov * sh);
 }
@@ -2554,7 +2554,11 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
         c0 += ((255 - c0) * q) >> 8; c1 += ((248 - c1) * q) >> 8; c2 += ((225 - c2) * q) >> 8;
       }
       int m = (cloudShT[k > 63 ? 63 : k] * br) >> 8;  // soft shadow round the wood, and the brightness setting
-      *p++ = to565((c0 * m) >> 8, (c1 * m) >> 8, (c2 * m) >> 8);
+      if (fdOn) {                                   // Full day: dithered, so the moon, the sun's glow and the night sky shade smoothly
+        uint32_t t = toneRGB((c0 * m) >> 8, (c1 * m) >> 8, (c2 * m) >> 8);
+        int d = BAYER4[((y & 3) << 2) | (x & 3)], r = min(255, (int)((t >> 16) & 255) + (d >> 1)), g = min(255, (int)((t >> 8) & 255) + (d >> 2)), b = min(255, (int)(t & 255) + (d >> 1));
+        *p++ = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+      } else *p++ = to565((c0 * m) >> 8, (c1 * m) >> 8, (c2 * m) >> 8);
     }
   }
 }
