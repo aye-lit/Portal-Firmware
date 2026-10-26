@@ -259,6 +259,7 @@
           <div class="pins" id="vps-pins" aria-hidden="true"></div>
           <div class="glass"><canvas id="vps-oled" aria-label="Simulated display showing the portal animation"></canvas></div>
         </div>
+        <div class="btns" id="vps-rot-wrap" hidden style="margin-top:10px"><button class="b ghost rot90" type="button">Rotate 90°</button><span class="note" id="vps-rot-note" style="margin:0"></span></div>
         <p class="fps" id="vps-fps" hidden></p>
       </section>
 
@@ -317,7 +318,7 @@ Takes about a minute.</p>
                 <button class="b ghost usb-refresh" type="button">Refresh USB</button>
                 <button class="b ghost" id="vps-reboot" type="button" hidden>Restart board</button>
                 <button class="b ghost" id="vps-check-fps" type="button">Check speed</button>
-                <button class="b ghost" id="vps-turn" type="button" hidden>Turn to portrait</button>
+                <button class="b ghost rot90" id="vps-turn" type="button" hidden>Rotate 90°</button>
                 <label style="display:flex;align-items:center;gap:6px;font-size:13px" for="vps-live"><input id="vps-live" type="checkbox" checked> Send every change</label>
               </div>
               <div class="status" id="vps-serial-status" role="status"></div>

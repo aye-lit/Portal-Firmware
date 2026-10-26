@@ -648,6 +648,7 @@ if (!(S.fadeSel >= -1 && S.fadeSel < S.fadeSets.length)) S.fadeSel = 0;
 delete S.c3; delete S.c4;
 S.fade = !!S.fade;
 S.portrait = !!S.portrait;
+S.flip = S.flip === true;                    // turned the other way round (180°): with portrait, the four ways a rectangle screen can face
 const MAX_FADE_SETS = 3;   // extra sets, so 4 in total with the main colours
 if (!(S.ripples >= 0 && S.ripples <= 6)) S.ripples = 2;
 if (!(S.rspeed >= 0.03 && S.rspeed <= 0.3)) S.rspeed = 0.09;
@@ -677,7 +678,8 @@ function refreshConn() {
   else if (plugged) setConn("plugged", "Board plugged in, not connected");
   else setConn("off", "Board not connected");
   const tb = $("turn");                                // rectangle screens: turn portrait / landscape live
-  if (tb) { tb.hidden = !(port && turns(M)); tb.textContent = S.portrait ? "Turn to landscape" : "Turn to portrait"; }
+  if (tb) tb.hidden = !turns(M);
+  if ($("rot-wrap")) { $("rot-wrap").hidden = !turns(M); $("rot-note").textContent = turns(M) ? `Now: ${rotDeg()}°` : ""; }
 }
 async function countPlugged() {
   try { plugged = "serial" in navigator ? (await navigator.serial.getPorts()).length : 0; } catch (_) { plugged = 0; }
