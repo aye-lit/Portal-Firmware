@@ -1063,11 +1063,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.15.0";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/bba007fc16832ad8039a37998d3728a5e6ee555e/";
+const FW_VERSION = "1.15.1";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/357d463b25d800f0206d1a735b60b56a0360de10/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "db9c112bdaecc90f46fd5499b33f196a5cc3fe22c62e26728542d6c2ed3db3aa" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "4813d1ce9e2aa2e2450ff8a8b360c524892b501cac57e63066bb0032b817bad0" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "c3ec240edab9252d3e4b52916201a9ebc1940ac2200257e5864eba20b7b57a90" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "f105cfaced5cef20fe5b43ff277c6ea7445bc39b397186df872d475f15e4d29f" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -1211,7 +1211,7 @@ async function readReply(ms) {
   return text;
 }
 
-const rotDeg = () => S.portrait ? (S.flip ? 90 : 270) : (S.flip ? 180 : 0);   // how far the picture is turned from plain landscape
+function rotDeg() { return S.portrait ? (S.flip ? 90 : 270) : (S.flip ? 180 : 0); }   // how far the picture is turned from plain landscape (a declaration: used while the page is still loading)
 async function rotate90() {                           // a quarter turn: landscape -> portrait -> landscape upside down -> portrait upside down
   if (!turns(M)) return;
   if (S.portrait) S.portrait = false; else { S.portrait = true; S.flip = !S.flip; }

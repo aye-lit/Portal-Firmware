@@ -1454,6 +1454,16 @@ const FD_KEYS = [
   [1.00, [18, 22, 56],   [66, 46, 96],    [186, 104, 92],  [196, 150, 150], [56, 46, 80],    0.35],
 ];
 let FD_T = null;                                     // (fixed moment in the cycle, for still previews)
+const MARIA = [[-0.32, -0.22, 0.34, 0.20], [0.22, -0.30, 0.24, 0.16], [0.18, 0.12, 0.30, 0.14], [-0.12, 0.38, 0.22, 0.12], [-0.45, 0.18, 0.16, 0.10]];   // the moon's darker seas: x, y, size, depth
+function sunDisc(d, R) { return Math.max(0, Math.min(1, (R * 1.3 - d) / (R * 0.3))); }   // the sun: bright, with a soft rim
+function moonDisc(dx, dy, R) {                       // the moon: an anti-aliased edge, a little darker toward its rim, and its seas
+  const d = Math.sqrt(dx * dx + dy * dy), cov = Math.max(0, Math.min(1, R + 0.5 - d));
+  if (!cov) return 0;
+  const u = dx / R, v = dy / R, rr = Math.min(1, u * u + v * v);
+  let s = 0.80 + 0.20 * Math.sqrt(1 - rr);
+  for (const [mx, my, mr, md] of MARIA) s -= md * Math.exp(-((u - mx) ** 2 + (v - my) ** 2) / (mr * mr));
+  return 0.95 * cov * s;
+}
 function fullDayState(nowMs) {
   const cyc = S.fdLen * 60;                          // Day length setting (minutes)
   const tc = FD_T != null ? FD_T : ((nowMs / 1000) % cyc) / cyc;
@@ -1479,7 +1489,7 @@ function cloudFrame(out, CE, fill) {
     sunA = Math.min(1, Math.max(0, FD.sun.alt * 6)) * S.fdGlow / 100; sunCol = [255, 246 - low * 90, 214 - low * 150];
   }
   if (fd && FD.moon) { moonX = FD.moon.x * TW; moonY = TH * (1.02 - FD.moon.alt * 0.85); moonA = Math.min(1, Math.max(0, FD.moon.alt * 6)) * S.fdGlow / 100; }
-  const sunR = TH * 0.07, sunG = TH * 0.30, moonR = TH * 0.045, twk = performance.now() / 1000;
+  const sunR = TH * 0.07, sunG = TH * 0.30, moonR = TH * 0.055, twk = performance.now() / 1000;
   const now = performance.now();
   if (cloudLastMs) cloudDrift += 6 * Math.min(8, (now - cloudLastMs) / 1000) * (S.speed / 0.12);
   cloudLastMs = now;
@@ -1512,12 +1522,12 @@ function cloudFrame(out, CE, fill) {
         const bg = [sky[0], sky[1], sky[2]];
         if (sunA > 0) {
           const dx = x - sunX, dy = y - sunY, d = Math.sqrt(dx * dx + dy * dy);
-          const g = d < sunR ? 1 : Math.exp(-((d - sunR) / sunG) * ((d - sunR) / sunG) * 3) * 0.55 + (d < sunR * 1.25 ? (sunR * 1.25 - d) / (sunR * 0.25) * 0.6 : 0);
+          const g = Math.max(sunDisc(d, sunR), d < sunR ? 0.55 : Math.exp(-((d - sunR) / sunG) * ((d - sunR) / sunG) * 3) * 0.55);   // a smooth-edged disc in its glow
           for (let j = 0; j < 3; j++) bg[j] += (sunCol[j] - bg[j]) * Math.min(1, Math.min(1, g) * sunA);
         }
         if (moonA > 0) {
           const dx = x - moonX, dy = y - moonY, d = Math.sqrt(dx * dx + dy * dy);
-          const g = d < moonR ? 0.92 : Math.exp(-(((d - moonR) / (moonR * 2.2)) ** 2)) * 0.22;
+          const g = Math.max(moonDisc(dx, dy, moonR), d < moonR ? 0.22 : Math.exp(-(((d - moonR) / (moonR * 2.2)) ** 2)) * 0.22);   // a smooth moon with its own markings
           for (let j = 0; j < 3; j++) bg[j] += ([236, 238, 226][j] - bg[j]) * Math.min(1, g * moonA);
         }
         if (FD.stars > 0.01) {
