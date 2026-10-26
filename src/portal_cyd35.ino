@@ -69,11 +69,10 @@ void beginBus() {
 int      SCR_W = 480, SCR_H = 320;   // drawing width and height (swapped when the screen is turned)
 int      QX = 240, QY = 160;   // centre of the screen
 bool     PORTRAIT = false, wantPortrait = false;
+bool     FLIP = false, wantFlip = false;   // turned the other way round (180°)
 volatile bool turnPending = false;       // the screen itself still has to be told
-#define ROT_LANDSCAPE    1
-#define ROT_PORTRAIT     0
-#define MADCTL_LANDSCAPE 0x28                    // (DMA screens: the panel's own codes for the same two directions)
-#define MADCTL_PORTRAIT  0x48
+const uint8_t MADCTL_ROT[4] = { 0x48, 0x28, 0x88, 0xE8 };   // (DMA screens: the panel's own codes for the four directions)
+inline uint8_t rotNow() { return PORTRAIT ? (FLIP ? 2 : 0) : (FLIP ? 3 : 1); }   // the screen's rotation: landscape 1, then a quarter turn at a time
 #define TQX        (SCR_W - QX)
 #define TQY        (SCR_H - QY)
 int      STRIP = 9600 / SCR_WMAX;          // rows drawn per chunk (fewer if memory is tight)
@@ -125,7 +124,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x7E1C390CUL;
+const uint32_t BUILD_ID = 0xE0B77DE3UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -536,7 +535,8 @@ void apply(const Saved &s) {
   CROSS_FILL = s.crossFill;
   CROSS_RIPPLE = s.crossRipple;
 #if TURNS
-  wantPortrait = s.portrait == 1;        // turned at the start of the next frame
+  wantPortrait = (s.portrait & 1) != 0;  // turned at the start of the next frame
+  wantFlip = (s.portrait & 2) != 0;       // (and the other way round)
 #endif
   TONE = s.tone <= 100 ? s.tone : 0;
   WARM = s.warm <= 100 ? s.warm : 0;
@@ -566,7 +566,7 @@ void saveSettings() {
   for (int k = 0; k < 4; k++) s.spaceCols[k] = SPACE_COLS[k];
   s.crossFill = CROSS_FILL;
   s.crossRipple = CROSS_RIPPLE;
-  s.portrait = wantPortrait ? 1 : 0;
+  s.portrait = (wantPortrait ? 1 : 0) | (wantFlip ? 2 : 0);
   s.tone = TONE;
   s.warm = WARM;
   s.tapOff = TAP_OFF;
@@ -596,7 +596,7 @@ void clampSettings(Saved &s) {
   for (int k = 0; k < 8; k++) if (!validScene(s.scenes[k])) s.scenes[k] = PORTAL;
   if (!validFill(s.crossFill)) s.crossFill = 0;
   if (s.crossRipple > 10) s.crossRipple = 0;
-  if (s.portrait > 1) s.portrait = 0;
+  if (s.portrait > 3) s.portrait = 0;
   if (s.tone > 100) s.tone = 100;
   if (s.warm > 100) s.warm = 0;
 }
@@ -979,7 +979,7 @@ const char* handleCommand(char *line) {   // returns the reply to send back
       for (int k = 0; k < 4; k++) s.spaceCols[k] = n >= 44 ? (uint32_t)v[40 + k] : SPACE_COLS[k];
       s.crossFill = n >= 45 ? (uint8_t)v[44] : CROSS_FILL;
       s.crossRipple = n >= 46 ? (uint8_t)v[45] : CROSS_RIPPLE;
-      s.portrait = n >= 47 ? (uint8_t)v[46] : (wantPortrait ? 1 : 0);   // portrait / landscape (screens that can turn)
+      s.portrait = n >= 47 ? (uint8_t)v[46] : (uint8_t)((wantPortrait ? 1 : 0) | (wantFlip ? 2 : 0));   // portrait / landscape (screens that can turn)
       s.tone = n >= 48 ? (uint8_t)v[47] : TONE;                          // colour depth
       s.warm = n >= 49 ? (uint8_t)v[48] : WARM;                          // warmth
       s.tapOff = n >= 50 ? (v[49] ? 0 : 1) : TAP_OFF;                    // tap for next scene (touchscreens)
@@ -1920,6 +1920,7 @@ void frameStart() {
   pickSceneLook();
 #if TURNS
   if (wantPortrait != PORTRAIT) turnScreen(wantPortrait);
+  if (wantFlip != FLIP) { FLIP = wantFlip; turnPending = true; }   // a half turn: the same size, the panel just faces the other way
 #endif
   bool isCross = ((STYLE >= 8 && STYLE <= 13) || STYLE == 17) && curLook != -3;   // 17: Wooden cross (-3: another style is showing, sized as a portal: no cross needed)
   if (isCross && crossAvailable() && edgeBuf) prepareCross();
@@ -2913,9 +2914,9 @@ void setup() {
   buildTone();
   if (spaceLUT) buildSpaceLUT();
 #if TURNS
-  if (wantPortrait != PORTRAIT) {        // saved the other way round
-    setSize(wantPortrait);
-    tft.setRotation(PORTRAIT ? ROT_PORTRAIT : ROT_LANDSCAPE);
+  if (wantPortrait != PORTRAIT || wantFlip != FLIP) {   // saved turned another way
+    setSize(wantPortrait); FLIP = wantFlip;
+    tft.setRotation(rotNow());
     tft.fillScreen(0);
   }
 #endif
@@ -2978,9 +2979,9 @@ void loop() {
 #if TURNS
       if (turnPending) {                 // the screen was turned: tell the panel
 #if USE_DMA
-        if (lcdDma) { uint8_t c = 0x36, m = PORTRAIT ? MADCTL_PORTRAIT : MADCTL_LANDSCAPE; lcdSend(&c, 1, false, 1000); lcdSend(&m, 1, true, 1000); } else
+        if (lcdDma) { uint8_t c = 0x36, m = MADCTL_ROT[rotNow()]; lcdSend(&c, 1, false, 1000); lcdSend(&m, 1, true, 1000); } else
 #endif
-        tft.setRotation(PORTRAIT ? ROT_PORTRAIT : ROT_LANDSCAPE);
+        tft.setRotation(rotNow());
         turnPending = false;
       }
 #endif
@@ -3026,7 +3027,7 @@ void loop() {
 #else
   frameStart();
 #if TURNS
-  if (turnPending) { tft.setRotation(PORTRAIT ? ROT_PORTRAIT : ROT_LANDSCAPE); turnPending = false; }
+  if (turnPending) { tft.setRotation(rotNow()); turnPending = false; }
 #endif
   tft.startWrite();
   tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX);
