@@ -313,11 +313,12 @@ const refreshCode = () => { clearTimeout(codeTimer); codeTimer = setTimeout(() =
 
 // display model dropdown: screen size first, part number and details underneath
 const modelTitle = m => { const size = m.spec.split(" · ")[0]; return /round|rectangle|square/.test(size) ? size : `${size} ${m.w === m.h ? "square" : "rectangle"}`; };
-for (const [label, mono] of [["Color screens", false], ["One-color screens", true]]) {
+const TESTED_SCREENS = ["gc9a01", "st7796"], TESTED_BOARDS = ["esp32s3", "cyd35"];   // tried on real hardware; the rest should work but haven't been tried yet
+for (const [label, test] of [["Tested", k => TESTED_SCREENS.includes(k)], ["Untested: color screens", (k, m) => !TESTED_SCREENS.includes(k) && m.kind !== "mono"], ["Untested: one-color screens", (k, m) => !TESTED_SCREENS.includes(k) && m.kind === "mono"]]) {
   const grp = document.createElement("optgroup"); grp.label = label;
   const bySize = Object.entries(MODELS).sort((x, y) => parseFloat(x[1].spec) - parseFloat(y[1].spec));   // smallest screen first
   for (const [key, m] of bySize) {
-    if ((m.kind === "mono") !== mono) continue;
+    if (!test(key, m)) continue;
     const o = document.createElement("option"); o.value = key; o.textContent = modelTitle(m);
     grp.appendChild(o);
   }
@@ -326,10 +327,14 @@ for (const [label, mono] of [["Color screens", false], ["One-color screens", tru
 $("model").addEventListener("change", e => selectModel(e.target.value, true));
 function showModelDetail() {
   const m = MODELS[S.model], rest = m.spec.split(" · ").slice(1);
-  $("model-detail").innerHTML = `<span class="tag ${m.kind !== "mono" ? "rgb" : ""}">${m.kind === "mono" ? "ONE COLOR" : "COLOR"}</span><span>${[m.chip, ...rest].join(" · ")}</span>`;
+  $("model-detail").innerHTML = `<span class="tag ${m.kind !== "mono" ? "rgb" : ""}">${m.kind === "mono" ? "ONE COLOR" : "COLOR"}</span><span class="tag">${TESTED_SCREENS.includes(S.model) ? "TESTED" : "UNTESTED"}</span><span>${[m.chip, ...rest].join(" · ")}</span>`;
 }
 // board picker (every display)
-for (const [k, b] of Object.entries(BOARDS)) { const o = document.createElement("option"); o.value = k; o.textContent = b.name; $("board").appendChild(o); }
+for (const [label, tested] of [["Tested", true], ["Untested", false]]) {   // boards tried on real hardware first
+  const grp = document.createElement("optgroup"); grp.label = label;
+  for (const [k, b] of Object.entries(BOARDS)) { if (TESTED_BOARDS.includes(k) !== tested) continue; const o = document.createElement("option"); o.value = k; o.textContent = b.name; grp.appendChild(o); }
+  $("board").appendChild(grp);
+}
 function refreshBoardOptions() {
   [...$("board").options].forEach(o => {
     const fits = boardFits(BOARDS[o.value], M);
