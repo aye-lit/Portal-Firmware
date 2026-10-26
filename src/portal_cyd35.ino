@@ -124,7 +124,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xE0B77DE3UL;
+const uint32_t BUILD_ID = 0xD35D2971UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -2390,7 +2390,17 @@ const float FD_STARS[9] = { 0.35f, 0, 0, 0, 0, 0.45f, 1.0f, 0.85f, 0.35f };
 float    fdTop[3], fdMid[3], fdBot[3];
 uint8_t  fdCol[16][3];                     // the clouds in the day's light
 int      fdStars = 0;                      // 0-256
-int      fdBodyX = 0, fdBodyY = 0, fdBodyR = 0, fdDisc = 0, fdBodyOn = 0;   // the sun (or the moon): where, how big, how bright its disc is
+int      fdBodyX = 0, fdBodyY = 0, fdBodyR = 0, fdDisc = 0, fdBodyOn = 0, fdMoon = 0;   // the sun (or the moon): where, how big, how bright its disc is
+float    fdBodyRf = 1;
+const float MARIA[5][4] = { { -0.32f, -0.22f, 0.34f, 0.20f }, { 0.22f, -0.30f, 0.24f, 0.16f }, { 0.18f, 0.12f, 0.30f, 0.14f }, { -0.12f, 0.38f, 0.22f, 0.12f }, { -0.45f, 0.18f, 0.16f, 0.10f } };   // the moon's darker seas
+inline int bodyPx(int dx, int dy) {        // the sun's or moon's disc at one pixel (0-255): smooth edges, the moon with its seas
+  float d = sqrtf((float)(dx * dx + dy * dy)), R = fdBodyRf;
+  if (!fdMoon) { float c = (R * 1.3f - d) / (R * 0.3f); return c <= 0 ? 0 : (int)(fdDisc * fminf(1, c)); }
+  float cov = R + 0.5f - d; if (cov <= 0) return 0; if (cov > 1) cov = 1;
+  float u = dx / R, v = dy / R, rr = fminf(1, u * u + v * v), sh = 0.80f + 0.20f * sqrtf(1 - rr);
+  for (int i = 0; i < 5; i++) { float a = u - MARIA[i][0], b = v - MARIA[i][1]; sh -= MARIA[i][3] * expf(-(a * a + b * b) / (MARIA[i][2] * MARIA[i][2])); }
+  return (int)(fdDisc * cov * sh);
+}
 uint8_t  fdBodyCol[3];
 uint8_t  fdGlowT[256];                     // its glow, by distance (2 pixels a step)
 int      fdTwk = 0, fdStarD = 18;
@@ -2416,20 +2426,20 @@ void prepareFullDay() {                    // once per frame
     a = fminf(1, fmaxf(0, alt * 6)) * FD_GLOW / 100.0f;   // Sun and moon brightness setting
     fdBodyX = (int)((0.06f + day * 0.88f) * SCR_W); fdBodyY = (int)(SCR_H * (1.02f - alt * 0.9f));
     fdBodyCol[0] = 255; fdBodyCol[1] = (uint8_t)(246 - low * 90); fdBodyCol[2] = (uint8_t)(214 - low * 150);
-    R = SCR_H * 0.07f; G = SCR_H * 0.30f; disc = 1;
-    for (int k = 0; k < 256; k++) {
-      float d = k * 2.0f, g = d < R ? 1 : expf(-((d - R) / G) * ((d - R) / G) * 3) * 0.55f + (d < R * 1.25f ? (R * 1.25f - d) / (R * 0.25f) * 0.6f : 0);
-      fdGlowT[k] = (uint8_t)(255 * fminf(1, fminf(1, g) * a));
+    R = SCR_H * 0.07f; G = SCR_H * 0.30f; disc = 1; fdMoon = 0;
+    for (int k = 0; k < 256; k++) {                        // the glow only: the disc itself is drawn at every pixel (smooth edge)
+      float d = k * 2.0f, g = d < R ? 0.55f : expf(-((d - R) / G) * ((d - R) / G) * 3) * 0.55f;
+      fdGlowT[k] = (uint8_t)(255 * fminf(1, g * a));
     }
   } else if (nt > -0.03f && nt < 1.03f) {                  // the moon, through the night
     float alt = sinf(fminf(1, fmaxf(0, nt)) * PI);
     a = fminf(1, fmaxf(0, alt * 6)) * FD_GLOW / 100.0f;
     fdBodyX = (int)((0.12f + nt * 0.76f) * SCR_W); fdBodyY = (int)(SCR_H * (1.02f - alt * 0.85f));
     fdBodyCol[0] = 236; fdBodyCol[1] = 238; fdBodyCol[2] = 226;
-    R = SCR_H * 0.045f; disc = 0.92f;
-    for (int k = 0; k < 256; k++) { float d = k * 2.0f, q = (d - R) / (R * 2.2f), g = d < R ? 0.92f : expf(-q * q) * 0.22f; fdGlowT[k] = (uint8_t)(255 * fminf(1, g * a)); }
+    R = SCR_H * 0.055f; disc = 0.95f; fdMoon = 1;
+    for (int k = 0; k < 256; k++) { float d = k * 2.0f, q = (d - R) / (R * 2.2f), g = d < R ? 0.22f : expf(-q * q) * 0.22f; fdGlowT[k] = (uint8_t)(255 * fminf(1, g * a)); }   // the glow only (no hard step for the coarse grid)
   } else { a = 0; R = 0; disc = 0; memset(fdGlowT, 0, sizeof(fdGlowT)); }
-  if (a > 0) { fdBodyOn = 1; fdBodyR = (int)R; fdDisc = (int)(255 * fminf(1, disc * a)); }
+  if (a > 0) { fdBodyOn = 1; fdBodyRf = R; fdBodyR = (int)(R * 1.35f) + 2; fdDisc = (int)(255 * fminf(1, disc * a)); }   // (fdBodyR: the box the disc is drawn in)
   fdStarD = (FD_STARCNT * 3 + 5) / 10;      // Star count setting (100%: 30 in 1024 pixels)
 }
 
@@ -2455,7 +2465,7 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
   const bool fdOn = look == 18;                 // Full day: sunset's crisp clouds, the day's own colours
   int kind = fdOn ? 1 : look - 8, br = BRIGHTNESS * 256 / 100;
   const uint8_t (*colT)[3] = fdOn ? fdCol : cloudCol;
-  const int bR2 = fdBodyR * fdBodyR, bR2o = (fdBodyR + 1) * (fdBodyR + 1);
+  const int bR2o = (fdBodyR + 1) * (fdBodyR + 1);
   const int detK = CL_DET[kind], fineK = CL_FINE[kind], shadeK = CL_SHADE[kind];
   int clearN = 0; while (clearN < 384 && cloudDensT[constrain(clearN + 128 + ((128 * (detK + fineK)) >> 8) + 1, 0, 511)] == 0) clearN++;   // below this, never any cloud
   int D1 = (int)(cloudDrift * 76.8f), D2 = (int)((cloudDrift * 0.3f + 97) * 128), D3 = (int)((cloudDrift * 0.2f + 53) * 128), D4 = (int)((cloudDrift * 0.4f + 29) * 128);
@@ -2525,7 +2535,7 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
       int b0 = sky0, b1 = sky1, b2 = sky2;
       if (fdOn) {                                   // Full day: the sun (or moon) and the stars, behind the clouds
         int g = (lq[gx] * wx + lq[gx + 1] * fx) >> 4;
-        if (nearRow) { int bdx = x - fdBodyX, d2 = bdx * bdx + bdy * bdy; if (d2 < bR2) { if (fdDisc > g) g = fdDisc; } else if (d2 < bR2o && fdDisc / 2 > g) g = fdDisc / 2; }
+        if (nearRow) { int bdx = x - fdBodyX; if (bdx * bdx + bdy * bdy < bR2o) { int cv = bodyPx(bdx, bdy); if (cv > g) g = cv; } }   // the disc, smooth at every pixel
         if (g) { b0 += ((fdBodyCol[0] - b0) * g) >> 8; b1 += ((fdBodyCol[1] - b1) * g) >> 8; b2 += ((fdBodyCol[2] - b2) * g) >> 8; }
         if (fdStars > 2) {
           uint32_t h = hash32((uint32_t)(y * SCR_W + x) * 2654435761UL);
