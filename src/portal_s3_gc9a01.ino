@@ -119,7 +119,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x1C50E109UL;
+const uint32_t BUILD_ID = 0xDB9DFC99UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -133,7 +133,8 @@ uint8_t  sbGlowT[256], sbRingT[256], sbOuterT[256], ripCrestT[256], ripTroughT[2
 uint8_t  spCoreT[256], bhRingT[256], bhDiskT[256], bhStarT[256];
 uint16_t galFadeT[256];
 uint8_t  warpOn[768];                   // Hyperspace stars (kept, small: a big memory request could fail once memory is broken up, and Hyperspace fell back to the Vortex)
-float    warpRR[768];                   // where each streak's head is (its length and brightness follow from that)
+int16_t  warpLo[768], warpHi[768];      // each streak this frame: the distances it covers (empty when off)...
+int32_t  warpA[768]; int16_t warpB[768];   // ...and its brightness along it, (A + B * distance) / 256
 int      bhHole = 20, twinkle = 0;
 int16_t  linT[256];
 uint16_t pal[256];
@@ -224,7 +225,7 @@ void nzTable(uint8_t *t, int len, int passes) {
   for (int i = 0; i < len; i++) t[i] = (uint8_t)lroundf((n[i] - lo) * 255.0f / (hi - lo));
 }
 
-inline int nz(const uint8_t *t, int mask, int x) {
+static inline __attribute__((always_inline)) int nz(const uint8_t *t, int mask, int x) {
   int i = x >> 4, f = x & 15;
   return (t[i & mask] * (16 - f) + t[(i + 1) & mask] * f) >> 4;
 }
@@ -1276,7 +1277,7 @@ void updateScene() {
 // starts, the portal forms at its outer edge and closes in until it covers FRAME_PCT.
 inline bool isFramed(uint8_t s) { return s >= 128 && isPicture(s - 128); }
 
-inline uint16_t mix565(uint16_t x, uint16_t y, int m) {
+static inline __attribute__((always_inline)) uint16_t mix565(uint16_t x, uint16_t y, int m) {
   int r  = ((x >> 11) * (256 - m) + (y >> 11) * m) >> 8;
   int g  = (((x >> 5) & 63) * (256 - m) + ((y >> 5) & 63) * m) >> 8;
   int bl = ((x & 31) * (256 - m) + (y & 31) * m) >> 8;
@@ -1342,7 +1343,7 @@ extern bool woodOn; extern int woodPulse; void prepareWood();   // Wooden cross 
 extern float cloudDrift; bool cloudMemory(); void prepareClouds(int kind, int amount); void prepareFullDay();
 extern float ripplePh; extern uint8_t crossRipT[128]; void buildCrossRipple();
 
-inline void polarAt(int x, int y, int cyc, int &r, int &a) {   // distance and angle (0-255) from (centre column, row cyc)
+static inline __attribute__((always_inline)) void polarAt(int x, int y, int cyc, int &r, int &a) {   // distance and angle (0-255) from (centre column, row cyc)
   int cy = y < cyc ? cyc - 1 - y : y - cyc, a0;
   bool low = y >= cyc;
   if (cy < TQY) { int ci = cy * TQX + colMap[x]; r = rT[ci]; a0 = aT[ci]; }
@@ -1390,6 +1391,7 @@ int32_t  whHueT[256];
 uint16_t whRing133T[256], spokeVT[256];  // Wormhole, ready-multiplied for the per-pixel loop
 uint8_t  spokeHT[256], whHue8T[256];
 int      whCoreR = 0;                    // rows nearer the centre than this show the glowing far end
+int      whFineR = 9999;                 // nearer than this the rings are tight: every pixel worked out
 struct Meteor { float x, y, len; uint8_t hue; };
 Meteor   meteors[30];
 int      meteorCount = 7;
@@ -1715,6 +1717,7 @@ void prepareSpace() {                   // once per frame
       if (whCoreT[r] >= 0) whCoreR = r + 1;
     }
     for (int i = 0; i < 256; i++) { int sp = sinT[i] + 127; spokeVT[i] = sp * 123; spokeHT[i] = sp * 20 / 254; }
+    whFineR = (int)ceilf(sqrtf(8 * 234.0f / spU)) + 2;   // nearer the far end the rings are tight (under 8 pixels apart): every pixel there
   }
   if (look == 16) {                     // Meteor Shower: where each shooting star is
     float P = sqrtf((float)SCR_W * SCR_W + (float)SCR_H * SCR_H) / 340;
@@ -1739,16 +1742,29 @@ HOT void renderSpaceStrip(int y0, int rows, uint16_t *strip) {
       int cy = y < spCY ? spCY - 1 - y : y - spCY;
       if (cy < TQY) {                    // the usual case: distance and angle straight from the tables, one half at a time
         const bool low = y >= spCY;
-        const uint8_t *rr = rT + cy * TQX, *aa = aT + cy * TQX;
+        const uint8_t *rr = rT + cy * TQX, *aa = aT + cy * TQX, *CM = colMap;
+        const uint16_t *LUT = spaceLUT; const int coreR = whCoreR, qx = QX, W = SCR_W, fine = W >= 400 ? whFineR : 9999;   // (kept at hand: not looked up again for every pixel)
         for (int half = 0; half < 2; half++) {
-          const int xa = half ? QX : 0, xb = half ? SCR_W : QX;
+          const int xa = half ? qx : 0, xb = half ? W : qx;
           const int base = (half ? (low ? 0 : 256) : 128) * 6 + whPh, sg6 = (half ? low : !low) ? 6 : -6;
-          for (int x = xa; x < xb; x++) {
-            const int ci = colMap[x], r = rr[ci], i = (base + sg6 * aa[ci] + whOffT[r]) & 255;
+          auto wpx = [&](int x, int &r, int &hue) __attribute__((always_inline)) -> int {      // brightness (0-63) and colour row of one pixel
+            const int ci = CM[x]; r = rr[ci]; const int i = (base + sg6 * aa[ci] + whOffT[r]) & 255;
             int vi = (powT[(whRing133T[r] + spokeVT[i]) >> 8] * whNearT[r]) >> 10;
-            if (r < whCoreR) { if (whCoreT[r] > vi) vi = whCoreT[r]; *p++ = spaceLUT[48 * 64 + vi]; continue; }   // glowing far end
-            *p++ = spaceLUT[(((whHue8T[r] + spokeHT[i]) >> 2) & 63) * 64 + vi];
+            if (r < coreR) { if (whCoreT[r] > vi) vi = whCoreT[r]; hue = 48; return vi; }   // glowing far end
+            hue = ((whHue8T[r] + spokeHT[i]) >> 2) & 63; return vi;
+          };
+          int pend = -1, pv = 0, ph = 0;
+          for (int x = xa; x < xb; x += 2) {       // big screens: every other pixel worked out where the rings are wide, the one between blended
+            int r, hue, vi = wpx(x, r, hue);
+            if (pend >= 0) p[pend - xa] = LUT[(hue == ph ? hue : ph) * 64 + ((pv + vi) >> 1)];
+            p[x - xa] = LUT[hue * 64 + vi]; pend = -1;
+            if (x + 1 < xb) {
+              if (r < fine) { int r1, h1, v1 = wpx(x + 1, r1, h1); p[x + 1 - xa] = LUT[h1 * 64 + v1]; }
+              else { pend = x + 1; pv = vi; ph = hue; }
+            }
           }
+          if (pend >= 0) p[pend - xa] = LUT[ph * 64 + pv];
+          p += xb - xa;
         }
         continue;
       }
@@ -1957,8 +1973,10 @@ void frameStart() {
         int i = L * 256 + a;
         warpOn[i] = (int)(h & 15) < STARS + 1;
         float pos = fmodf((float)((h >> 8) & 1023) + t * (60 + L * 25), 1024.0f) / 1024.0f;
-        float rr = pos * pos * 1.15f * RADIUS;
-        warpRR[i] = rr;
+        float rr = pos * pos * 1.15f * RADIUS, len = 1.5f + rr * 0.22f, m = min(1.0f, rr / (0.8f * RADIUS));
+        if (!warpOn[i]) { warpLo[i] = 1; warpHi[i] = 0; continue; }
+        warpLo[i] = (int16_t)floorf(rr - len) + 1; warpHi[i] = (int16_t)floorf(rr);   // the pixels it lights: rr - len < r <= rr
+        warpA[i] = (int32_t)((110 + 145 * m - 87 * m * rr / len) * 256); warpB[i] = (int16_t)(87 * m / len * 256);   // brighter toward its head
       }
     }
   }
@@ -1992,13 +2010,13 @@ void frameEnd() {
   if (t > TWO_PI * 100) t -= TWO_PI * 100;   // wrap seamlessly so it can run forever
 }
 
-inline int cartoonV(int a, int r, int phase) {   // blobby flat-shaded swirl
+static inline __attribute__((always_inline)) int cartoonV(int a, int r, int phase) {   // blobby flat-shaded swirl
   int warp = (((nz(nzA, 31, a * 2 + r * 3 + (phase >> 1)) - 128) * 7) >> 3) + ((nz(nzB, 63, a * 4 + r * 6 - phase) - 128) >> 2);
   int sp = sinT[(a * ARMS - linT[r] + phase + warp) & 255];
   return r < 7 ? 232 : sp > 25 ? 232 : sp > -45 ? 182 : 120;
 }
 
-inline int styleV(int look, int a, int r, int phase, int phase2) {   // brightness (0-255) inside the portal for one style
+static inline __attribute__((always_inline)) int styleV(int look, int a, int r, int phase, int phase2) {   // brightness (0-255) inside the portal for one style
   int v;
   if (look == 11) return 110;                   // Solid colour (crosses): the inner colour, flat
   if (look == 7 || look == 6) return cartoonV(a, r, phase);
@@ -2019,15 +2037,8 @@ inline int styleV(int look, int a, int r, int phase, int phase2) {   // brightne
     v = cartoonV(a, r, phase);
   } else if (look == 3) {                       // Hyperspace: stars streak outward
     v = 30 + ((sinT[(a * 3 + (phase >> 3)) & 255] + 127) >> 4) + (spCoreT[r] >> 2);
-    for (int L = 0; L < 3; L++) {
-      int i = L * 256 + a;
-      if (!warpOn[i]) continue;
-      float rr = warpRR[i], len = 1.5f + rr * 0.22f;
-      if (r <= rr && r > rr - len) {
-        int sv = (int)(110 + 145 * min(1.0f, rr / (0.8f * RADIUS)) * (1 - (rr - r) / len * 0.6f));
-        if (sv > v) v = sv;
-      }
-    }
+    for (int i = a; i < 768; i += 256)          // the three layers of stars
+      if (r >= warpLo[i] && r <= warpHi[i]) { int sv = (warpA[i] + warpB[i] * r) >> 8; if (sv > v) v = sv; }
   } else if (look == 5) {                       // Black hole: shadow, bright ring, swirling disk
     if (r < bhHole) v = 0;
     else {
@@ -2051,7 +2062,7 @@ inline int styleV(int look, int a, int r, int phase, int phase2) {   // brightne
   return v < 0 ? 0 : v;
 }
 
-inline uint16_t max565(uint16_t a, uint16_t b) {   // brighter of two colours, channel by channel
+static inline __attribute__((always_inline)) uint16_t max565(uint16_t a, uint16_t b) {   // brighter of two colours, channel by channel
   return max(a & 0xF800, b & 0xF800) | max(a & 0x07E0, b & 0x07E0) | max(a & 0x001F, b & 0x001F);
 }
 
@@ -2103,10 +2114,10 @@ void buildCrossRipple() {
 }
 
 #define OUT_DIM 256                      // the background around a glowing cross: the same colours as inside
-inline uint16_t dim565(uint16_t c, int m) {    // darken a colour (m: 0-255)
+static inline __attribute__((always_inline)) uint16_t dim565(uint16_t c, int m) {    // darken a colour (m: 0-255)
   return ((((c >> 11) * m) >> 8) << 11) | (((((c >> 5) & 63) * m) >> 8) << 5) | (((c & 31) * m) >> 8);
 }
-inline int outV(int x, int y, int phase, int phase2) { int r, a; polarAt(x, y, QY, r, a); return (styleV(outLook, a, r, phase, phase2) * OUT_DIM) >> 8; }   // centred on the screen (quick: straight from the tables)
+static inline __attribute__((always_inline)) int outV(int x, int y, int phase, int phase2) { int r, a; polarAt(x, y, QY, r, a); return (styleV(outLook, a, r, phase, phase2) * OUT_DIM) >> 8; }   // centred on the screen (quick: straight from the tables)
 HOT void crossMask(int y0, int rows, uint16_t *strip, int look, int phase, int phase2) {   // glowing cross outline over a space picture
   const int8_t *edgeBuf = edgeRows(y0);
   for (int i = 0; i < rows * SCR_W; i++) {
@@ -2594,6 +2605,43 @@ HOT void useLook(int L, bool cross) {        // the style and cross a scene draw
   k.look = L; k.cross = cross; k.wood = woodOn; k.spCY = spCY; k.spU = spU; k.spExt = spExt;
 }
 
+// A portal style on its own (no cross): a tight loop with the style fixed, so each pixel is just a few table look-ups
+template <int L> static inline __attribute__((always_inline)) void portalRows(int y0, int rows, uint16_t *p, int phase, int phase2) {
+  const int W = SCR_W, qx = QX, cyq = QY, tq = TQX;
+  const uint8_t *RT = rT, *AT = aT, *CM = colMap, *RIM = rimT, *HALO = haloT;
+  const int16_t *ET = edgeT; const uint16_t *PL = pal;
+  const bool half2 = L != 3 && W >= 400;                 // big screens: every other pixel worked out, the one between blended (Hyperspace's thin streaks: every pixel)
+  const int FINE = 28;                                   // (near the centre, where the arms wind tight: every pixel)
+  for (int y = y0; y < y0 + rows; y++, p += W) {
+    const int qy = y < cyq ? cyq - 1 - y : y - cyq; const bool low = y >= cyq;
+    const uint8_t *rr = RT + qy * tq, *aa = AT + qy * tq;
+    for (int half = 0; half < 2; half++) {               // the left half, then the right (the angle runs the other way)
+      const int xa = half ? qx : 0, xb = half ? W : qx;
+      const int base = half ? (low ? 0 : 256) : 128, sg = (half ? low : !low) ? 1 : -1;
+      auto px = [&](int x, int &r) __attribute__((always_inline)) -> int {
+        const int c = CM[x], a = (base + sg * aa[c]) & 255, e = ET[a];
+        r = rr[c];
+        int v;
+        if (r < e) { v = styleV(L, a, r, phase, phase2); const int k = e - r; if (k < 64 && RIM[k] > v) v = RIM[k]; }
+        else { const int k = r - e; v = k < 64 ? RIM[k] : 0; const int h = HALO[k > 255 ? 255 : k]; if (h > v) v = h; }
+        return v > 255 ? 255 : v;
+      };
+      if (!half2) { for (int x = xa; x < xb; x++) { int r; p[x] = PL[px(x, r)]; } continue; }
+      int pend = -1, pv = 0;
+      for (int x = xa; x < xb; x += 2) {
+        int r, v = px(x, r);
+        if (pend >= 0) p[pend] = PL[(pv + v) >> 1];       // the pixel before: halfway between its neighbours
+        p[x] = PL[v]; pend = -1;
+        if (x + 1 < xb) {
+          if (r < FINE) { int r1; p[x + 1] = PL[px(x + 1, r1)]; }
+          else { pend = x + 1; pv = v; }
+        }
+      }
+      if (pend >= 0) p[pend] = PL[pv];
+    }
+  }
+}
+
 HOT void renderStrip(int y0, int rows, uint16_t *strip) {
   const SceneLook &LKc = lk[CORE_ID()]; const uint8_t look = LKc.look; const bool crossOn = LKc.cross, woodOn = LKc.wood;   // this core's style
   const int8_t *edgeBuf = edgeRows(y0);
@@ -2607,6 +2655,16 @@ HOT void renderStrip(int y0, int rows, uint16_t *strip) {
     if (cross) crossMask(y0, rows, strip, look, phase, phase2);
     return;
   }
+  if (!cross && (look <= 3 || look == 6)) {        // the common case: a portal style on its own
+    switch (look) {
+      case 0: portalRows<0>(y0, rows, strip, phase, phase2); break;
+      case 1: portalRows<1>(y0, rows, strip, phase, phase2); break;
+      case 2: portalRows<2>(y0, rows, strip, phase, phase2); break;
+      case 3: portalRows<3>(y0, rows, strip, phase, phase2); break;
+      default: portalRows<6>(y0, rows, strip, phase, phase2); break;
+    }
+    p = strip + rows * SCR_W;
+  } else {
   const bool outPortal = cross && outLook != 255 && !isGridSpace(outLook), outSpace = cross && isGridSpace(outLook);
   if (outSpace) {                                  // a space picture outside the cross: drawn first, the cross goes over it
     SceneLook &K = lk[CORE_ID()]; SceneLook keep = K;
@@ -2652,6 +2710,7 @@ HOT void renderStrip(int y0, int rows, uint16_t *strip) {
       if (gx) px = max565(px, xpal[gx]);                                      // the cross outline in its own colour
       *p++ = px;
     }
+  }
   }
   for (uint8_t i = 0; i < NUM_SPARKS; i++) {           // sparks in this strip
     if (look == 11) break;                             // a solid-colour cross has no sparks
