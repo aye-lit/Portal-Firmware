@@ -1068,11 +1068,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.15.2";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/e053adaa0496897e17782c5e714cbcd4fc378edd/";
+const FW_VERSION = "1.16.0";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/6fc48ad8475d2be4b78f656a16b7f806aaecc855/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "333456e1139362db5609fbda03a2935fce7b2c4f5d2eb0623c6c865fbfc1aee6" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "83dcec322368254dffe925868e9d9df4b3a4f8f7d9c2b568322a0f2f161b6fe1" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "bc4008914174a8326c62b3907a15af99e4a0bcfa8ce8d47610efd1160bdd24f3" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "9013e34810999e075049acb0927baf3d32199b09b6fe8c279eda139dff5863d0" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
