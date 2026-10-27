@@ -847,6 +847,7 @@ function buildGeo(w, h) {
 }
 buildGeo(240, 240);
 const sinT = new Int8Array(256).map((_, i) => Math.round(127 * Math.sin(i * TWO_PI / 256)));
+const sin1k = new Int8Array(1024).map((_, i) => Math.round(127 * Math.sin(i * TWO_PI / 1024)));   // finer: smooth curves on big screens
 const twistT = new Int16Array(256), twist2T = new Int16Array(256), edgeT = new Int16Array(256);
 const depthT = new Uint8Array(256), coreT = new Uint8Array(256), haloT = new Uint8Array(256), rimT = new Uint8Array(64);
 const linT = new Int16Array(256), centerT = new Uint8Array(256);
@@ -934,6 +935,10 @@ function buildTftPalette() {           // black → core → rim → near-white,
     }
     xPal = xPalOwn;
   } else xPal = tftPal;
+}
+function fineAngle(x, qy, low) {                     // the angle at 1024 steps a turn (the tables have 256)
+  const a0 = Math.atan2(qy + 0.5, colMap[x] + 0.5) / (Math.PI / 2) * 256;
+  return Math.round(x >= QX ? (low ? a0 : 1024 - a0) : (low ? 512 - a0 : 512 + a0)) & 1023;
 }
 function polarAt(x, y, cyc) {                        // distance and angle (0-255) of a pixel from (centre column, row cyc)
   const cy = y < cyc ? cyc - 1 - y : y - cyc, low = y >= cyc;
@@ -1577,7 +1582,7 @@ function woodFrame(out, CE, fill, arms, phase, phase2, tw) {
 }
 
 let tftImg = null;
-function styleV(look, a, r, arms, phase, phase2, tw) {   // brightness (0-255) inside the portal for one style
+function styleV(look, a, r, arms, phase, phase2, tw, a1k) {   // brightness (0-255) inside the portal for one style
   let v;
   if (look === 11) return 110;            // Solid colour (crosses): the inner colour, flat
   if (look === 7 || look === 6) return cartoonV(a, r, arms, phase);
@@ -1588,6 +1593,11 @@ function styleV(look, a, r, arms, phase, phase2, tw) {   // brightness (0-255) i
     const band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
     v = (d * (60 + ((band * 195) >> 8))) >> 8;
     if (s > 100) v += ((s - 100) * 3 * d) >> 8;
+    if (coreT[r] > v) v = coreT[r];
+  } else if (look === 1 && a1k != null) {  // Toon Spiral, at four times the angle detail (crisp curves)
+    const w = sin1k[(a1k * 6 + (r * 4 + phase2) * 4) & 1023] >> 2;
+    const sp = sin1k[(a1k * arms - (linT[r] - phase - w) * 4) & 1023];
+    v = sp > 14 ? 235 : sp > -14 ? 70 : 125;             // flat light and dark bands with a thin dark outline between
     if (coreT[r] > v) v = coreT[r];
   } else if (look === 1) {                // Toon Spiral
     const w = sinT[(a * 6 + r * 4 + phase2) & 255] >> 2;
@@ -1772,7 +1782,7 @@ function tftRender(out, style) {                      // one frame of one style 
         const e2 = Math.trunc(R * 1.02 + jag / 4);
         v = r >= e2 ? 0 : r >= e2 - Math.max(1, Math.round(4 * S.rimw / 100)) ? 235 : cartoonV(a, r, arms, phase);   // outline: Rim thickness
       } else if (r < e) {
-        v = styleV(style, a, r, arms, phase, phase2, tw);
+        v = styleV(style, a, r, arms, phase, phase2, tw, style === 1 ? fineAngle(x, qy, low) : null);
         const k = e - r; if (k < 64 && rimT[k] > v) v = rimT[k];
       } else {
         const k = r - e; v = k < 64 ? rimT[k] : 0;
