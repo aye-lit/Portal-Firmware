@@ -119,7 +119,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xDB9DFC99UL;
+const uint32_t BUILD_ID = 0xBE6D6CF1UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -1942,7 +1942,7 @@ void frameStart() {
     if (L == 4 || (L >= 14 && L <= 16)) { look = L; if (spaceMemory()) prepareSpace(); else L = 0; }
   }
   if (!needB && sceneMix < 128) lookB = lookA;
-  outLook = baseCross && !woodOn && validOut(CROSS_OUT) ? CROSS_OUT : 255;   // outside the glowing cross
+  outLook = baseCross && !woodOn && CROSS_OUT != 255 && validOut(baseLook) ? baseLook : 255;   // Background on: the very same style as inside the cross
   if (isGridSpace(outLook)) {                         // a space picture outside: only one space picture at a time
     bool other = (isGridSpace(lookA) && lookA != outLook) || (isGridSpace(lookB) && lookB != outLook);
     if (other) outLook = 255;
