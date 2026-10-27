@@ -464,7 +464,7 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 // Scenes for the sketch and the SET command: 255 = the portal, 0-7 = picture slots
 function picturesAllowed() { const B = boardOf(); return M.kind === "tft" && (/^ESP32/.test(B.family) || !!B.custom); }
 function turns(m) { return m.kind === "tft" && !!m.rect && m.w !== m.h; }   // rectangles can be turned live (portrait / landscape)
-const SCENE_STYLES = [0, 1, 2, 3, 4, 6, 14, 15, 16, 8, 9, 10, 11, 12, 13, 17];   // styles a scene can switch to (crosses too: each keeps its own cross settings)
+const SCENE_STYLES = [0, 1, 2, 3, 4, 6, 14, 16, 8, 9, 10, 11, 12, 13, 17];   // styles a scene can switch to (crosses too: each keeps its own cross settings)
 const OUT_OK = [255, 0, 1, 2, 3, 4, 6, 11, 14, 15, 16];   // what can go outside a glowing cross (255: black)
 const isGridSpace = f => f === 4 || (f >= 14 && f <= 16);
 const bgOut = st => st.crossOut == null || st.crossOut === 255 ? 255 : st.crossFill;   // the Background setting: off (255), or the same style as inside the cross
@@ -608,7 +608,10 @@ if (!MODELS[S.model]) S.model = DEFAULTS.model;
 if (S.style === 5) S.style = 3;                       // Black hole is gone: Hyperspace instead
 if (S.crossFill === 5) S.crossFill = 3;
 if (S.style === 7) S.style = 6;                       // Cartoon Sticker is gone: Cartoon Swirl instead
-if (Array.isArray(S.scenes)) S.scenes = S.scenes.map(x => x === 207 ? 206 : x);
+if (S.style === 15) S.style = 3;                      // Wormhole is gone: Hyperspace instead
+if (S.crossFill === 15) S.crossFill = 3;
+if (Array.isArray(S.sceneSets)) S.sceneSets.forEach(st => { if (st && st.crossFill === 15) st.crossFill = 3; });
+if (Array.isArray(S.scenes)) S.scenes = S.scenes.map(x => x === 207 ? 206 : x === 215 ? 203 : x);
 if (S.board === "s3mini") S.board = "esp32s3";
 if (!BOARDS[S.board]) S.board = DEFAULTS.board;
 if (!S.custom || typeof S.custom !== "object") S.custom = {};
@@ -847,7 +850,6 @@ function buildGeo(w, h) {
 }
 buildGeo(240, 240);
 const sinT = new Int8Array(256).map((_, i) => Math.round(127 * Math.sin(i * TWO_PI / 256)));
-const sin1k = new Int8Array(1024).map((_, i) => Math.round(127 * Math.sin(i * TWO_PI / 1024)));   // finer: smooth curves on big screens
 const twistT = new Int16Array(256), twist2T = new Int16Array(256), edgeT = new Int16Array(256);
 const depthT = new Uint8Array(256), coreT = new Uint8Array(256), haloT = new Uint8Array(256), rimT = new Uint8Array(64);
 const linT = new Int16Array(256), centerT = new Uint8Array(256);
@@ -935,10 +937,6 @@ function buildTftPalette() {           // black → core → rim → near-white,
     }
     xPal = xPalOwn;
   } else xPal = tftPal;
-}
-function fineAngle(x, qy, low) {                     // the angle at 1024 steps a turn (the tables have 256)
-  const a0 = Math.atan2(qy + 0.5, colMap[x] + 0.5) / (Math.PI / 2) * 256;
-  return Math.round(x >= QX ? (low ? a0 : 1024 - a0) : (low ? 512 - a0 : 512 + a0)) & 1023;
 }
 function polarAt(x, y, cyc) {                        // distance and angle (0-255) of a pixel from (centre column, row cyc)
   const cy = y < cyc ? cyc - 1 - y : y - cyc, low = y >= cyc;
@@ -1582,7 +1580,7 @@ function woodFrame(out, CE, fill, arms, phase, phase2, tw) {
 }
 
 let tftImg = null;
-function styleV(look, a, r, arms, phase, phase2, tw, a1k) {   // brightness (0-255) inside the portal for one style
+function styleV(look, a, r, arms, phase, phase2, tw) {   // brightness (0-255) inside the portal for one style
   let v;
   if (look === 11) return 110;            // Solid colour (crosses): the inner colour, flat
   if (look === 7 || look === 6) return cartoonV(a, r, arms, phase);
@@ -1593,11 +1591,6 @@ function styleV(look, a, r, arms, phase, phase2, tw, a1k) {   // brightness (0-2
     const band = ((s + 127) * 5 + (s2 + 127) * 3) >> 3;
     v = (d * (60 + ((band * 195) >> 8))) >> 8;
     if (s > 100) v += ((s - 100) * 3 * d) >> 8;
-    if (coreT[r] > v) v = coreT[r];
-  } else if (look === 1 && a1k != null) {  // Toon Spiral, at four times the angle detail (crisp curves)
-    const w = sin1k[(a1k * 6 + (r * 4 + phase2) * 4) & 1023] >> 2;
-    const sp = sin1k[(a1k * arms - (linT[r] - phase - w) * 4) & 1023];
-    v = sp > 14 ? 235 : sp > -14 ? 70 : 125;             // flat light and dark bands with a thin dark outline between
     if (coreT[r] > v) v = coreT[r];
   } else if (look === 1) {                // Toon Spiral
     const w = sinT[(a * 6 + r * 4 + phase2) & 255] >> 2;
@@ -1782,7 +1775,7 @@ function tftRender(out, style) {                      // one frame of one style 
         const e2 = Math.trunc(R * 1.02 + jag / 4);
         v = r >= e2 ? 0 : r >= e2 - Math.max(1, Math.round(4 * S.rimw / 100)) ? 235 : cartoonV(a, r, arms, phase);   // outline: Rim thickness
       } else if (r < e) {
-        v = styleV(style, a, r, arms, phase, phase2, tw, style === 1 ? fineAngle(x, qy, low) : null);
+        v = styleV(style, a, r, arms, phase, phase2, tw);
         const k = e - r; if (k < 64 && rimT[k] > v) v = rimT[k];
       } else {
         const k = r - e; v = k < 64 ? rimT[k] : 0;

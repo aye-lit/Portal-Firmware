@@ -373,7 +373,7 @@ const STYLES = [
   { name: "Cartoon Sticker", c: PRESETS.Slime, arms: 2, twist: 1.8, removed: true },   // (no longer offered)
   ...CROSS_NAMES.map((name, k) => ({ name, cross: CROSS_SHAPE[k] })),
   { name: "Nebula" },
-  { name: "Wormhole" },
+  { name: "Wormhole", removed: true },   // (no longer offered)
   { name: "Meteor Shower", sparks: 14 },
   { name: "Wooden", cross: CROSS_SHAPE[0], c: ["#d26a00", "#ffd27a"], wood: true },
 ];
@@ -1068,11 +1068,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.16.4";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/da8b40dbcfcf8f8f3bcdf20d212ef99777830bd3/";
+const FW_VERSION = "1.16.5";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/0a294e670dea7043f391e457828c3fe6b6ea89b7/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "cac7918190b3e6866311b3c8422a9b46cd6070573316722c3d7b24b74cd7bb79" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "e4c92e25c62019e02adbc784b90cc4e2904d13ff8abe7cefc065c8c56730043b" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "0b9b85be1f33ec76ccfb8653a9093d0a4b5caa5f8bd076d08be9faf97ed2a833" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "8e1e10e81d6cbfe183b402471dc1927bd7b94291fb8710af58d8c1d842e01f1b" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
