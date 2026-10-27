@@ -138,3 +138,10 @@ def test_account_stops_trading_once_wiped_out():
     a = account(trades, cfg, n_days=4)
     assert a["wiped_out"] and a["end_usd"] == pytest.approx(20.0)   # the +500 after the wipe-out never happens
     assert a["low_usd"] == pytest.approx(20.0)
+
+
+def test_clean_drops_weekend_prints():
+    idx = pd.DatetimeIndex(["2025-09-19 15:00", "2025-09-20 21:39", "2025-09-21 17:16", "2025-09-21 18:01"],
+                           tz="America/New_York")   # Fri, Sat, Sun before the open, Sun after the 18:00 open
+    df = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}, index=idx)
+    assert list(data.clean(df).index) == [idx[0], idx[3]]

@@ -92,6 +92,8 @@ def clean(df):
     df = df[COLS].astype(float)
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df = df[(df[["open", "high", "low", "close"]] > 0).all(axis=1)]
+    # stray weekend prints (a bar or two on Saturday/Sunday outside any Globex session)
+    df = df[session_date(df.index).dayofweek < 5]
     # repair occasional bad prints where high/low do not contain open/close
     df["high"] = df[["open", "high", "close"]].max(axis=1)
     df["low"] = df[["open", "low", "close"]].min(axis=1)
