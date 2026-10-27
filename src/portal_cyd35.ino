@@ -124,7 +124,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x9996401BUL;
+const uint32_t BUILD_ID = 0xEBB7362CUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -2626,7 +2626,7 @@ template <int L> static inline __attribute__((always_inline)) void portalRows(in
   const int W = SCR_W, qx = QX, cyq = QY, tq = TQX;
   const uint8_t *RT = rT, *AT = aT, *CM = colMap, *RIM = rimT, *HALO = haloT;
   const int16_t *ET = edgeT; const uint16_t *PL = pal;
-  const bool half2 = L != 3 && W >= 400;                 // big screens: every other pixel worked out, the one between blended (Hyperspace's thin streaks: every pixel)
+  const bool half2 = (L == 0 || L == 2) && W >= 400;   // big screens, soft styles (Vortex, Starburst): every other pixel worked out, the one between blended (crisp styles and Hyperspace's thin streaks: every pixel)
   const int FINE = 28;                                   // (near the centre, where the arms wind tight: every pixel)
   for (int y = y0; y < y0 + rows; y++, p += W) {
     const int qy = y < cyq ? cyq - 1 - y : y - cyq; const bool low = y >= cyq;
