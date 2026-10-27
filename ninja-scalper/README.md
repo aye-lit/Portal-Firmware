@@ -37,7 +37,13 @@ leaderboard of timeframe × stop size × reward:risk  →  the winner becomes th
 
 Before costs, a 3:1 target breaks even at a 25% hit rate and a 4:1 target at 20%. After costs and fills, real winners average less than the target and real losers a little more than 1R. On a year of MES data, 3:1 needed about a 32% win rate to break even. The bot only takes a trade when the model's probability is above the learned cut-off.
 
-**Account check.** Every result is also replayed on a small account: **$200** by default, trading 1 contract. Any signal that would risk more than **$15** is skipped. The account counts as wiped out once it falls below **$50**, roughly the margin needed to hold 1 MES (check your broker). The trades are also reshuffled into 2,000 possible years to estimate how often bad luck alone would wipe the account out. All three numbers can be changed in the settings.
+**Position sizing and the account check.** Every trade risks at most **1% of the current account balance**. The number of contracts is 1% of the balance divided by what one contract loses at the stop, rounded down, so the account compounds as it grows. A trade that can't be sized to at least 1 contract is skipped.
+
+Every result is replayed on an account that starts at **$200** by default. The report shows how many trades the account could actually take, what it ended with, and the capital the 1% rule needs for a typical trade of each setup. The trades are also reshuffled into 1,000 possible years to show how much of the result is luck. The starting balance and the risk percentage can be changed in the settings.
+
+With 1% sizing, what decides the outcome is the **average R per trade**, the average profit or loss measured in units of the amount risked. A positive average R grows the account. A negative one shrinks it, however many dollars the strategy makes per contract.
+
+One MES contract can't risk less than about $4 once commission and slippage are counted. So the 1% rule needs at least a few hundred dollars, and typical setups need about **$1,500–7,000**. A $200 account mostly skips trades.
 
 **The backtest assumes conservative fills, so its results are not flattered:**
 - Entry is a market order at the next bar's open, plus 1 tick of slippage.
@@ -45,7 +51,7 @@ Before costs, a 3:1 target breaks even at a 25% hit rate and a 4:1 target at 20%
 - A limit target counts as filled only when price trades **one tick through** it.
 - A stop that price gaps through fills at the worse price, plus slippage.
 - Commission is $0.62 per side.
-- One position at a time. At most 8 trades a day, and trading stops for the day after a 3R loss.
+- One position at a time. At most 5 trades a day, and trading stops for the day after a 3R loss.
 - No trade is held across the session break. Every trade is closed by 15:55 ET.
 
 **Reality check about 1-minute scalping:** on MES a 4-tick (1-point) stop risks $5. Commission ($1.24) plus two ticks of slippage ($2.50) cost about **0.75R per trade**. A 1-minute strategy needs a very strong edge just to break even. The explorer measures this for you, and it often shows that 3–15-minute bars scalp better than 1-minute bars.
@@ -130,10 +136,13 @@ python -m scalper --instrument MNQ learn              :: Micro Nasdaq (download 
    ```
 4. Open a chart of the front MES contract, with **Minute** bars at the printed value. Set **Days to load** to 30 or more.
 5. Add the **AiScalper** strategy and choose the **Sim101** account. Set the risk properties:
-   - Contracts
-   - Max trades per day
-   - Daily loss limit ($)
+   - Risk per trade (% of account): 1
+   - Max trades per day: 5
+   - Daily loss limit (% of account): 3
+   - Max contracts
    - Flatten time (HHmm, Eastern)
+
+   On Sim or live, the strategy sizes each trade from the account balance. In the Strategy Analyzer or Playback, it uses **Starting capital (backtests only)** plus its own profit and loss.
 6. Enable the strategy. Historical bars warm up the model, and trading starts on live bars. Signals appear in NinjaTrader's Output window, and every decision is logged to `reports/live_signals.csv`.
 
 To backtest the live model inside NinjaTrader, enable **Trade historical bars** in the Strategy Analyzer or Playback. Keep the server running while you do.
@@ -158,7 +167,7 @@ The defaults are in `scalper/config.py`. To override any of them, write a JSON f
 ```json
 { "timeframes": [2, 3, 5], "reward_ratios": [3.0, 4.0], "trade_start": "09:45", "trade_end": "11:30",
   "max_trades_per_day": 4, "commission_per_side": 0.50,
-  "starting_capital": 1000, "max_risk_per_trade_usd": 30 }
+  "starting_capital": 5000, "risk_per_trade_pct": 1.0 }
 ```
 
 ```bat
@@ -167,7 +176,7 @@ python -m scalper --config my.json learn
 
 The reward:risk ratio is never allowed below 2:1. Both Python and NinjaTrader reject any bracket with a target smaller than 2× the stop.
 
-The NinjaTrader strategy has matching risk settings, also sized for the $200 example. **Max risk per trade ($)** defaults to 15 and **Daily loss limit ($)** to 30. If you change the account size, change them in both places.
+The NinjaTrader strategy uses the same rules: **Risk per trade** defaults to 1% and **Daily loss limit** to 3% of the account, with at most 5 trades a day.
 
 ## Project layout
 

@@ -39,8 +39,12 @@ def _trade(entry_time, exit_time, side, entry, exit_px, risk_pts, inst, cfg, rea
                 target_hit=reason == "target", exit_reason=reason, session=entry_time.normalize().tz_localize(None))
 
 
-def noise_area(bars, cfg, lookback=14, mult=1.0, check_every=30):
-    """Zarattini-Aziz-Barbon intraday momentum on 1 contract."""
+def noise_area(bars, cfg, lookback=14, mult=1.0, check_every=30, hard_stop=False):
+    """Zarattini-Aziz-Barbon intraday momentum on 1 contract.
+
+    hard_stop=True adds a resting stop at the trailing level (band / VWAP), checked on every 1-minute bar
+    and moved only in the trade's favour at each checkpoint, so the risk used for position sizing is real.
+    The published rules only check the trail every `check_every` minutes."""
     inst = get_instrument(cfg.instrument)
     slip = cfg.slippage_ticks * inst.tick_size
     r = rth_minutes(bars)
@@ -66,12 +70,21 @@ def noise_area(bars, cfg, lookback=14, mult=1.0, check_every=30):
         nxt_open = np.append(day["open"].to_numpy()[1:], c[-1])
         mods = day["mod"].to_numpy()
         times = day.index
-        pos, entry, entry_t, stop_at_entry = 0, 0.0, None, 0.0
+        hi, lo, op = day["high"].to_numpy(), day["low"].to_numpy(), day["open"].to_numpy()
+        pos, entry, entry_t, stop_at_entry, stop = 0, 0.0, None, 0.0, np.nan
         for k in range(len(day) - 1):
             bar_end = mods[k] + 1
+            if pos and hard_stop and times[k] >= entry_t:
+                if (pos > 0 and lo[k] <= stop) or (pos < 0 and hi[k] >= stop):
+                    fill = (min(stop, op[k]) if pos > 0 else max(stop, op[k])) - pos * slip
+                    trades.append(_trade(entry_t, times[k], pos, entry, fill, stop_at_entry, inst, cfg, "stop"))
+                    pos = 0
+                    continue
             checkpoint = bar_end >= RTH_OPEN + 30 and (bar_end - RTH_OPEN) % check_every == 0
             if pos and checkpoint:
                 trail = max(ub[k], vwap[k]) if pos > 0 else min(lb[k], vwap[k])
+                if hard_stop:
+                    stop = max(stop, trail) if pos > 0 else min(stop, trail)
                 if (pos > 0 and c[k] < trail) or (pos < 0 and c[k] > trail):
                     trades.append(_trade(entry_t, times[k + 1], pos, entry, nxt_open[k] - pos * slip,
                                          stop_at_entry, inst, cfg, "trail"))
@@ -80,7 +93,8 @@ def noise_area(bars, cfg, lookback=14, mult=1.0, check_every=30):
                 side = 1 if c[k] > ub[k] else -1 if c[k] < lb[k] else 0
                 if side:
                     pos, entry, entry_t = side, nxt_open[k] + side * slip, times[k + 1]
-                    stop_at_entry = abs(entry - (max(ub[k], vwap[k]) if side > 0 else min(lb[k], vwap[k])))
+                    stop = max(ub[k], vwap[k]) if side > 0 else min(lb[k], vwap[k])
+                    stop_at_entry = abs(entry - stop)
         if pos:
             trades.append(_trade(entry_t, times[-1], pos, entry, c[-1] - pos * slip, stop_at_entry, inst, cfg,
                                  "close"))

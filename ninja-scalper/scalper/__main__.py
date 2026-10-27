@@ -134,8 +134,9 @@ def cmd_published(a):
         usd = t["net_usd"]
         t_usd = usd.mean() / usd.std() * len(usd) ** 0.5 if len(usd) > 1 else 0.0
         print(f"{name:28} trades {m['trades']:>5}  win {m['win_rate']:.0%}  net ${m['net_usd']:>8,.0f}  "
-              f"t {t_usd:+.2f}  max DD ${m['max_dd_usd']:,.0f}  ${cfg.starting_capital:,.0f} -> ${acct['end_usd']:,.0f}  "
-              f"wipe-out odds {acct['wipeout_prob_1y']:.0%}")
+              f"t {t_usd:+.2f}  max DD ${m['max_dd_usd']:,.0f}  | {cfg.risk_per_trade_pct:g}% rule needs "
+              f"${acct['capital_needed_usd']:,.0f}; ${cfg.starting_capital:,.0f} -> ${acct['end_usd']:,.0f} "
+              f"({acct['taken']} trades taken)")
         t.to_csv(os.path.join(REPORTS_DIR, "published_" + name.split(",")[0].replace(" ", "_") + ".csv"), index=False)
 
 

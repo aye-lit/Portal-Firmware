@@ -22,12 +22,13 @@ class Config:
     trade_start: str = "09:35"           # Eastern; signals before this are ignored
     trade_end: str = "15:30"             # Eastern; no new entries after this
     flatten_time: str = "15:55"          # Eastern; open trades are closed here
-    max_trades_per_day: int = 8
-    daily_loss_limit_r: float = 3.0      # stop for the day after losing this many R
+    max_trades_per_day: int = 5
+    daily_loss_limit_r: float = 3.0      # stop for the day after losing this many R (= 3% at 1% risk)
 
-    # --- account (example: a $200 account trading 1 MES contract) -----------------
+    # --- account and position sizing ---------------------------------------------
     starting_capital: float = 200.0
-    max_risk_per_trade_usd: float = 15.0  # skip signals whose stop would risk more than this (7.5% of $200)
+    risk_per_trade_pct: float = 1.0      # contracts = floor(1% of current balance / risk of 1 contract);
+                                         # a trade that cannot be sized to at least 1 contract is skipped
     min_account_usd: float = 50.0        # below this the account can no longer hold 1 MES (typical day-trade
                                          # margin; check your broker) - counted as "wiped out"
 

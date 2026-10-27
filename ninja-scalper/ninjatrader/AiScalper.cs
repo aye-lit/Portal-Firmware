@@ -32,6 +32,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private bool needsReplay;
         private int tradesToday;
         private double sessionStartPnl;
+        private double sessionStartBalance;
         private int maxHoldBars = 12;
         private TimeZoneInfo eastern;
         private const int ReplayBars = 6000;
@@ -55,10 +56,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 Host = "127.0.0.1";
                 Port = 5555;
-                Contracts = 1;
-                MaxTradesPerDay = 8;
-                DailyLossLimit = 30;      // sized for a $200 example account
-                MaxRiskPerTrade = 15;
+                RiskPercent = 1.0;
+                MaxContracts = 10;
+                MaxTradesPerDay = 5;
+                DailyLossPercent = 3.0;
+                StartingCapital = 200;
                 FlattenTimeEt = 1555;
                 TradeHistorical = false;
             }
@@ -84,6 +86,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 tradesToday = 0;
                 sessionStartPnl = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
+                sessionStartBalance = AccountBalance();
             }
 
             DateTime closeEt = ToEastern(Time[0]);
@@ -113,7 +116,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             bool canTrade = State == State.Realtime || TradeHistorical;
             double dayPnl = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit - sessionStartPnl;
             bool allowed = flat && canTrade && CurrentBar >= BarsRequiredToTrade
-                           && tradesToday < MaxTradesPerDay && dayPnl > -DailyLossLimit && hhmm < FlattenTimeEt;
+                           && tradesToday < MaxTradesPerDay && hhmm < FlattenTimeEt
+                           && (sessionStartBalance <= 0 || dayPnl > -sessionStartBalance * DailyLossPercent / 100.0);
 
             string reply = Exchange(BarJson(0, allowed));
             if (reply == null || !allowed)
@@ -131,10 +135,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Print("AiScalper: rejected signal with bad bracket " + reply);
                 return;
             }
-            double riskUsd = stopTicks * TickSize * Instrument.MasterInstrument.PointValue * Contracts;
-            if (riskUsd > MaxRiskPerTrade)
+            // position size: risk at most RiskPercent of the account on this trade
+            double balance = AccountBalance();
+            double riskPerContract = stopTicks * TickSize * Instrument.MasterInstrument.PointValue;
+            double riskBudget = balance * RiskPercent / 100.0;
+            int quantity = Math.Min(MaxContracts, (int)Math.Floor(riskBudget / riskPerContract));
+            if (quantity < 1)
             {
-                Print(string.Format("AiScalper: skipped {0}, risk ${1:0.00} > ${2:0.00}", action, riskUsd, MaxRiskPerTrade));
+                Print(string.Format("AiScalper: skipped {0}: {1}% of ${2:0.00} is ${3:0.00}, but 1 contract risks ${4:0.00}",
+                    action, RiskPercent, balance, riskBudget, riskPerContract));
                 return;
             }
             if (hold > 0)
@@ -144,17 +153,29 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 SetStopLoss(LongSignal, CalculationMode.Ticks, stopTicks, false);
                 SetProfitTarget(LongSignal, CalculationMode.Ticks, targetTicks);
-                EnterLong(Contracts, LongSignal);
+                EnterLong(quantity, LongSignal);
             }
             else
             {
                 SetStopLoss(ShortSignal, CalculationMode.Ticks, stopTicks, false);
                 SetProfitTarget(ShortSignal, CalculationMode.Ticks, targetTicks);
-                EnterShort(Contracts, ShortSignal);
+                EnterShort(quantity, ShortSignal);
             }
             tradesToday++;
-            Print(string.Format("AiScalper {0} {1} p={2} stop={3}t target={4}t", Time[0], action.ToUpper(),
-                JsonValue(reply, "prob"), stopTicks, targetTicks));
+            Print(string.Format("AiScalper {0} {1} x{2} p={3} stop={4}t target={5}t risk=${6:0.00}", Time[0],
+                action.ToUpper(), quantity, JsonValue(reply, "prob"), stopTicks, targetTicks, quantity * riskPerContract));
+        }
+
+        // Live/Sim: the account's cash value. Strategy Analyzer/Playback: StartingCapital plus this strategy's P&L.
+        private double AccountBalance()
+        {
+            if (State == State.Realtime && Account != null)
+            {
+                double cash = Account.Get(AccountItem.CashValue, Currency.UsDollar);
+                if (cash > 0)
+                    return cash;
+            }
+            return StartingCapital + SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
         }
 
         // ------------------------------------------------------------------ bridge
@@ -287,9 +308,19 @@ namespace NinjaTrader.NinjaScript.Strategies
         public int Port { get; set; }
 
         [NinjaScriptProperty]
+        [Range(0.01, 100)]
+        [Display(Name = "Risk per trade (% of account)", GroupName = "Risk", Order = 1)]
+        public double RiskPercent { get; set; }
+
+        [NinjaScriptProperty]
         [Range(1, int.MaxValue)]
-        [Display(Name = "Contracts", GroupName = "Risk", Order = 1)]
-        public int Contracts { get; set; }
+        [Display(Name = "Max contracts", GroupName = "Risk", Order = 6)]
+        public int MaxContracts { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(1, double.MaxValue)]
+        [Display(Name = "Starting capital (backtests only)", GroupName = "Risk", Order = 7)]
+        public double StartingCapital { get; set; }
 
         [NinjaScriptProperty]
         [Range(1, int.MaxValue)]
@@ -297,14 +328,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         public int MaxTradesPerDay { get; set; }
 
         [NinjaScriptProperty]
-        [Range(0, double.MaxValue)]
-        [Display(Name = "Daily loss limit ($)", GroupName = "Risk", Order = 3)]
-        public double DailyLossLimit { get; set; }
-
-        [NinjaScriptProperty]
-        [Range(0, double.MaxValue)]
-        [Display(Name = "Max risk per trade ($)", GroupName = "Risk", Order = 5)]
-        public double MaxRiskPerTrade { get; set; }
+        [Range(0, 100)]
+        [Display(Name = "Daily loss limit (% of account)", GroupName = "Risk", Order = 3)]
+        public double DailyLossPercent { get; set; }
 
         [NinjaScriptProperty]
         [Range(0, 2359)]

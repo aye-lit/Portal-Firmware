@@ -85,12 +85,9 @@ class Brain:
                                           self.b["reward_risk"], self.cfg["min_stop_ticks"], self.cfg["max_stop_ticks"])
         side = "long" if p_long >= p_short else "short"
         prob = max(p_long, p_short)
-        risk = int(stop[0]) * self.inst.tick_value
-        max_risk = self.cfg.get("max_risk_per_trade_usd", float("inf"))
-        action = side if prob >= self.b["threshold"] and risk <= max_risk else "none"
+        # position size (1% of the account) is decided in NinjaTrader, which knows the account balance
+        action = side if prob >= self.b["threshold"] else "none"
         reason = f"pL={p_long:.3f} pS={p_short:.3f}"
-        if prob >= self.b["threshold"] and risk > max_risk:
-            reason += f" skipped: risk ${risk:.2f} > ${max_risk:.2f}"
         out = {"action": action, "prob": round(prob, 4), "stop_ticks": int(stop[0]), "target_ticks": int(target[0]),
                "max_hold_bars": self.b["max_hold_bars"], "reason": reason}
         self._log(start, msg, p_long, p_short, out)

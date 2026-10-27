@@ -158,7 +158,7 @@ def explore(base, base_minutes, cfg, log=print):
                 log(f"  stop {stop_mult:>4}xATR  {reward}:1  trades {m['trades']:>5}  win {m['win_rate']:.0%}  "
                     f"avgR {m['avg_r']:+.3f}  PF {m['profit_factor']:.2f}  net ${m['net_usd']:>10,.0f}  "
                     f"t {m['t_stat']:+.2f}  folds+ {pos_folds}/{len(folds)}  "
-                    f"${cfg.starting_capital:,.0f}->${acct['end_usd']:,.0f} (low ${acct['low_usd']:,.0f})")
+                    f"${cfg.starting_capital:,.0f}->${acct['end_usd']:,.0f} ({acct['taken']} trades taken)")
                 if score > best_score:
                     best_score, best_trades = score, trades.assign(timeframe_min=minutes)
         log(f"  ({time.time() - t0:.0f}s)")
@@ -177,17 +177,18 @@ def write_summary(board, cfg):
     lines = [f"# {cfg.instrument} scalping exploration (out-of-sample, walk-forward)", "",
              "Best setting per timeframe. All numbers are from data the model had NOT trained on, "
              f"after ${cfg.commission_per_side * 2:.2f} round-trip commission and {cfg.slippage_ticks} tick slippage.", "",
-             f"Account columns: a ${cfg.starting_capital:,.0f} account trading 1 contract, skipping any signal that "
-             f"risks more than ${cfg.max_risk_per_trade_usd:,.0f}. \"Wiped out\" = balance below "
-             f"${cfg.min_account_usd:,.0f} (can no longer hold 1 contract); the 1-year odds come from reshuffling "
-             "the trades into 2,000 possible years.", "",
-             "| Timeframe | Stop | Target | Trades | Win % | Avg R | Net $ | t-stat | Folds + "
-             f"| ${cfg.starting_capital:,.0f} became | Lowest balance | Chance of wipe-out in 1 yr | Typical 1-yr result |",
+             f"Account columns: a ${cfg.starting_capital:,.0f} account risking {cfg.risk_per_trade_pct:g}% of its "
+             "current balance per trade (compounding); signals that cannot be sized to 1 contract are skipped. "
+             "\"Capital for the 1% rule\" is what a typical trade of this setup needs. The 1-year range comes from "
+             "reshuffling the trades into 1,000 possible years.", "",
+             "| Timeframe | Stop | Target | Trades | Win % | Avg R | Net $ (1 contract) | t-stat | Folds + "
+             f"| Capital for the {cfg.risk_per_trade_pct:g}% rule | Trades taken | ${cfg.starting_capital:,.0f} became "
+             "| Typical 1-yr result |",
              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for minutes, r in tf.iterrows():
         lines.append(f"| {minutes} min | {r.stop_atr_mult}x ATR | {r.reward_risk}:1 | {r.trades} | {r.win_rate:.0%} | "
                      f"{r.avg_r:+.3f} | {r.net_usd:,.0f} | {r.t_stat:+.2f} | {r.folds_positive} | "
-                     f"${r.end_usd:,.0f} | ${r.low_usd:,.0f} | {r.wipeout_prob_1y:.0%} | "
+                     f"${r.capital_needed_usd:,.0f} | {r.taken} of {r.trades} | ${r.end_usd:,.0f} | "
                      f"${r.median_1y_usd:,.0f} (${r.p10_1y_usd:,.0f} to ${r.p90_1y_usd:,.0f}) |")
     top = board.iloc[0]
     lines += ["", f"**Best overall:** {top.timeframe_min}-minute bars, stop {top.stop_atr_mult}x ATR, "

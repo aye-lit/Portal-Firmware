@@ -39,18 +39,17 @@ def simulate(index, aux, p_long, p_short, out_long, out_short, threshold, cfg, i
         long_side = p_long[i] >= p_short[i]
         out = out_long if long_side else out_short
         risk = out.stop_ticks[i] * inst.tick_value
-        if risk > cfg.max_risk_per_trade_usd:
-            continue
         net = out.pnl_pts[i] * inst.point_value - 2 * cfg.commission_per_side
         r = net / risk
         trades.append((index[min(i + 1, n - 1)], index[out.exit_idx[i]], "long" if long_side else "short",
                        float(best[i]), int(out.stop_ticks[i]), int(out.target_ticks[i]), bool(out.win[i]),
-                       float(out.pnl_pts[i]), net, r, sdate[i]))
+                       float(out.pnl_pts[i]), net, r, risk, sdate[i]))
         day_count += 1
         day_r += r
         next_free = out.exit_idx[i]
     return pd.DataFrame(trades, columns=["entry_time", "exit_time", "side", "prob", "stop_ticks", "target_ticks",
-                                         "target_hit", "pnl_pts", "net_usd", "r", "session"])
+                                         "target_hit", "pnl_pts", "net_usd", "r", "risk_usd",
+                                         "session"])
 
 
 def metrics(trades, n_days=None):
@@ -83,35 +82,45 @@ def metrics(trades, n_days=None):
     }
 
 
-def account(trades, cfg, n_days, sims=2000, seed=7):
-    """What these trades would have done to a small account trading 1 contract.
+def account(trades, cfg, n_days, sims=1000, seed=7):
+    """Replay per-contract trades on a compounding account that risks `risk_per_trade_pct` of its
+    current balance on every trade (contracts = floor(balance * pct / risk of 1 contract); trades
+    that cannot be sized to 1 contract are skipped).
 
     Besides the actual sequence, the trades are reshuffled (bootstrapped) into many possible years
-    to estimate how often an account of `starting_capital` drops below `min_account_usd` - the bad
-    luck of a different order of wins and losses is a real risk with a ~30% win rate."""
-    start, floor = cfg.starting_capital, cfg.min_account_usd
+    to show how much of the outcome is the luck of the order of wins and losses."""
+    start, floor, pct = cfg.starting_capital, cfg.min_account_usd, cfg.risk_per_trade_pct / 100
+    empty = {"start_usd": start, "end_usd": start, "low_usd": start, "wiped_out": False, "taken": 0,
+             "skipped": 0, "capital_needed_usd": float("nan"), "wipeout_prob_1y": 0.0,
+             "median_1y_usd": start, "p10_1y_usd": start, "p90_1y_usd": start}
     if trades is None or len(trades) == 0:
-        return {"start_usd": start, "end_usd": start, "low_usd": start, "wiped_out": False,
-                "wipeout_prob_1y": 0.0, "median_1y_usd": start, "p10_1y_usd": start, "p90_1y_usd": start}
-    usd = trades["net_usd"].to_numpy()
-    bal = _stop_at_floor(start + np.cumsum(usd)[None, :], floor)[0]
-    per_year = max(1, int(round(len(usd) / max(1, n_days) * 252)))
+        return empty
+    pnl = trades["net_usd"].to_numpy(float)
+    risk = trades["risk_usd"].to_numpy(float)
+    end, low, taken = _grow(pnl, risk, start, pct, floor)
+    per_year = max(1, int(round(len(pnl) / max(1, n_days) * 252)))
     rng = np.random.default_rng(seed)
-    paths = _stop_at_floor(start + np.cumsum(rng.choice(usd, size=(sims, per_year), replace=True), axis=1), floor)
-    busted = paths[:, -1] < floor
-    ends = paths[:, -1]
-    return {"start_usd": start, "end_usd": float(bal[-1]), "low_usd": float(min(start, bal.min())),
-            "wiped_out": bool(bal[-1] < floor), "wipeout_prob_1y": float(busted.mean()),
-            "median_1y_usd": float(np.median(ends)), "p10_1y_usd": float(np.percentile(ends, 10)),
-            "p90_1y_usd": float(np.percentile(ends, 90))}
+    ends = np.empty(sims)
+    for k in range(sims):
+        idx = rng.integers(0, len(pnl), per_year)
+        ends[k] = _grow(pnl[idx], risk[idx], start, pct, floor)[0]
+    return {"start_usd": start, "end_usd": end, "low_usd": low, "wiped_out": end < floor, "taken": taken,
+            "skipped": len(pnl) - taken, "capital_needed_usd": float(np.median(risk) / pct),
+            "wipeout_prob_1y": float((ends < floor).mean()), "median_1y_usd": float(np.median(ends)),
+            "p10_1y_usd": float(np.percentile(ends, 10)), "p90_1y_usd": float(np.percentile(ends, 90))}
 
 
-def _stop_at_floor(paths, floor):
-    """A wiped-out account stops trading: hold each path at the balance where it first fell below the floor."""
-    below = paths < floor
-    hit = below.any(axis=1)
-    first = below.argmax(axis=1)
-    out = paths.copy()
-    for k in np.flatnonzero(hit):
-        out[k, first[k]:] = paths[k, first[k]]
-    return out
+def _grow(pnl, risk, start, pct, floor):
+    """(ending balance, lowest balance, trades taken) for one sequence; stops once below `floor`."""
+    bal = low = start
+    taken = 0
+    for p, rk in zip(pnl, risk):
+        n = int(bal * pct // rk) if rk > 0 else 0
+        if n <= 0:
+            continue
+        bal += n * p
+        taken += 1
+        low = min(low, bal)
+        if bal < floor:
+            break
+    return float(bal), float(low), taken

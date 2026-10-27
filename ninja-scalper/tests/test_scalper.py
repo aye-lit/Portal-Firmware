@@ -131,13 +131,22 @@ def test_instrument_specs():
     assert mes.tick_value == pytest.approx(1.25)
 
 
-def test_account_stops_trading_once_wiped_out():
+def test_account_sizes_each_trade_to_one_percent_and_compounds():
     from scalper.backtest import account
-    cfg = Config(starting_capital=200, min_account_usd=50)
-    trades = pd.DataFrame({"net_usd": [-60.0, -60.0, -60.0, 500.0], "session": [1, 2, 3, 4]})
-    a = account(trades, cfg, n_days=4)
-    assert a["wiped_out"] and a["end_usd"] == pytest.approx(20.0)   # the +500 after the wipe-out never happens
-    assert a["low_usd"] == pytest.approx(20.0)
+    cfg = Config(starting_capital=2000, risk_per_trade_pct=1.0)
+    # risk of 1 contract is $10 -> 1% of $2,000 = $20 -> 2 contracts; a +$500 trade then lifts the size
+    trades = pd.DataFrame({"net_usd": [250.0, -10.0], "risk_usd": [10.0, 10.0], "session": [1, 2]})
+    a = account(trades, cfg, n_days=2)
+    assert a["taken"] == 2
+    assert a["end_usd"] == pytest.approx(2000 + 2 * 250 - 2 * 10)   # 1% of $2,500 = $25 -> still 2 contracts
+
+
+def test_account_skips_trades_it_cannot_size():
+    from scalper.backtest import account
+    cfg = Config(starting_capital=200, risk_per_trade_pct=1.0)   # 1% = $2, less than any MES stop
+    trades = pd.DataFrame({"net_usd": [50.0, -10.0], "risk_usd": [5.0, 10.0], "session": [1, 2]})
+    a = account(trades, cfg, n_days=2)
+    assert a["taken"] == 0 and a["end_usd"] == 200
 
 
 def test_clean_drops_weekend_prints():
