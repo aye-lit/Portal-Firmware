@@ -107,8 +107,10 @@ def test_server_matches_training_features(tmp_path, monkeypatch):
     json.dumps(reply)
 
 
-def test_learner_finds_a_real_edge_and_rejects_noise():
+def test_learner_finds_a_real_edge_and_rejects_noise(tmp_path, monkeypatch):
+    from scalper import learn
     from scalper.learn import explore
+    monkeypatch.setattr(learn, "REPORTS_DIR", str(tmp_path))   # never overwrite the real reports
     cfg = Config(timeframes=[5], stop_atr_mults=[1.0], reward_ratios=[2.0], n_folds=3)
     quiet = lambda *a: None
     edge = explore(data.synthetic_bars(days=200, edge=0.35, seed=3), 1, cfg, log=quiet).iloc[0]
