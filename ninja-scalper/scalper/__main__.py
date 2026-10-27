@@ -6,6 +6,7 @@
   learn     explore + train in one go
   retrain   pull new data (optional) and refit with the current live settings
   serve     run the bridge NinjaTrader connects to
+  published backtest published strategies (noise-area momentum, opening-range breakout) on stored data
 """
 import argparse
 import glob
@@ -116,6 +117,28 @@ def cmd_retrain(a):
           oos=meta.get("oos_metrics"))
 
 
+def cmd_published(a):
+    from . import strategies
+    from .backtest import account, metrics
+    cfg = _cfg(a)
+    bars, _ = data.load_bars(cfg.instrument)
+    n_days = strategies.rth_minutes(bars)["sdate"].nunique()
+    runs = {"noise-area momentum": strategies.noise_area(bars, cfg)}
+    for m in (5, 15, 30):
+        runs[f"ORB {m}-min, 10R target"] = strategies.orb(bars, cfg, minutes=m)
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    print(f"{n_days} regular sessions, 1 contract, ${cfg.commission_per_side * 2:.2f} commission + "
+          f"{cfg.slippage_ticks} tick slippage\n")
+    for name, t in runs.items():
+        m, acct = metrics(t, n_days), account(t, cfg, n_days)
+        usd = t["net_usd"]
+        t_usd = usd.mean() / usd.std() * len(usd) ** 0.5 if len(usd) > 1 else 0.0
+        print(f"{name:28} trades {m['trades']:>5}  win {m['win_rate']:.0%}  net ${m['net_usd']:>8,.0f}  "
+              f"t {t_usd:+.2f}  max DD ${m['max_dd_usd']:,.0f}  ${cfg.starting_capital:,.0f} -> ${acct['end_usd']:,.0f}  "
+              f"wipe-out odds {acct['wipeout_prob_1y']:.0%}")
+        t.to_csv(os.path.join(REPORTS_DIR, "published_" + name.split(",")[0].replace(" ", "_") + ".csv"), index=False)
+
+
 def cmd_serve(a):
     from .server import serve
     serve(a.model, a.host, a.port, a.instrument)
@@ -156,6 +179,8 @@ def main(argv=None):
     r = sub.add_parser("retrain")
     r.add_argument("--databento", action="store_true", help="download bars since the last stored bar first")
     r.set_defaults(fn=cmd_retrain)
+
+    sub.add_parser("published").set_defaults(fn=cmd_published)
 
     s = sub.add_parser("serve")
     s.add_argument("--host", default="127.0.0.1")
