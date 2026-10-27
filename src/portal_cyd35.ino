@@ -124,7 +124,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xBE6D6CF1UL;
+const uint32_t BUILD_ID = 0x9996401BUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -2600,13 +2600,10 @@ HOT void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase
         continue;
       }
       int k = -ce, r, a, v;
-      polarAt(x, y, crossYC, r, a);
-      if (look == 7) { *p++ = glowPx(((woodGlowT[k] + woodWideT[r]) * woodPulse) >> 8, x, y); continue; }   // warm glow, slowly breathing (smooth, dithered)
-      else {                                         // a portal behind the cross, centred on the crossing
-        int e = edgeT[a];
-        if (r < e) { v = styleV(look, a, r, phase, phase2); int kk = e - r; if (kk < 64 && rimT[kk] > v) v = rimT[kk]; }
-        else { int kk = r - e; v = kk < 64 ? rimT[kk] : 0; int hh = haloT[kk > 255 ? 255 : kk]; if (hh > v) v = hh; }
-        v = (((v * woodShT[k]) >> 8) * woodVigT[r]) >> 8;   // soft shadow around the wood, fading toward the edge
+      if (look == 7) { polarAt(x, y, crossYC, r, a); *p++ = glowPx(((woodGlowT[k] + woodWideT[r]) * woodPulse) >> 8, x, y); continue; }   // warm glow, slowly breathing (smooth, dithered)
+      else {                                         // a portal style behind: filling the whole screen, just like a glowing cross's Background
+        polarAt(x, y, QY, r, a);
+        v = (styleV(look, a, r, phase, phase2) * woodShT[k]) >> 8;   // with a soft shadow around the wood
       }
       *p++ = pal[v > 255 ? 255 : v];
     }
