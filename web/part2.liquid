@@ -1565,14 +1565,12 @@ function woodFrame(out, CE, fill, arms, phase, phase2, tw) {
   for (let y = 0, p = 0; y < TH; y++) for (let x = 0; x < TW; x++, p++) {
     const ce = CE[p];
     if (ce > 0) { let c = woodPx(p); if (fill === 7 && ce <= 3) c = max32(c, tftPal[Math.min(255, ((3 - ce) * 60 * pulse) >> 8)]); out[p] = c; continue; }
-    const k = -ce, [r, a] = polarAt(x, y, crossYC);
+    const k = -ce;
     let v;
-    if (fill === 7) { out[p] = glowPx(((woodGlowT[k] + woodWideT[r]) * pulse) >> 8, x, y); continue; }   // warm glow, smooth (dithered)
-    else {
-      const e = edgeT[a];
-      if (r < e) { v = styleV(fill, a, r, arms, phase, phase2, tw); const kk = e - r; if (kk < 64 && rimT[kk] > v) v = rimT[kk]; }
-      else { const kk = r - e; v = kk < 64 ? rimT[kk] : 0; const hh = haloT[kk > 255 ? 255 : kk]; if (hh > v) v = hh; }
-      v = (((v * woodShT[k]) >> 8) * woodVigT[r]) >> 8;
+    if (fill === 7) { const [r] = polarAt(x, y, crossYC); out[p] = glowPx(((woodGlowT[k] + woodWideT[r]) * pulse) >> 8, x, y); continue; }   // warm glow, smooth (dithered)
+    else {                                         // a portal style behind: filling the whole screen, just like a glowing cross's Background
+      const [r, a] = polarAt(x, y, QY);
+      v = (styleV(fill, a, r, arms, phase, phase2, tw) * woodShT[k]) >> 8;   // with a soft shadow around the wood
     }
     out[p] = tftPal[v > 255 ? 255 : v];
   }

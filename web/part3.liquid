@@ -2190,13 +2190,10 @@ HOT void renderWoodStrip(int y0, int rows, uint16_t *strip, int phase, int phase
         continue;
       }
       int k = -ce, r, a, v;
-      polarAt(x, y, crossYC, r, a);
-      if (look == 7) { *p++ = glowPx(((woodGlowT[k] + woodWideT[r]) * woodPulse) >> 8, x, y); continue; }   // warm glow, slowly breathing (smooth, dithered)
-      else {                                         // a portal behind the cross, centred on the crossing
-        int e = edgeT[a];
-        if (r < e) { v = styleV(look, a, r, phase, phase2); int kk = e - r; if (kk < 64 && rimT[kk] > v) v = rimT[kk]; }
-        else { int kk = r - e; v = kk < 64 ? rimT[kk] : 0; int hh = haloT[kk > 255 ? 255 : kk]; if (hh > v) v = hh; }
-        v = (((v * woodShT[k]) >> 8) * woodVigT[r]) >> 8;   // soft shadow around the wood, fading toward the edge
+      if (look == 7) { polarAt(x, y, crossYC, r, a); *p++ = glowPx(((woodGlowT[k] + woodWideT[r]) * woodPulse) >> 8, x, y); continue; }   // warm glow, slowly breathing (smooth, dithered)
+      else {                                         // a portal style behind: filling the whole screen, just like a glowing cross's Background
+        polarAt(x, y, QY, r, a);
+        v = (styleV(look, a, r, phase, phase2) * woodShT[k]) >> 8;   // with a soft shadow around the wood
       }
       *p++ = pal[v > 255 ? 255 : v];
     }
