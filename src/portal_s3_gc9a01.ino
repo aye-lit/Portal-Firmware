@@ -119,7 +119,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xEBB7362CUL;
+const uint32_t BUILD_ID = 0xBDC39556UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -128,6 +128,7 @@ uint8_t  *rT, *aT;                     // TQX x TQY each, allocated in setup()
 uint8_t  colMap[SCR_WMAX];
 int8_t   sinT[256];
 int16_t  twistT[256], twist2T[256], edgeT[256];
+int8_t   sin1k[1024];                   // a finer sine (1024 steps a turn): Toon Spiral's crisp curves
 uint8_t  depthT[256], coreT[256], haloT[256], rimT[64], centerT[256];
 uint8_t  sbGlowT[256], sbRingT[256], sbOuterT[256], ripCrestT[256], ripTroughT[256];
 uint8_t  spCoreT[256], bhRingT[256], bhDiskT[256], bhStarT[256];
@@ -242,6 +243,7 @@ void buildGeometry() {
     }
   }
   for (int i = 0; i < 256; i++) sinT[i] = (int8_t)lroundf(127 * sinf(i * TWO_PI / 256));
+  for (int i = 0; i < 1024; i++) sin1k[i] = (int8_t)lroundf(127 * sinf(i * TWO_PI / 1024));
 }
 
 void buildParams() {
@@ -2619,7 +2621,18 @@ template <int L> static inline __attribute__((always_inline)) void portalRows(in
         const int c = CM[x], a = (base + sg * aa[c]) & 255, e = ET[a];
         r = rr[c];
         int v;
-        if (r < e) { v = styleV(L, a, r, phase, phase2); const int k = e - r; if (k < 64 && RIM[k] > v) v = RIM[k]; }
+        if (r < e) {
+          if (L == 1) {                                  // Toon Spiral: the angle worked out 4x finer here, so the bands' edges curve smoothly
+            const uint32_t dx = 2 * c + 1, dy = 2 * qy + 1, mn = dx < dy ? dx : dy, mx = dx < dy ? dy : dx;
+            const uint32_t t = (mn << 12) / mx, f = (t * (128 * 4096 + 45 * (4096 - t))) >> 24;   // atan, 0-128 per eighth of a turn
+            const int a0 = dy <= dx ? (int)f : 256 - (int)f, a1 = (base * 4 + sg * a0) & 1023;
+            const int w = sin1k[(a1 * 6 + (r * 4 + phase2) * 4) & 1023] >> 2;
+            const int sp = sin1k[(a1 * ARMS - (linT[r] - phase - w) * 4) & 1023];
+            v = sp > 14 ? 235 : sp > -14 ? 70 : 125;    // flat light and dark bands, a thin dark outline between
+            if (coreT[r] > v) v = coreT[r];
+          } else v = styleV(L, a, r, phase, phase2);
+          const int k = e - r; if (k < 64 && RIM[k] > v) v = RIM[k];
+        }
         else { const int k = r - e; v = k < 64 ? RIM[k] : 0; const int h = HALO[k > 255 ? 255 : k]; if (h > v) v = h; }
         return v > 255 ? 255 : v;
       };
