@@ -132,7 +132,7 @@ uint8_t  FADE_COUNT = ${S.fadeSets.length};       // extra colour sets after the
 uint32_t FADE_COLS[6] = { ${[0,1,2].map(i => S.fadeSets[i] ? `0x${hex6(S.fadeSets[i].core)}, 0x${hex6(S.fadeSets[i].rim)}` : "0x000000, 0x000000").join(", ")} };   // core, rim pairs
 uint8_t  RIM_SMOOTH = ${S.rimsmooth};       // 0 = wobbly energy edge, 100 = perfectly smooth ring
 uint32_t CROSS_COL  = 0x${colCode(S.crossCol).toString(16).toUpperCase()};   // glowing crosses: the outline colour (0x1000000: the main colours)
-uint8_t  CROSS_OUT  = ${S.crossOut};       // glowing crosses: what's drawn outside (255 black, or a portal or space style)
+uint8_t  CROSS_OUT  = ${bgOut(S)};       // glowing crosses: what's drawn outside (255 black, or a portal or space style)
 uint8_t  RIM_W      = ${S.rimw};      // Rim thickness, % (25-200): the glowing edge, or the Cartoon Sticker's outline
 float    FADE_SECS  = ${S.fadesec};       // seconds for each fade (${Math.floor(S.fadesec / 60)} min ${S.fadesec % 60} sec)
 uint8_t  RIPPLES    = ${S.ripples};       // Starburst: rings expanding at once (0-6)
@@ -1551,7 +1551,7 @@ void frameStart() {
     if (L == 4 || (L >= 14 && L <= 16)) { look = L; if (spaceMemory()) prepareSpace(); else L = 0; }
   }
   if (!needB && sceneMix < 128) lookB = lookA;
-  outLook = baseCross && !woodOn && validOut(CROSS_OUT) ? CROSS_OUT : 255;   // outside the glowing cross
+  outLook = baseCross && !woodOn && CROSS_OUT != 255 && validOut(baseLook) ? baseLook : 255;   // Background on: the very same style as inside the cross
   if (isGridSpace(outLook)) {                         // a space picture outside: only one space picture at a time
     bool other = (isGridSpace(lookA) && lookA != outLook) || (isGridSpace(lookB) && lookB != outLook);
     if (other) outLook = 255;

@@ -386,7 +386,7 @@ function markStyle() {
     : `<b>Editing scene ${S.scenes.indexOf(-1) + 1}: Main style (${STYLES[S.style].name})</b>Changes below are for the main style and every scene without its own settings.`;
   const tft = M.kind === "tft", cross = tft && isCrossStyle(S.style);
   const eff = cross ? S.crossFill : S.style;                 // the style being drawn (inside a cross: the chosen fill)
-  const outE = cross && S.style !== 17 ? outOf(S.crossFill, S.crossOut) : 255;   // and outside a glowing cross
+  const outE = cross && S.style !== 17 ? bgOut(S) : 255;   // and outside a glowing cross
   root.querySelectorAll("[data-burst]").forEach(el => { el.hidden = !(tft && (eff === 2 || outE === 2)); });
   root.querySelectorAll("[data-space]").forEach(el => { el.hidden = !(tft && (isSpaceStyle(eff) || (outE !== 255 && isSpaceStyle(outE)))); });
   root.querySelectorAll("[data-cross]").forEach(el => { el.hidden = !cross; });
@@ -424,7 +424,7 @@ function markStyle() {
     if (isC && !wood && ((f >= 7 && f <= 10) || f === 18)) f = 0;   // skies and warm glow are only behind the Wooden cross
     if (wood && f === 11) f = 7;
     const sky = wood && ((f >= 8 && f <= 10) || f === 18), spc = hasSpaceCols(f), glowC = isC && !wood;
-    const o = glowC ? outOf(f, S.crossOut) : 255;              // outside a glowing cross
+    const o = glowC && S.crossOut !== 255 ? f : 255;              // outside a glowing cross
     if (o === 0 || o === 1 || o === 6) { use.add("arms"); use.add("twist"); }
     if (o === 4 || o === 15) use.add("twist");
     if (o === 15) use.add("reverse");
@@ -1068,11 +1068,11 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.16.0";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/6fc48ad8475d2be4b78f656a16b7f806aaecc855/";
+const FW_VERSION = "1.16.1";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/7d0fa062a8f78a1d3d76ace137f3630855e252c0/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "bc4008914174a8326c62b3907a15af99e4a0bcfa8ce8d47610efd1160bdd24f3" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "9013e34810999e075049acb0927baf3d32199b09b6fe8c279eda139dff5863d0" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "ebcb8645ac6211a5953dc4ad2c12b0f6b90f3c80b7fd630ab26ac5a4939c1ba4" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "3be8fd2bfc91f05f4c35fde602d25d46a0ec62d4cc340fafb7162f49197b0102" },
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -1192,7 +1192,7 @@ function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are
   for (let i = 0; i < 3; i++) { const st = S.fadeSets[i]; cols.push(st ? parseInt(hex6(st.core), 16) : 0, st ? parseInt(hex6(st.rim), 16) : 0); }
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
-const cmdLine = () => withMain(() => (M.kind === "tft" ? sceneLines() + `RIM ${S.rimw}\nXOUT ${S.crossOut}\nXCOL ${colCode(S.crossCol)}\n` : "") + setLine());   // (older boards ignore SCN and RIM lines)
+const cmdLine = () => withMain(() => (M.kind === "tft" ? sceneLines() + `RIM ${S.rimw}\nXOUT ${bgOut(S)}\nXCOL ${colCode(S.crossCol)}\n` : "") + setLine());   // (older boards ignore SCN and RIM lines)
 const setLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${(M.kind === "tft" ? S.reverse : S.drift) ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
 function sceneArgs() {
   const L = sceneList(), cols = " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" "), rip = ripCode(S.style, S);

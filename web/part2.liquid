@@ -467,6 +467,7 @@ function turns(m) { return m.kind === "tft" && !!m.rect && m.w !== m.h; }   // r
 const SCENE_STYLES = [0, 1, 2, 3, 4, 6, 14, 15, 16, 8, 9, 10, 11, 12, 13, 17];   // styles a scene can switch to (crosses too: each keeps its own cross settings)
 const OUT_OK = [255, 0, 1, 2, 3, 4, 6, 11, 14, 15, 16];   // what can go outside a glowing cross (255: black)
 const isGridSpace = f => f === 4 || (f >= 14 && f <= 16);
+const bgOut = st => st.crossOut == null || st.crossOut === 255 ? 255 : st.crossFill;   // the Background setting: off (255), or the same style as inside the cross
 const outOf = (fill, out) => isGridSpace(out) && isGridSpace(fill) && out !== fill ? 255 : out;   // one space picture at a time: the inside wins
 const isStyleScene = x => x >= 200 && SCENE_STYLES.includes(x - 200);
 const isPicScene = x => x >= 0 && x < 200 && x % 100 < S.pics.length;
@@ -505,7 +506,7 @@ function sceneLooksBlock() {                        // firmware: each scene's ow
   for (let k = 0; k < 8; k++) {
     const st = sceneSetAt(k);
     has.push(st ? 1 : 0);
-    rows.push(st ? `{ ${f2(st.radius)}f, ${f2(st.oval)}f, ${f2(st.twist)}f, ${f2(st.speed)}f, ${f2(st.rspeed)}f, ${f2(st.glow)}f, 0x${hex6(st.c1)}, 0x${hex6(st.c2)}, { ${st.spaceCols.map(c => "0x" + hex6(c)).join(", ")} }, ${st.arms}, ${st.sparks}, ${st.reverse ? 1 : 0}, ${st.bright}, ${st.ripples}, ${st.stars}, ${st.rimsmooth}, 0, ${sceneList()[k] - 200}, ${st.crossFill}, ${ripCode(sceneList()[k] - 200, st)}, ${st.beam}, ${st.crossw}, ${st.bar}, { 0x${hex6(st.ripC1)}, 0x${hex6(st.ripC2)}, 0x${hex6(st.ripC3)}, 0x${hex6(st.ripC4)} }, ${st.rimw}, ${st.crossOut ?? 255}, ${colCode(st.crossCol)} }`
+    rows.push(st ? `{ ${f2(st.radius)}f, ${f2(st.oval)}f, ${f2(st.twist)}f, ${f2(st.speed)}f, ${f2(st.rspeed)}f, ${f2(st.glow)}f, 0x${hex6(st.c1)}, 0x${hex6(st.c2)}, { ${st.spaceCols.map(c => "0x" + hex6(c)).join(", ")} }, ${st.arms}, ${st.sparks}, ${st.reverse ? 1 : 0}, ${st.bright}, ${st.ripples}, ${st.stars}, ${st.rimsmooth}, 0, ${sceneList()[k] - 200}, ${st.crossFill}, ${ripCode(sceneList()[k] - 200, st)}, ${st.beam}, ${st.crossw}, ${st.bar}, { 0x${hex6(st.ripC1)}, 0x${hex6(st.ripC2)}, 0x${hex6(st.ripC3)}, 0x${hex6(st.ripC4)} }, ${st.rimw}, ${bgOut(st)}, ${colCode(st.crossCol)} }`
                  : "{ 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF }, 100, 255, 0x1000000 }");
   }
   return `uint8_t  SCENE_HAS[8] = { ${has.join(", ")} };   // 1 = that scene has its own settings
@@ -517,7 +518,7 @@ function sceneLines() {                             // live tuning: each scene's
   let out = "";
   for (let k = 0; k < 8; k++) {
     const st = sceneSetAt(k);
-    out += st ? `SCN ${k} ${st.radius} ${f2(st.oval)} ${st.arms} ${(+st.twist).toFixed(1)} ${f2(st.speed)} ${st.sparks} ${st.reverse ? 1 : 0} ${parseInt(hex6(st.c1), 16)} ${parseInt(hex6(st.c2), 16)} ${st.bright} ${st.ripples} ${f2(st.rspeed)} ${f2(st.glow)} ${st.stars} ${st.rimsmooth} ${st.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ")} ${sceneList()[k] - 200} ${st.crossFill} ${ripCode(sceneList()[k] - 200, st)} ${st.beam} ${st.crossw} ${st.bar}${st.ripGrad === 1 ? " " + [st.ripC1, st.ripC2, st.ripC3, st.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""} ${st.rimw} ${st.crossOut ?? 255} ${colCode(st.crossCol)}\n`
+    out += st ? `SCN ${k} ${st.radius} ${f2(st.oval)} ${st.arms} ${(+st.twist).toFixed(1)} ${f2(st.speed)} ${st.sparks} ${st.reverse ? 1 : 0} ${parseInt(hex6(st.c1), 16)} ${parseInt(hex6(st.c2), 16)} ${st.bright} ${st.ripples} ${f2(st.rspeed)} ${f2(st.glow)} ${st.stars} ${st.rimsmooth} ${st.spaceCols.map(c => parseInt(hex6(c), 16)).join(" ")} ${sceneList()[k] - 200} ${st.crossFill} ${ripCode(sceneList()[k] - 200, st)} ${st.beam} ${st.crossw} ${st.bar}${st.ripGrad === 1 ? " " + [st.ripC1, st.ripC2, st.ripC3, st.ripC4].map(c => parseInt(hex6(c), 16)).join(" ") : ""} ${st.rimw} ${bgOut(st)} ${colCode(st.crossCol)}\n`
               : `SCN ${k} OFF\n`;
   }
   return out;
@@ -1678,7 +1679,7 @@ function tftRender(out, style) {                      // one frame of one style 
   let fill = isCross ? S.crossFill : style;               // crosses: the chosen style is drawn inside (the Wooden cross: behind)
   if (isCross && ((fill >= 7 && fill <= 10) || fill === 18) && !wood) fill = 0;   // the warm glow and the skies are only for the Wooden cross
   if (wood && fill === 11) fill = 7;                            // solid colour is for the glowing crosses
-  const outL = isCross && !wood ? outOf(fill, S.crossOut) : 255;   // outside a glowing cross (255: black)
+  const outL = isCross && !wood && S.crossOut !== 255 ? fill : 255;   // the Background: the very same style as inside   // outside a glowing cross (255: black)
   const OUT_DIM = 256;                                            // the background: the same colours as inside
   const phase = Math.trunc(t * 1.5 * 40.74), phase2 = Math.trunc(-t * 40.74);
   for (let a = 0; a < 256; a++) {
