@@ -555,15 +555,21 @@ void beginBus() {
 #define PIN_CS    ${B.spi.cs}
 #define PIN_DC    ${B.spi.dc}
 #define PIN_RST   ${B.spi.rst}
-
+${B.spi.miso != null ? `#define PIN_MISO  ${B.spi.miso}               // the touch chip answers on this pin
+` : ""}
 // Declared early so the Arduino IDE's automatic function prototypes compile
 struct Spark;
 struct Saved;
 struct Look;
+struct UiRect;
 
 void beginBus() {
 #if defined(ESP32)
+#ifdef PIN_MISO
+  SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
+#else
   SPI.begin(PIN_SCK, -1, PIN_MOSI, PIN_CS);
+#endif
 #elif defined(ARDUINO_ARCH_RP2040)
   SPI.setSCK(PIN_SCK);
   SPI.setTX(PIN_MOSI);
