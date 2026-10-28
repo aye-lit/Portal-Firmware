@@ -414,7 +414,7 @@ function markStyle() {
   const sc = tft && (hasSpaceCols(eff) || (outE !== 255 && hasSpaceCols(outE)) || (editIdx < 0 && sceneList().some((c, k) => c >= 200 && c < 255 && !S.sceneSets[k] && hasSpaceCols(c - 200))));                       // Galaxy, Nebula, Wormhole, Meteor Shower use four space colours
   $("space-colors").hidden = !sc;
   $("radius").max = radiusMax(M);
-  $("radius").closest("label").querySelector("span").firstChild.nodeValue = cross ? "Cross size " : "Portal size ";
+  $("radius").closest("label").querySelector("span").firstChild.nodeValue = cross ? "Cross size " : isSpaceStyle(S.style) ? "Size " : "Portal size ";
   if (S.radius > radiusMax(M)) S.radius = rmax(M);           // leaving a cross: back inside the screen
   // Which settings actually change what's drawn: the chosen style plus any styles in the scene list
   const use = new Set();
@@ -501,6 +501,29 @@ STYLES.forEach((st, i) => {
   });
   $(isCrossStyle(i) ? "style-cross" : isSpaceStyle(i) ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole, Nebula, Wormhole, Meteor Shower are space styles
 });
+// Display pages: #cross, #portal, #space (no hash = the page that picks one)
+const DISPLAY_PAGES = {
+  cross:  { title: "Cross Display",  row: "cross-row",  fits: isCrossStyle, start: 17 },
+  portal: { title: "Portal Display", row: "portal-row", fits: i => !isCrossStyle(i) && !isSpaceStyle(i), start: 0 },
+  space:  { title: "Space Display",  row: "space-row",  fits: isSpaceStyle, start: 4 },
+};
+function showDisplayPage(first) {
+  const key = (location.hash || "").slice(1).toLowerCase(), pg = DISPLAY_PAGES[key];
+  const picker = $("dpick");
+  for (const el of picker.parentElement.children) if (el.tagName !== "HEADER" && el !== picker) el.hidden = !pg;
+  picker.hidden = !!pg;
+  $("backlink").hidden = !pg;
+  $("studio-sub").hidden = !!pg;
+  $("studio-title").textContent = pg ? pg.title : "Display Studio";
+  ["cross-row", "portal-row", "space-row"].forEach(r => $(r).classList.toggle("mode-off", !!pg && r !== pg.row));
+  if (pg && !pg.fits(S.style)) {
+    const b = $(pg.row).querySelector(`button[data-i="${pg.start}"]`) || $(pg.row).querySelector("button");
+    if (b) b.click();
+  }
+  if (!first) { const top = $("studio-title").closest("header").getBoundingClientRect().top + window.scrollY - 80; window.scrollTo(0, Math.max(0, top)); }
+}
+window.addEventListener("hashchange", () => showDisplayPage(false));
+$("backlink").addEventListener("click", e => { e.preventDefault(); history.pushState(null, "", location.pathname + location.search); showDisplayPage(false); });
 // space colour sets (Nebula, Wormhole, Meteor Shower)
 const SPACE_ROLES = ["Deep", "Glow", "Contrast", "Highlight"], spacePicks = [];
 for (const [name, set] of Object.entries(SPACE_SETS)) {
@@ -1417,6 +1440,7 @@ function liveSend() {
   if (!$("live").checked || (!port && !bleRx)) return;
   clearTimeout(liveTimer); liveTimer = setTimeout(send, 350);
 }
+showDisplayPage(true);
 
 })();
 </script>
