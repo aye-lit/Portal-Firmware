@@ -517,7 +517,8 @@ bool pressHave = false, pressOk = false; int pressX = 0, pressY = 0;   // where 
 bool uiHeld = false;                     // a finger is still down from before (it has to lift first)
 float tcal[6] = { 0.091822f, 0, -23.31f, 0, -0.131399f, 513.11f };   // raw touch -> upright screen: the panel maker's calibration for this board (TCAL over USB can change it)
 bool tcalOk = false;
-inline bool homeActive() { return STYLE == 17; }   // the home button is for the Wooden cross
+inline int homeKind() { return STYLE == 17 ? 0 : (STYLE <= 2 || STYLE == 6) ? 1 : (STYLE == 3 || STYLE == 4 || STYLE == 14 || STYLE == 16) ? 2 : -1; }   // 0 the Wooden cross, 1 a portal, 2 space
+inline bool homeActive() { return homeKind() >= 0; }   // the home button: the Wooden cross, the portals and the space styles
 #if USE_DMA
 spi_device_handle_t touchDev;
 bool touchDevOk = false;
@@ -2793,6 +2794,12 @@ int uiSelWood = 0, uiSelBack = 0, uiSelCol = -1;
 uint32_t uiCore = 0, uiRim = 0, uiSpace[4];
 uint32_t uiLastTouch = 0;
 int uiPage = 0;                           // 0 the home page, 1 settings
+int uiKind = 0;                           // which home page: 0 the Wooden cross, 1 portals, 2 space
+const uint8_t UI_PS[2][4] = { { 0, 1, 2, 6 }, { 3, 4, 14, 16 } };   // the styles on the portal and space pages
+const char *const UI_PS_NAMES[2][4] = { { "Vortex", "Toon Spiral", "Starburst", "Cartoon Swirl" }, { "Hyperspace", "Galaxy", "Nebula", "Meteor Shower" } };
+UiRect uiTile[4];
+int uiSelStyle = 0, uiSparks = 28, uiStars = 3, stSparks = 28, stStars = 3, uiArms = 4; float uiTwist = 2.4f;
+float uiStarCut = 0.985f;                 // (pictures: how many stars, higher = fewer)
 UiRect uiSetBtn, uiBackBtn, uiSave, uiPrev, uiSl[4], uiSetCol[6];
 int uiNoteY = -1, uiSetSwR = 13, uiSetColLabY = 0;
 uint32_t stCore = 0, stRim = 0, stSpace[4]; int stSelCol = -1;   // the colours, while on the settings page
@@ -2806,7 +2813,8 @@ inline uint16_t uiRGB(uint32_t c) { return to565raw(c >> 16, (c >> 8) & 255, c &
 inline uint32_t uiMix(uint32_t a, uint32_t b, float f) { return mixColor(a, b, f < 0 ? 0 : f > 1 ? 1 : f); }
 inline bool uiIn(const UiRect &r, int x, int y) { return x >= r.x - 3 && x < r.x + r.w + 3 && y >= r.y - 3 && y < r.y + r.h + 3; }
 inline bool uiRowsHit(int y, int h) { return y < uiY0 + uiRows && y + h > uiY0; }
-int uiColKind() { uint8_t f = UI_BACKS[uiSelBack]; return f == 7 || f == 3 ? 1 : (f == 4 || f == 14 || f == 16) ? 2 : 0; }   // 1 glow colours, 2 space colours, 0 none (skies)
+int uiCurCode() { return uiKind == 0 ? UI_BACKS[uiSelBack] : UI_PS[uiKind - 1][uiSelStyle]; }   // the background (cross) or the style (portal, space) chosen now
+int uiColKind() { const int f = uiCurCode(); return f == 7 || f == 3 || (uiKind == 1) ? 1 : (f == 4 || f == 14 || f == 16) ? 2 : 0; }   // 1 glow colours, 2 space colours, 0 none (skies)
 int uiColMatch() {
   int k = uiColKind();
   for (int i = 0; i < 6; i++) {
@@ -2816,6 +2824,7 @@ int uiColMatch() {
   return -1;
 }
 
+void uiLayoutPS();
 void uiLayout() {                         // where everything goes, for the way the screen is turned now
   const int W = SCR_W, H = SCR_H;
   auto grid = [](UiRect *r, int n, int cols, int x0, int y0, int w, int cw, int ch) {
@@ -2863,6 +2872,19 @@ void uiLayout() {                         // where everything goes, for the way 
   }
 }
 
+void uiLayoutPS() {                       // the portal and space pages: four big pictures, then the colours
+  const int W = SCR_W, H = SCR_H;
+  if (H > W) {
+    for (int i = 0; i < 4; i++) uiTile[i] = { (int16_t)(10 + (i % 2) * 154), (int16_t)(66 + (i / 2) * 128), 146, 120 };
+    uiLabColX = 10; uiLabColY = 336; uiSwR = 17;
+    for (int i = 0; i < 6; i++) uiCol[i] = { (int16_t)(14 + i * 50), 346, 34, 34 };
+  } else {
+    for (int i = 0; i < 4; i++) uiTile[i] = { (int16_t)(8 + i * 118), 66, 107, 118 };
+    uiLabColX = 10; uiLabColY = 210; uiSwR = 15;
+    for (int i = 0; i < 6; i++) uiCol[i] = { (int16_t)(12 + i * 40), 222, 30, 30 };
+  }
+}
+
 // ---- small pictures on the buttons ----
 inline float uiHash(int x, int y) { return (hash32((uint32_t)(x * 73856093) ^ (uint32_t)(y * 19349663)) & 1023) / 1023.0f; }
 uint32_t uiWoodPx(int g, int x, int y) {
@@ -2878,10 +2900,45 @@ uint32_t uiGrad(const uint32_t *cols, const float *at, int n, float t) {
   for (int i = 1; i < n; i++) if (t <= at[i]) return uiMix(cols[i - 1], cols[i], (t - at[i - 1]) / (at[i] - at[i - 1]));
   return cols[n - 1];
 }
-uint32_t uiBackPx(int k, int x, int y, int w, int h) {
+uint32_t uiPortalPx(int code, float dx, float dy) {   // a portal style at one point (dx, dy: 1 = the portal's edge), in the colours being chosen
+  const float r = sqrtf(dx * dx + dy * dy), a = atan2f(dy, dx);
+  if (r > 1.06f) return 0x000000;
+  const uint32_t core = uiBackCols ? uiBackCols[0] : uiCore, rim = uiBackCols ? uiBackCols[1] : uiRim;
+  uint32_t c;
+  switch (code) {
+    case 1: {                             // Toon Spiral: flat bands
+      const int band = (int)floorf((a / 6.2832f * 2 + r * 3.2f) * 2) & 1;
+      c = band ? rim : core;
+      if (r > 0.97f) c = uiMix(rim, 0xFFFFFF, 0.3f);
+      break;
+    }
+    case 2: {                             // Starburst: rays from a glowing middle
+      const float ray = powf(0.5f + 0.5f * cosf(a * 14), 3), g = expf(-r * r * 4);
+      c = uiMix(uiMix(0x000000, core, 0.35f + 0.65f * (1 - r)), rim, ray * (1 - r * 0.5f));
+      c = uiMix(c, 0xFFFFFF, g * 0.75f);
+      break;
+    }
+    case 6: {                             // Cartoon Swirl: blobs with dark outlines
+      const float w = sinf(a * 2 + r * 7 + 1.5f * sinf(r * 9 + a));
+      c = w > 0.25f ? rim : w > 0.02f ? 0x101010 : core;
+      break;
+    }
+    default: {                            // Vortex: glowing arms and a bright rim
+      const float sp = 0.5f + 0.5f * sinf(a * 4 + r * 9), edge = expf(-(r - 0.92f) * (r - 0.92f) * 70);
+      c = uiMix(uiMix(0x000000, core, fminf(1, 0.3f + r * 1.2f)), rim, fminf(1, sp * 0.85f * r + edge));
+      if (r < 0.16f) c = uiMix(c, uiMix(rim, 0xFFFFFF, 0.5f), 1 - r / 0.16f);
+    }
+  }
+  if (r > 1) c = uiMix(c, 0x000000, (r - 1) / 0.06f);
+  return c;
+}
+uint32_t uiBackPxCode(int code, int x, int y, int w, int h);
+uint32_t uiBackPx(int k, int x, int y, int w, int h) { return uiBackPxCode(UI_BACKS[k], x, y, w, h); }
+uint32_t uiBackPxCode(int code, int x, int y, int w, int h) {
   float u = (x + 0.5f) / w, v = (y + 0.5f) / h;
-  bool star = uiHash(x, y) > 0.985f;
-  switch (UI_BACKS[k]) {
+  bool star = uiHash(x, y) > uiStarCut;
+  if (code <= 2 || code == 6) { const float m = fminf(w, h) * 0.46f; return uiPortalPx(code, (x + 0.5f - w * 0.5f) / m, (y + 0.5f - h * 0.5f) / m); }
+  switch (code) {
     case 7: { const uint32_t c[4] = { 0xFFE7B0, 0xF0A040, 0x7A3A0C, 0x140804 }; const float a[4] = { 0, 0.25f, 0.6f, 1 };
               return uiGrad(c, a, 4, sqrtf((u - 0.5f) * (u - 0.5f) * 1.2f + (v - 0.45f) * (v - 0.45f) * 2.2f) * 1.4f); }
     case 8: { uint32_t s = uiMix(0x3F7FD6, 0xA8D4F5, v);
@@ -2916,7 +2973,7 @@ void uiPicture(const UiRect &r, int kind, int k) {
     for (int lx = 0; lx < r.w; lx++) {
       int cx = lx < rad ? rad - lx : lx >= r.w - rad ? lx - (r.w - rad - 1) : 0, cy = ly < rad ? rad - ly : ly >= r.h - rad ? ly - (r.h - rad - 1) : 0;
       if (cx && cy && cx * cx + cy * cy > rad * rad) continue;
-      uint32_t c = kind == 0 ? uiWoodPx(k, lx, ly) : uiBackPx(k, lx, ly, r.w, r.h);
+      uint32_t c = kind == 0 ? uiWoodPx(k, lx, ly) : kind == 2 ? uiBackPxCode(k, lx, ly, r.w, r.h) : uiBackPx(k, lx, ly, r.w, r.h);
       if (ly > r.h - 15) c = uiMix(c, 0x000000, 0.35f);
       p[r.x + lx] = uiRGB(c);
     }
@@ -3008,35 +3065,80 @@ void uiPaintHomeBand() {
   uiButton(uiSetBtn, "Settings", false, 2);
 }
 
+void uiPaintPSBand() {                    // the portal and space home pages
+  for (int i = 0; i < SCR_W * uiRows; i++) uiBuf[i] = uiRGB(0x0B0B10);
+  for (int y = uiY0; y < uiY0 + uiRows && y < uiHeadR.h; y++)
+    ug.drawFastHLine(0, y, SCR_W, uiRGB(y >= uiHeadR.h - 2 ? 0x6B4423 : uiMix(0x2A1A0E, 0x160D06, (float)y / uiHeadR.h)));
+  uiText(uiKind == 1 ? "CHOOSE YOUR PORTAL" : "CHOOSE A SPACE SCENE", SCR_W / 2, uiHeadR.h / 2 + 8, uiRGB(0xFFD99A), &FreeSansBold12pt7b, true, false);
+  const uint16_t lab = uiRGB(0xC9B08A);
+  uiText(uiKind == 1 ? "STYLE" : "SCENE", 10, 60, lab, &FreeSansBold9pt7b, false, false);
+  uiText("COLOURS", uiLabColX, uiLabColY, lab, &FreeSansBold9pt7b, false, false);
+  const uint32_t cols[6] = { uiCore, uiRim, uiSpace[0], uiSpace[1], uiSpace[2], uiSpace[3] };
+  for (int i = 0; i < 4; i++) {
+    const UiRect &r = uiTile[i];
+    if (!uiRowsHit(r.y - 4, r.h + 8)) continue;
+    const int code = UI_PS[uiKind - 1][i];
+    uint32_t own[6] = { cols[0], cols[1], cols[2], cols[3], cols[4], cols[5] };
+    if (i != uiSelStyle) {                // the others in their own colours (the chosen one in yours)
+      if (code == 1 || code == 6) { own[0] = 0x0B6B1A; own[1] = 0x8DFF4F; }
+      else if (code == 2) { own[0] = 0xA400FF; own[1] = 0xFF4FD8; }
+      else if (code == 3) { own[0] = 0x1B2A8A; own[1] = 0x9FE8FF; }
+      else if (code == 0) { own[0] = 0x3B1CFF; own[1] = 0x38F0FF; }
+    }
+    uiBackCols = own;
+    uiPicture(r, 2, code);
+    uiBackCols = NULL;
+    uiText(UI_PS_NAMES[uiKind - 1][i], r.x + r.w / 2, r.y + r.h - 11, 0xFFFF, NULL, true, true);
+    uiFrame(r, i == uiSelStyle);
+  }
+  const int kind = uiColKind();
+  for (int i = 0; i < 6; i++) uiSwatch(i, kind);
+  uiButton(uiShow, "SHOW", true, 1);
+  uiButton(uiSetBtn, "Settings", false, 2);
+}
+
 // ---- the settings page ----
 int uiCrossMax() { return (int)((SCR_H - 8) * 0.8f); }   // the biggest cross for the way the screen is turned (as in the Studio)
-bool uiFullDay() { return UI_BACKS[uiSelBack] == 18; }
+bool uiFullDay() { return uiKind == 0 && UI_BACKS[uiSelBack] == 18; }
+int uiPortalMax() { return min(SCR_W, SCR_H) / 2 - 1; }   // the biggest portal
 float uiSlFrac(int k) {                   // where each slider's knob sits, 0-1
   switch (k) {
     case 0: return (stBright - 10) / 90.0f;
-    case 1: { float pct = stRadius * 100.0f / uiCrossMax(); return (pct - 40) / 60.0f; }
-    case 2: return (stBeam - 5) / 25.0f;
-    default: return uiFullDay() ? (stFdLen - 2) / 28.0f : (stSpeed - 0.02f) / 0.28f;
+    case 1: if (uiKind) return (stRadius * 100.0f / uiPortalMax() - 30) / 70.0f; else { float pct = stRadius * 100.0f / uiCrossMax(); return (pct - 40) / 60.0f; }
+    case 2: return uiKind ? (stSpeed - 0.02f) / 0.28f : (stBeam - 5) / 25.0f;
+    default: return uiKind == 1 ? stSparks / 30.0f : uiKind == 2 ? (stStars - 1) / 5.0f : uiFullDay() ? (stFdLen - 2) / 28.0f : (stSpeed - 0.02f) / 0.28f;
   }
 }
 void uiSlSet(int k, float f) {
   f = f < 0 ? 0 : f > 1 ? 1 : f;
   switch (k) {
     case 0: stBright = 10 + (int)lroundf(f * 90); break;
-    case 1: stRadius = (int)lroundf((40 + f * 60) * uiCrossMax() / 100.0f); break;
-    case 2: stBeam = 5 + (int)lroundf(f * 25); break;
-    default: if (uiFullDay()) stFdLen = 2 + (int)lroundf(f * 28); else stSpeed = 0.02f + f * 0.28f; break;
+    case 1: stRadius = uiKind ? (int)lroundf((30 + f * 70) * uiPortalMax() / 100.0f) : (int)lroundf((40 + f * 60) * uiCrossMax() / 100.0f); break;
+    case 2: if (uiKind) stSpeed = 0.02f + f * 0.28f; else stBeam = 5 + (int)lroundf(f * 25); break;
+    default:
+      if (uiKind == 1) stSparks = (int)lroundf(f * 30);
+      else if (uiKind == 2) stStars = 1 + (int)lroundf(f * 5);
+      else if (uiFullDay()) stFdLen = 2 + (int)lroundf(f * 28); else stSpeed = 0.02f + f * 0.28f;
+      break;
   }
 }
 const char *uiSlName(int k) {
   if (k == 0) return "BRIGHTNESS";
+  if (uiKind) { if (k == 1) return uiKind == 1 ? "PORTAL SIZE" : "SIZE"; if (k == 2) return uiKind == 1 ? "SPIN SPEED" : "SPEED"; return uiKind == 1 ? "SPARKS" : "STAR DENSITY"; }
   if (k == 1) return "CROSS SIZE";
   if (k == 2) return "BEAM THICKNESS";
   const uint8_t f = UI_BACKS[uiSelBack];
   return f == 18 ? "DAY LENGTH" : f == 7 ? "GLOW SPEED" : (f >= 8 && f <= 10) ? "CLOUD SPEED" : "SPEED";
 }
 void uiSlValue(int k, char *out) {
+  const char *spd = stSpeed < 0.09f ? "Slow" : stSpeed < 0.18f ? "Medium" : stSpeed < 0.25f ? "Fast" : "Very fast";
   if (k == 0) snprintf(out, 16, "%d%%", stBright);
+  else if (uiKind) {
+    if (k == 1) snprintf(out, 16, "%d%%", (int)lroundf(stRadius * 100.0f / uiPortalMax()));
+    else if (k == 2) snprintf(out, 16, "%s", spd);
+    else if (uiKind == 1) snprintf(out, 16, "%d", stSparks);
+    else snprintf(out, 16, "%d of 6", stStars);
+  }
   else if (k == 1) snprintf(out, 16, "%d%%", (int)lroundf(stRadius * 100.0f / uiCrossMax()));
   else if (k == 2) snprintf(out, 16, "%d%%", stBeam);
   else if (uiFullDay()) snprintf(out, 16, "%d min", stFdLen);
@@ -3056,9 +3158,35 @@ void uiSlider(int k) {
   ug.fillCircle(kx, ty + 4, 12, uiRGB(0x7A4210));
   ug.fillCircle(kx, ty + 4, 9, uiRGB(0xFFD99A));
 }
+void uiPreviewPS() {                      // portal or space: a still picture with these settings
+  const UiRect &r = uiPrev;
+  const int code = UI_PS[uiKind - 1][uiSelStyle], br = stBright * 256 / 100;
+  const float pr = stRadius * (float)r.w / SCR_W;   // the portal's size in the little picture
+  const uint32_t cols[6] = { stCore, stRim, stSpace[0], stSpace[1], stSpace[2], stSpace[3] };
+  uiBackCols = cols;
+  uiStarCut = 1 - 0.005f * stStars;
+  for (int y = r.y; y < r.y + r.h; y++) {
+    if (y < uiY0 || y >= uiY0 + uiRows) continue;
+    const int ly = y - r.y;
+    for (int lx = 0; lx < r.w; lx++) {
+      uint32_t c = uiKind == 1 ? uiPortalPx(code, (lx + 0.5f - r.w * 0.5f) / pr, (ly + 0.5f - r.h * 0.5f) / pr) : uiBackPxCode(code, lx, ly, r.w, r.h);
+      if (uiKind == 1 && stSparks) {      // the sparks being drawn in (a few dots)
+        const int cell = (int)(uiHash(lx >> 3, ly >> 3) * 1000);
+        if (cell < stSparks * 6 && ((lx & 7) == 3) && ((ly & 7) == 4)) c = uiMix(stRim, 0xFFFFFF, 0.6f);
+      }
+      const int rr = ((c >> 16) & 255) * br >> 8, gg = ((c >> 8) & 255) * br >> 8, bb = (c & 255) * br >> 8;
+      ug.drawPixel(r.x + lx, y, to565raw(rr, gg, bb));
+    }
+  }
+  uiBackCols = NULL;
+  uiStarCut = 0.985f;
+  ug.drawRoundRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4, 5, uiRGB(0x6B4423));
+  ug.drawRoundRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, 4, uiRGB(0x6B4423));
+}
 void uiPreview() {                        // a small still picture of the cross with these settings
   const UiRect &r = uiPrev;
   if (!uiRowsHit(r.y - 3, r.h + 6)) return;
+  if (uiKind) { uiPreviewPS(); return; }
   const float R = fminf(stRadius, (SCR_H - 8) * (100.0f - BAR) / 100), top = R * BAR / (100.0f - BAR);   // the cross, as the board works it out
   const float aw = fmaxf(2, R * stBeam / 100.0f), hhl = fmaxf(aw + 1, fminf(R * CROSS_W / 100.0f, SCR_W / 2.0f - 2));
   const float cyc = (SCR_H - (top + R)) / 2 + top, cxc = SCR_W / 2.0f, sx = (float)SCR_W / r.w, sy = (float)SCR_H / r.h;
@@ -3251,7 +3379,7 @@ void uiPaintRows(int ya, int yb) {         // redraw rows ya to yb (the whole pa
   { tft.startWrite(); tft.setAddrWindow(0, start, SCR_W, SCR_H - start); }
   for (uiY0 = start; uiY0 < SCR_H && uiY0 < yb; uiY0 += uiMaxRows) {
     uiRows = SCR_H - uiY0 < uiMaxRows ? SCR_H - uiY0 : uiMaxRows;
-    if (uiPage == 1) uiPaintSetBand(); else uiPaintHomeBand();
+    if (uiPage == 1) uiPaintSetBand(); else if (uiKind) uiPaintPSBand(); else uiPaintHomeBand();
 #if HOME_DUMP
     if (dumpReq) for (int r = 0; r < uiRows; r++) {
       Serial.print(F("ROW ")); Serial.print(uiY0 + r); Serial.print(' ');
@@ -3297,7 +3425,12 @@ void uiOpen() {
   }
   if (!uiBuf) { Serial.println(F("[portal] no memory for the home page")); uiMode = 0; return; }
   ug.setTextWrap(false);
+  uiKind = homeKind() < 0 ? 0 : homeKind();
   uiLayout();
+  if (uiKind) uiLayoutPS();
+  uiSelStyle = 0;
+  if (uiKind) for (int i = 0; i < 4; i++) if (UI_PS[uiKind - 1][i] == STYLE) uiSelStyle = i;
+  uiSparks = NUM_SPARKS; uiStars = STARS; uiArms = ARMS; uiTwist = TWIST;
   uiSelWood = CROSS_RIPPLE <= 10 ? CROSS_RIPPLE : 0;
   uiSelBack = 0;
   for (int i = 0; i < 9; i++) if (UI_BACKS[i] == CROSS_FILL) uiSelBack = i;
@@ -3316,14 +3449,17 @@ void uiClose(bool use) {
   if (use) {                               // the choices become the board's settings (and are saved)
     Saved s;
     fillSaved(s);
-    s.crossRipple = uiSelWood;
-    s.crossFill = UI_BACKS[uiSelBack];
+    if (uiKind == 0) { s.crossRipple = uiSelWood; s.crossFill = UI_BACKS[uiSelBack]; }
+    else {                                 // a portal or space style
+      s.style = UI_PS[uiKind - 1][uiSelStyle];
+      s.sparks = uiSparks; s.stars = uiStars; s.arms = uiArms; s.twist = uiTwist;
+    }
     s.core = uiCore; s.rim = uiRim;
     for (int k = 0; k < 4; k++) s.spaceCols[k] = uiSpace[k];
     s.fadeOn = 0;                          // the colours picked here stay put
     s.bright = uiBright; s.radius = uiRadius; s.beam = uiBeam; s.speed = uiSpeed; s.fdLen = uiFdLen;   // and the settings page's
     const uint8_t f = s.crossFill;
-    if ((f >= 8 && f <= 10) || f == 18) cloudMemory();   // a sky: make room for its clouds now, while the other core is paused
+    if (uiKind == 0 && ((f >= 8 && f <= 10) || f == 18)) cloudMemory();   // a sky: make room for its clouds now, while the other core is paused
     pendingSettings = s;
     havePending = true;
   }
@@ -3334,16 +3470,40 @@ void uiClose(bool use) {
 void uiSetTouch(int x, int y);
 void uiTouch(int x, int y) {
   if (uiPage == 1) { uiSetTouch(x, y); return; }
-  for (int i = 0; i < 11; i++) if (uiIn(uiWood[i], x, y)) { uiSelWood = i; uiDirty = true; return; }
-  for (int i = 0; i < 9; i++) if (uiIn(uiBack[i], x, y)) { uiSelBack = i; uiSelCol = uiColMatch(); uiDirty = true; return; }
-  int kind = uiColKind();
-  if (kind) for (int i = 0; i < 6; i++) if (uiIn(uiCol[i], x, y)) {
-    uiSelCol = i;
-    if (kind == 1) { uiCore = UI_GLOW[i][0]; uiRim = UI_GLOW[i][1]; } else for (int k = 0; k < 4; k++) uiSpace[k] = UI_SPACE[i][k];
-    uiDirty = true; return;
+  if (uiKind) {                            // portal and space pages
+    for (int i = 0; i < 4; i++) if (uiIn(uiTile[i], x, y)) {
+      if (i != uiSelStyle) {               // another style: its own shape and colours, as in the Studio
+        const int code = UI_PS[uiKind - 1][i];
+        uiSelStyle = i;
+        if (code == 0) { uiArms = 4; uiTwist = 2.4f; }
+        if (code == 1) { uiArms = 2; uiTwist = 2.2f; uiCore = 0x0B6B1A; uiRim = 0x8DFF4F; }
+        if (code == 6) { uiArms = 2; uiTwist = 1.8f; uiCore = 0x0B6B1A; uiRim = 0x8DFF4F; }
+        if (code == 2) { uiCore = 0xA400FF; uiRim = 0xFF4FD8; }
+        if (code == 3) { uiCore = 0x1B2A8A; uiRim = 0x9FE8FF; }
+        if (code == 16) uiSparks = 14;
+        uiSelCol = uiColMatch();
+        uiDirty = true;
+      }
+      return;
+    }
+    const int kind = uiColKind();
+    for (int i = 0; i < 6; i++) if (uiIn(uiCol[i], x, y)) {
+      uiSelCol = i;
+      if (kind == 1) { uiCore = UI_GLOW[i][0]; uiRim = UI_GLOW[i][1]; } else for (int k = 0; k < 4; k++) uiSpace[k] = UI_SPACE[i][k];
+      uiDirty = true; return;
+    }
+  } else {                                 // the cross page
+    for (int i = 0; i < 11; i++) if (uiIn(uiWood[i], x, y)) { uiSelWood = i; uiDirty = true; return; }
+    for (int i = 0; i < 9; i++) if (uiIn(uiBack[i], x, y)) { uiSelBack = i; uiSelCol = uiColMatch(); uiDirty = true; return; }
+    int kind = uiColKind();
+    if (kind) for (int i = 0; i < 6; i++) if (uiIn(uiCol[i], x, y)) {
+      uiSelCol = i;
+      if (kind == 1) { uiCore = UI_GLOW[i][0]; uiRim = UI_GLOW[i][1]; } else for (int k = 0; k < 4; k++) uiSpace[k] = UI_SPACE[i][k];
+      uiDirty = true; return;
+    }
   }
   if (uiIn(uiSetBtn, x, y)) {
-    stBright = uiBright; stRadius = uiRadius; stBeam = uiBeam; stSpeed = uiSpeed; stFdLen = uiFdLen;
+    stBright = uiBright; stRadius = uiRadius; stBeam = uiBeam; stSpeed = uiSpeed; stFdLen = uiFdLen; stSparks = uiSparks; stStars = uiStars;
     stCore = uiCore; stRim = uiRim; for (int k = 0; k < 4; k++) stSpace[k] = uiSpace[k]; stSelCol = uiSelCol;
     uiPage = 1; uiDirty = true; return;
   }
@@ -3358,7 +3518,7 @@ void uiSlideTo(int k, int x) {             // a slider moved: redraw just that s
 void uiSetTouch(int x, int y) {            // the settings page
   if (uiIn(uiBackBtn, x, y)) { uiPage = 0; uiDirty = true; return; }   // back: forget the changes
   if (uiIn(uiSave, x, y)) {                 // SAVE: keep them, back to the home page
-    uiBright = stBright; uiRadius = stRadius; uiBeam = stBeam; uiSpeed = stSpeed; uiFdLen = stFdLen;
+    uiBright = stBright; uiRadius = stRadius; uiBeam = stBeam; uiSpeed = stSpeed; uiFdLen = stFdLen; uiSparks = stSparks; uiStars = stStars;
     uiCore = stCore; uiRim = stRim; for (int k = 0; k < 4; k++) uiSpace[k] = stSpace[k]; uiSelCol = stSelCol;
     uiSaved = true; uiPage = 0; uiDirty = true; return;
   }
