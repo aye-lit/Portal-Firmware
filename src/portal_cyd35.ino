@@ -132,7 +132,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xEDC2DDE8UL;
+const uint32_t BUILD_ID = 0xFD4848DDUL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -3219,8 +3219,10 @@ int uiSelWood = 0, uiSelBack = 0, uiSelCol = -1;
 uint32_t uiCore = 0, uiRim = 0, uiSpace[4];
 uint32_t uiLastTouch = 0;
 int uiPage = 0;                           // 0 the home page, 1 settings
-UiRect uiSetBtn, uiBackBtn, uiSave, uiPrev, uiSl[4];
-int uiNoteY = -1;
+UiRect uiSetBtn, uiBackBtn, uiSave, uiPrev, uiSl[4], uiSetCol[6];
+int uiNoteY = -1, uiSetSwR = 13, uiSetColLabY = 0;
+uint32_t stCore = 0, stRim = 0, stSpace[4]; int stSelCol = -1;   // the colours, while on the settings page
+const uint32_t *uiBackCols = NULL;        // (the preview: draw the backgrounds in these colours: core, rim, then the four space colours)
 int uiBright = 100, uiRadius = 100, uiBeam = 14, uiFdLen = 8; float uiSpeed = 0.12f;   // the settings, kept here until SHOW
 int stBright = 100, stRadius = 100, stBeam = 14, stFdLen = 8; float stSpeed = 0.12f;   // being changed on the settings page (SAVE keeps them)
 bool uiSaved = false;
@@ -3260,8 +3262,10 @@ void uiLayout() {                         // where everything goes, for the way 
     uiSetBtn = { 10, 418, 96, 52 };
     uiShow = { 114, 418, (int16_t)(W - 124), 52 };
     uiBackBtn = { 8, 6, 74, 28 };
-    uiPrev = { (int16_t)((W - 104) / 2), 48, 104, 156 };
-    for (int k = 0; k < 4; k++) uiSl[k] = { 16, (int16_t)(214 + k * 46), (int16_t)(W - 32), 36 };
+    uiPrev = { (int16_t)((W - 120) / 2), 46, 120, 120 };
+    for (int k = 0; k < 4; k++) uiSl[k] = { 16, (int16_t)(176 + k * 42), (int16_t)(W - 32), 36 };
+    uiSetColLabY = 357; uiSetSwR = 17;
+    for (int i = 0; i < 6; i++) uiSetCol[i] = { (int16_t)(18 + i * 50), 364, 34, 34 };
     uiSave = { 10, 412, (int16_t)(W - 20), 56 };
     uiNoteY = -1;
   } else {                                // landscape, 480 x 320
@@ -3278,8 +3282,10 @@ void uiLayout() {                         // where everything goes, for the way 
     uiBackBtn = { 8, 5, 74, 28 };
     uiPrev = { 10, 52, 180, 120 };
     for (int k = 0; k < 4; k++) uiSl[k] = { 206, (int16_t)(50 + k * 48), (int16_t)(W - 12 - 206), 36 };
+    uiSetColLabY = 198; uiSetSwR = 13;
+    for (int i = 0; i < 6; i++) uiSetCol[i] = { (int16_t)(12 + i * 29), 210, 26, 26 };
     uiSave = { 206, 248, (int16_t)(W - 12 - 206), 60 };
-    uiNoteY = 186;
+    uiNoteY = -1;
   }
 }
 
@@ -3313,16 +3319,16 @@ uint32_t uiBackPx(int k, int x, int y, int w, int h) {
     case 3: { float dx = (u - 0.5f) * w, dy = (v - 0.5f) * h, r = sqrtf(dx * dx + dy * dy);
               int a = (int)((atan2f(dy, dx) + 3.1416f) * 22);
               float st = uiHash(a, 7) > 0.55f ? fminf(1, r / 30.0f) : 0;
-              return r < 3 ? 0xCFE8FF : uiMix(0x02040C, 0x7FB8FF, st * (0.4f + 0.6f * uiHash(a, 3))); }
+              return r < 3 ? (uiBackCols ? uiMix(uiBackCols[1], 0xFFFFFF, 0.6f) : 0xCFE8FF) : uiMix(0x02040C, uiBackCols ? uiBackCols[1] : 0x7FB8FF, st * (0.4f + 0.6f * uiHash(a, 3))); }
     case 4: { float dx = (u - 0.5f) / 0.42f, dy = (v - 0.5f) / 0.13f, e = dx * dx + dy * dy;
-              uint32_t g = e < 1 ? uiMix(0xFFF0D0, 0x3050A0, sqrtf(e)) : 0x03040A;
+              uint32_t g = e < 1 ? uiMix(uiBackCols ? uiBackCols[5] : 0xFFF0D0, uiBackCols ? uiBackCols[4] : 0x3050A0, sqrtf(e)) : 0x03040A;
               if (e < 1) g = uiMix(g, 0x03040A, powf(sqrtf(e), 3));
               return star && e >= 1 ? 0xFFFFFF : g; }
     case 14: { float a = expf(-((u - 0.35f) * (u - 0.35f) + (v - 0.5f) * (v - 0.5f)) * 14), b = expf(-((u - 0.7f) * (u - 0.7f) + (v - 0.45f) * (v - 0.45f)) * 16);
-               uint32_t c = uiMix(0x08040E, 0xE0287D, a); c = uiMix(c, 0x3A90FF, b * 0.9f); return star ? 0xFFFFFF : c; }
+               uint32_t c = uiMix(0x08040E, uiBackCols ? uiBackCols[3] : 0xE0287D, a); c = uiMix(c, uiBackCols ? uiBackCols[4] : 0x3A90FF, b * 0.9f); return star ? 0xFFFFFF : c; }
     default: { float d = fmodf(u * 1.0f + v * 0.55f, 0.36f);
                uint32_t c = uiMix(0x050818, 0x101830, v);
-               if (d < 0.025f && u > 0.15f && u < 0.9f) c = uiMix(c, 0xE8F0FF, 1 - d / 0.025f);
+               if (d < 0.025f && u > 0.15f && u < 0.9f) c = uiMix(c, uiBackCols ? uiBackCols[5] : 0xE8F0FF, 1 - d / 0.025f);
                return star ? 0xFFFFFF : c; }
   }
 }
@@ -3354,15 +3360,14 @@ void uiFrame(const UiRect &r, bool sel) {
   if (sel) for (int i = 0; i < 3; i++) ug.drawRoundRect(r.x - 1 - i, r.y - 1 - i, r.w + 2 + 2 * i, r.h + 2 + 2 * i, 8 + i, uiRGB(0xFFD36B));
   else ug.drawRoundRect(r.x, r.y, r.w, r.h, 7, uiRGB(0x3A2A1C));
 }
-void uiSwatch(int i, int kind) {
-  const UiRect &r = uiCol[i];
-  int cx = r.x + uiSwR, cy = r.y + uiSwR;
-  if (!uiRowsHit(cy - uiSwR - 5, 2 * uiSwR + 10)) return;
-  if (i == uiSelCol) { ug.fillCircle(cx, cy, uiSwR + 4, uiRGB(0xFFFFFF)); ug.fillCircle(cx, cy, uiSwR + 1, uiRGB(0x0B0B10)); }
-  for (int y = cy - uiSwR; y <= cy + uiSwR; y++) {
+void uiSwatchAt(const UiRect &r, int R, int i, int kind, bool sel) {
+  int cx = r.x + R, cy = r.y + R;
+  if (!uiRowsHit(cy - R - 5, 2 * R + 10)) return;
+  if (sel) { ug.fillCircle(cx, cy, R + 4, uiRGB(0xFFFFFF)); ug.fillCircle(cx, cy, R + 1, uiRGB(0x0B0B10)); }
+  for (int y = cy - R; y <= cy + R; y++) {
     if (y < uiY0 || y >= uiY0 + uiRows) continue;
-    for (int x = cx - uiSwR; x <= cx + uiSwR; x++) {
-      float dx = x - cx, dy = y - cy, d = sqrtf(dx * dx + dy * dy) / uiSwR;
+    for (int x = cx - R; x <= cx + R; x++) {
+      float dx = x - cx, dy = y - cy, d = sqrtf(dx * dx + dy * dy) / R;
       if (d > 1) continue;
       uint32_t c;
       if (kind == 1) c = uiMix(UI_GLOW[i][1], UI_GLOW[i][0], d * 1.1f);
@@ -3372,6 +3377,7 @@ void uiSwatch(int i, int kind) {
     }
   }
 }
+void uiSwatch(int i, int kind) { uiSwatchAt(uiCol[i], uiSwR, i, kind, i == uiSelCol); }
 void uiButton(const UiRect &s, const char *label, bool gold, int icon) {   // icon: 0 none, 1 play, 2 gear, 3 tick
   if (!uiRowsHit(s.y, s.h)) return;
   const int rad = s.h > 40 ? 12 : 8;
@@ -3497,8 +3503,8 @@ void uiPreview() {                        // a small still picture of the cross 
       } else {
         if (back == 7) {                  // the warm glow, in the chosen colours
           const float dx = (X - cxc) / SCR_H, dy = (Y - cyc) / SCR_H, d = sqrtf(dx * dx + dy * dy) / 0.75f;
-          c = d < 0.2f ? uiMix(0xFFF0D0, uiRim, d / 0.2f) : d < 0.55f ? uiMix(uiRim, uiCore, (d - 0.2f) / 0.35f) : uiMix(uiCore, 0x000000, (d - 0.55f) / 0.45f);
-        } else c = uiBackPx(uiSelBack, lx, ly, r.w, r.h);
+          c = d < 0.2f ? uiMix(0xFFF0D0, stRim, d / 0.2f) : d < 0.55f ? uiMix(stRim, stCore, (d - 0.2f) / 0.35f) : uiMix(stCore, 0x000000, (d - 0.55f) / 0.45f);
+        } else { const uint32_t cols[6] = { stCore, stRim, stSpace[0], stSpace[1], stSpace[2], stSpace[3] }; uiBackCols = cols; c = uiBackPx(uiSelBack, lx, ly, r.w, r.h); uiBackCols = NULL; }
         if (m > -sx * 3) c = uiMix(c, 0x000000, 0.3f * (1 + m / (sx * 3)));                  // a soft shadow round the wood
       }
       const int rr = ((c >> 16) & 255) * br >> 8, gg = ((c >> 8) & 255) * br >> 8, bb = (c & 255) * br >> 8;
@@ -3520,6 +3526,10 @@ void uiPaintSetBand() {
     uiText("changes when you let go.", uiPrev.x + uiPrev.w / 2, uiNoteY + 12, uiRGB(0x9A8A70), NULL, true, false);
   }
   for (int k = 0; k < 4; k++) uiSlider(k);
+  uiText("COLOURS", uiSetCol[0].x - 2, uiSetColLabY, uiRGB(0xC9B08A), &FreeSansBold9pt7b, false, false);
+  const int kind = uiColKind();
+  if (kind) for (int i = 0; i < 6; i++) uiSwatchAt(uiSetCol[i], uiSetSwR, i, kind, i == stSelCol);
+  else uiText("This background has its own colours", uiSetCol[0].x, uiSetCol[0].y + uiSetSwR - 4, uiRGB(0x9A8A70), NULL, false, false);
   uiButton(uiSave, "SAVE", true, 3);
 }
 
@@ -3758,7 +3768,11 @@ void uiTouch(int x, int y) {
     if (kind == 1) { uiCore = UI_GLOW[i][0]; uiRim = UI_GLOW[i][1]; } else for (int k = 0; k < 4; k++) uiSpace[k] = UI_SPACE[i][k];
     uiDirty = true; return;
   }
-  if (uiIn(uiSetBtn, x, y)) { stBright = uiBright; stRadius = uiRadius; stBeam = uiBeam; stSpeed = uiSpeed; stFdLen = uiFdLen; uiPage = 1; uiDirty = true; return; }
+  if (uiIn(uiSetBtn, x, y)) {
+    stBright = uiBright; stRadius = uiRadius; stBeam = uiBeam; stSpeed = uiSpeed; stFdLen = uiFdLen;
+    stCore = uiCore; stRim = uiRim; for (int k = 0; k < 4; k++) stSpace[k] = uiSpace[k]; stSelCol = uiSelCol;
+    uiPage = 1; uiDirty = true; return;
+  }
   if (uiIn(uiShow, x, y)) uiClose(true);
 }
 void uiPaintRows(int ya, int yb);
@@ -3771,7 +3785,16 @@ void uiSetTouch(int x, int y) {            // the settings page
   if (uiIn(uiBackBtn, x, y)) { uiPage = 0; uiDirty = true; return; }   // back: forget the changes
   if (uiIn(uiSave, x, y)) {                 // SAVE: keep them, back to the home page
     uiBright = stBright; uiRadius = stRadius; uiBeam = stBeam; uiSpeed = stSpeed; uiFdLen = stFdLen;
+    uiCore = stCore; uiRim = stRim; for (int k = 0; k < 4; k++) uiSpace[k] = stSpace[k]; uiSelCol = stSelCol;
     uiSaved = true; uiPage = 0; uiDirty = true; return;
+  }
+  const int kind = uiColKind();
+  if (kind) for (int i = 0; i < 6; i++) if (uiIn(uiSetCol[i], x, y)) {   // a colour: the preview shows it straight away
+    stSelCol = i;
+    if (kind == 1) { stCore = UI_GLOW[i][0]; stRim = UI_GLOW[i][1]; } else for (int k = 0; k < 4; k++) stSpace[k] = UI_SPACE[i][k];
+    const int a = uiPrev.y < uiSetCol[0].y ? uiPrev.y : uiSetCol[0].y, b = uiPrev.y + uiPrev.h > uiSetCol[0].y + uiSetCol[0].h ? uiPrev.y + uiPrev.h : uiSetCol[0].y + uiSetCol[0].h;
+    uiPaintRows(a - 6, b + 6);
+    return;
   }
   for (int k = 0; k < 4; k++) {
     const UiRect &r = uiSl[k];
