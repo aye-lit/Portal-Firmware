@@ -421,7 +421,7 @@ function markStyle() {
   const addUses = st => {
     const isC = isCrossStyle(st), wood = st === 17;
     let f = isC ? S.crossFill : st;
-    if (isC && !wood && ((f >= 7 && f <= 10) || f === 18)) f = 0;   // skies and warm glow are only behind the Wooden cross
+    if (isC && !wood && ((f >= 7 && f <= 10) || f === 18)) f = 3;   // skies and warm glow are only behind the Wooden cross
     if (wood && f === 11) f = 7;
     const sky = wood && ((f >= 8 && f <= 10) || f === 18), spc = hasSpaceCols(f), glowC = isC && !wood;
     const o = glowC && S.crossOut !== 255 ? f : 255;              // outside a glowing cross
@@ -496,7 +496,7 @@ STYLES.forEach((st, i) => {
     if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.crossw = DEFAULTS.crossw; S.radius = crossMax(M); }
     if (editIdx >= 0) { S.scenes[editIdx] = 200 + i; renderScenes(); }   // editing a scene: this is its style now
     if (st.wood) { if (!((S.crossFill >= 7 && S.crossFill <= 10) || S.crossFill === 18)) S.crossFill = 7; }   // Wooden cross: starts with the warm glow behind it
-    else if ((S.crossFill >= 7 && S.crossFill <= 10) || S.crossFill === 18) S.crossFill = 0;   // (Solid colour, 11, is kept for the other crosses)   // crosses fill the screen, each with its own proportions
+    else if ((S.crossFill >= 7 && S.crossFill <= 10) || S.crossFill === 18) S.crossFill = 3;   // (Solid colour, 11, is kept for the other crosses)   // crosses fill the screen, each with its own proportions
     bindAll(); markStyle(); changed(true);
   });
   $(isCrossStyle(i) ? "style-cross" : isSpaceStyle(i) ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole, Nebula, Wormhole, Meteor Shower are space styles
@@ -719,6 +719,7 @@ $("reset").addEventListener("click", () => {
   endEdit(true);
   S = { ...DEFAULTS, sceneSets: S.sceneSets.slice(), model: S.model, tint: S.tint, addr: S.addr, board: S.board, custom: S.custom, pics: S.pics, scenes: S.scenes.slice(), fadeSets: DEFAULTS.fadeSets.map(x => ({ ...x })) };
   selectModel(S.model, true); changed(true);
+  showDisplayPage(true);   // stay on this page's kind of display
 });
 
 // ---------------- pictures & scenes ----------------
@@ -968,7 +969,8 @@ async function addPictures(files) {
 $("pic-file").addEventListener("change", e => { addPictures([...e.target.files]); e.target.value = ""; });
 $("style-add").addEventListener("click", () => {      // another style to fade into
   if (S.scenes.length >= 8) return;
-  const used = new Set(S.scenes), next = SCENE_STYLES.find(k => k !== S.style && !used.has(200 + k));
+  const used = new Set(S.scenes), pg = DISPLAY_PAGES[(location.hash || "").slice(1).toLowerCase()];
+  const next = SCENE_STYLES.find(k => k !== S.style && !used.has(200 + k) && (!pg || pg.fits(k)));   // on a display page: another style of that kind
   if (next == null) return;
   if (!S.scenes.length) { S.scenes = [-1]; S.sceneSets = [null]; }   // start with the main style
   S.scenes.push(200 + next); S.sceneSets.push(null); renderScenes(); markStyle(); changed();

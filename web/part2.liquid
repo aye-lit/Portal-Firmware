@@ -486,7 +486,7 @@ function defaultSetFor(st, base) {                  // a scene's settings to sta
   if (cr) {
     o.radius = crossMax(M, st); o.beam = cr.beam; o.bar = cr.bar; o.crossw = DEFAULTS.crossw;
     const sky = o.crossFill >= 7 && o.crossFill <= 10 || o.crossFill === 18;
-    if (st === 17 && !sky && o.crossFill !== 11) o.crossFill = 7; else if (st !== 17 && (sky || o.crossFill === 7)) o.crossFill = 0;
+    if (st === 17 && !sky && o.crossFill !== 11) o.crossFill = 7; else if (st !== 17 && (sky || o.crossFill === 7)) o.crossFill = 3;
     if (st === 17 && o.crossFill === 11) o.crossFill = 7;
   } else o.radius = Math.min(o.radius, rmax(M));
   return o;
@@ -601,7 +601,7 @@ const crossMax = (M, st = S.style) => M.rect ? Math.floor((M.h - 8) * 0.8) : Mat
 const radiusMax = M => (S.style >= 8 && S.style <= 13) || S.style === 17 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 0, crossOut: 255, crossCol: "", crossRipple: 0, rimw: 100, ripGrad: 0, ripC1: "#ffd36b", ripC2: "#ff2d8a", ripC3: "#8a3dff", ripC4: "#3de0ff", woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 3, crossOut: 255, crossCol: "", crossRipple: 0, rimw: 100, ripGrad: 0, ripC1: "#ffd36b", ripC2: "#ff2d8a", ripC3: "#8a3dff", ripC4: "#3de0ff", woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -609,8 +609,9 @@ if (S.style === 5) S.style = 3;                       // Black hole is gone: Hyp
 if (S.crossFill === 5) S.crossFill = 3;
 if (S.style === 7) S.style = 6;                       // Cartoon Sticker is gone: Cartoon Swirl instead
 if (S.style === 15) S.style = 3;                      // Wormhole is gone: Hyperspace instead
-if (S.crossFill === 15) S.crossFill = 3;
-if (Array.isArray(S.sceneSets)) S.sceneSets.forEach(st => { if (st && st.crossFill === 15) st.crossFill = 3; });
+const NO_CROSS_FILL = [0, 1, 2, 5, 6, 15];   // portal styles (and the removed Black hole, Wormhole) are no longer shown with a cross: Hyperspace instead
+if (NO_CROSS_FILL.includes(S.crossFill)) S.crossFill = 3;
+if (Array.isArray(S.sceneSets)) S.sceneSets.forEach(st => { if (st && NO_CROSS_FILL.includes(st.crossFill)) st.crossFill = 3; });
 if (Array.isArray(S.scenes)) S.scenes = S.scenes.map(x => x === 207 ? 206 : x === 215 ? 203 : x);
 if (S.board === "s3mini") S.board = "esp32s3";
 if (!BOARDS[S.board]) S.board = DEFAULTS.board;
@@ -630,7 +631,7 @@ if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
 if (!(S.bar >= 20 && S.bar <= 50)) S.bar = 32;
 if (!(S.stars >= 1 && S.stars <= 6)) S.stars = 3;
 S.reverse = S.reverse === true;
-if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 18].includes(S.crossFill)) S.crossFill = 0;
+if (![3, 4, 7, 8, 9, 10, 11, 14, 16, 18].includes(S.crossFill)) S.crossFill = 3;
 if (S.crossOut !== 255) S.crossOut = S.crossFill;          // the background is the same style as inside the cross
 if (![0, 1, 2].includes(S.crossRipple)) S.crossRipple = 0;
 if (![0, 1].includes(S.ripGrad)) S.ripGrad = 0;   // (Rainbow is gone: back to Glow)
