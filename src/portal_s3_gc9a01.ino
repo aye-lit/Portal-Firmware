@@ -45,10 +45,15 @@
 struct Spark;
 struct Saved;
 struct Look;
+struct UiRect;
 
 void beginBus() {
 #if defined(ESP32)
+#ifdef PIN_MISO
+  SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
+#else
   SPI.begin(PIN_SCK, -1, PIN_MOSI, PIN_CS);
+#endif
 #elif defined(ARDUINO_ARCH_RP2040)
   SPI.setSCK(PIN_SCK);
   SPI.setTX(PIN_MOSI);
@@ -60,6 +65,7 @@ void beginBus() {
 #define SPI_HZ    80000000UL   // turbo: if the picture glitches or stays dark, change to 40000000UL
 
 #define TAP_PIN    -1
+#define HOME_PAGE  0
 #define PX         1            // one drawn pixel per screen pixel
 #define TURNS      0
 #define SCR_W      240          // drawing width and height (the screen is PX times bigger)
@@ -93,7 +99,7 @@ uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hypers
                                 // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
                                 // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
 uint8_t  CROSS_RIPPLE = 0;      // crosses: Ripple, rings echoing the outline inside the cross (0 off, 1 outward, 2 inward; +3 Gradient colours); the Wooden cross: its wood (0 classic, 1 pine, 2 rustic oak, 3 walnut, 4 cherry, 5 mahogany, 6 cedar, 7 driftwood, 8 ebony, 9 maple, 10 olive wood)
-uint8_t  CROSS_FILL = 0;       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower, 11 Solid colour; the Wooden cross: what's behind it, 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
+uint8_t  CROSS_FILL = 3;       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower, 11 Solid colour; the Wooden cross: what's behind it, 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
 uint32_t SPACE_COLS[4] = { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF };   // Galaxy, Nebula, Wormhole, Meteor Shower: four colours blended together
 uint8_t  CROSS_W    = 46;      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
 uint8_t  BEAM       = 14;      // crosses: beam thickness, % of the portal size (5-30)
@@ -119,7 +125,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0x3C1CBD58UL;
+const uint32_t BUILD_ID = 0xC8D867AAUL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -166,6 +172,10 @@ int      spCY = QY;                     // centre row for the space styles (the 
   #include "esp_heap_caps.h"
 #else
   #define USE_DMA 0
+#endif
+#if HOME_PAGE && !(DUAL_CORE && TURNS)
+  #undef HOME_PAGE
+  #define HOME_PAGE 0
 #endif
 
 // New settings from live tuning are applied between frames
@@ -461,20 +471,50 @@ uint32_t tapAt = 0, sceneShiftMs = 0;    // when the tap fade began; how far tap
 uint8_t  tapCur = 0, tapNext = 0;        // tap for next scene: the scene showing, and the one it's fading into
 uint32_t tapSceneAt = 0;                 // when the last tap started that fade
 #endif
+#if HOME_PAGE
+volatile uint8_t uiMode = 0;             // 0 the cross, 1 the home page, 2 touch setup
+volatile bool pressPending = false;      // a press while the Wooden cross shows: home button or tap? (decided between frames)
+volatile bool calRequest = false, tapIgnore = false, simTap = false, dumpReq = false, uiDirty = false;
+volatile int simX = 0, simY = 0;
+bool uiHeld = false;                     // a finger is still down from before (it has to lift first)
+float tcal[6] = { 0.0865f, 0, -17.3f, 0, 0.1297f, -25.9f };   // raw touch -> upright screen (replaced by touch setup)
+bool tcalOk = false;
+inline bool homeActive() { return STYLE == 17; }   // the home button is for the Wooden cross
+#if USE_DMA
+spi_device_handle_t touchDev;
+bool touchDevOk = false;
+#endif
+void tcalSave(); void tcalLoad(); void homeIconInit(); void uiLoop(); void homeCheck(); void homeIcon(uint16_t *buf, int y0, int rows);
+#endif
 #if TAP_PIN >= 0
 void pollTap() {                         // the touch chip pulls its pin low while the screen is pressed
   static uint32_t lowSince = 0, highSince = 0;
-  static bool down = false;
+  static bool down = false, holdFired = false;
+#if HOME_PAGE
+  const bool home = homeActive();
+  if (tapIgnore) { tapIgnore = false; down = true; }   // a finger still down from the home page
+  if (TAP_OFF && !home) return;          // turned off in the Studio (the home button still works)
+#else
   if (TAP_OFF) return;                   // turned off in the Studio
+#endif
   uint32_t now = millis() | 1;
   if (digitalRead(TAP_PIN) == LOW) {
     highSince = 0;
     if (!lowSince) lowSince = now;
-    if (!down && now - lowSince >= 15) { down = true; tapCount++; }   // held a moment: a real press, not a blip
+    if (!down && now - lowSince >= 15) {  // held a moment: a real press, not a blip
+      down = true;
+#if HOME_PAGE
+      if (home) pressPending = true; else
+#endif
+      tapCount++;
+    }
+#if HOME_PAGE
+    if (down && home && !holdFired && now - lowSince >= 6000) { holdFired = true; calRequest = true; }   // held 6 seconds: touch setup
+#endif
   } else {
     lowSince = 0;
     if (!highSince) highSince = now;
-    if (down && now - highSince >= 150) down = false;                   // let go
+    if (down && now - highSince >= 150) { down = false; holdFired = false; }   // let go
   }
 }
 void beginTap() {                        // put the touch chip in its waiting mode, where its pin shows presses
@@ -537,8 +577,8 @@ void loadSettings() {
   if (s.id == BUILD_ID && valid(s)) apply(s);
 }
 
-void saveSettings() {
-  Saved s = { BUILD_ID, RADIUS, OVAL, TWIST, SPEED, ARMS, NUM_SPARKS, (uint8_t)DRIFT, COLOR_CORE, COLOR_RIM, BRIGHTNESS, STYLE, RIPPLES, RIP_SPEED, GLOW_SIZE, STARS, (uint8_t)FADE_ON, FADE_COUNT };
+void fillSaved(Saved &s) {               // the settings in use now
+  s = Saved{ BUILD_ID, RADIUS, OVAL, TWIST, SPEED, ARMS, NUM_SPARKS, (uint8_t)DRIFT, COLOR_CORE, COLOR_RIM, BRIGHTNESS, STYLE, RIPPLES, RIP_SPEED, GLOW_SIZE, STARS, (uint8_t)FADE_ON, FADE_COUNT };
   for (int k = 0; k < 6; k++) s.fadeCols[k] = FADE_COLS[k];
   s.fadeSecs = FADE_SECS;
   s.rimSmooth = RIM_SMOOTH;
@@ -553,6 +593,11 @@ void saveSettings() {
   s.warm = WARM;
   s.tapOff = TAP_OFF;
   s.fdLen = FD_LEN; s.fdStars = FD_STARCNT; s.fdClouds = FD_CLOUDS; s.fdGlow = FD_GLOW;
+}
+
+void saveSettings() {
+  Saved s;
+  fillSaved(s);
   EEPROM.put(0, s);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
   EEPROM.commit();
@@ -945,6 +990,20 @@ uint32_t rebootAt = 0;                   // set by the REBOOT command
 
 const char* handleCommand(char *line) {   // returns the reply to send back
   if (strcasecmp(line, "TAP") == 0) { tapCount++; return "OK"; }   // same as tapping the screen: the next style (or scene)
+#if HOME_PAGE
+  if (strcasecmp(line, "HOME") == 0) { if (!homeActive()) return "ERR"; uiMode = 1; return "OK"; }   // open the home page (Wooden cross)
+  if (strcasecmp(line, "TOUCHSETUP") == 0) { uiMode = 2; return "OK"; }                            // line the touch up again
+  if (strncasecmp(line, "UITAP ", 6) == 0) { char *q; simX = strtol(line + 6, &q, 10); simY = strtol(q, NULL, 10); simTap = true; return "OK"; }   // a touch on the home page at x y
+  if (strncasecmp(line, "TCAL ", 5) == 0) {                                                        // the touch map, six numbers
+    char *q = line + 5;
+    for (int i = 0; i < 6; i++) tcal[i] = strtod(q, &q);
+    tcalSave();
+    return "OK";
+  }
+#if HOME_DUMP
+  if (strcasecmp(line, "HOMEDUMP") == 0) { dumpReq = true; uiDirty = true; return "OK"; }
+#endif
+#endif
   if (strncasecmp(line, "SET ", 4) == 0) {
     float v[58];
     uint8_t n = 0;
@@ -2802,7 +2861,11 @@ bool beginDma() {                        // after the screen is set up: move its
   SPI.end();
   spi_bus_config_t bc;
   memset(&bc, 0, sizeof(bc));
-  bc.mosi_io_num = PIN_MOSI; bc.miso_io_num = -1; bc.sclk_io_num = PIN_SCK; bc.quadwp_io_num = -1; bc.quadhd_io_num = -1;
+#ifdef PIN_MISO
+  bc.mosi_io_num = PIN_MOSI; bc.miso_io_num = PIN_MISO; bc.sclk_io_num = PIN_SCK;
+#else
+  bc.mosi_io_num = PIN_MOSI; bc.miso_io_num = -1; bc.sclk_io_num = PIN_SCK;
+#endif bc.quadwp_io_num = -1; bc.quadhd_io_num = -1;
   bc.max_transfer_sz = SCR_WMAX * STRIP * 2;
   if (spi_bus_initialize(SPI2_HOST, &bc, SPI_DMA_CH_AUTO) != ESP_OK) return false;
   spi_device_interface_config_t dc;
@@ -2810,6 +2873,14 @@ bool beginDma() {                        // after the screen is set up: move its
   dc.clock_speed_hz = SPI_HZ; dc.mode = 0; dc.spics_io_num = -1; dc.queue_size = 3; dc.post_cb = lcdDoneCb;
   dc.flags = SPI_DEVICE_HALFDUPLEX | SPI_DEVICE_NO_DUMMY;
   if (spi_bus_add_device(SPI2_HOST, &dc, &lcdDev) != ESP_OK) { spi_bus_free(SPI2_HOST); return false; }
+#if HOME_PAGE
+  {                                      // the touch chip on the same pins (its own select pin, a slow clock)
+    spi_device_interface_config_t tc;
+    memset(&tc, 0, sizeof(tc));
+    tc.clock_speed_hz = 2000000; tc.mode = 0; tc.spics_io_num = -1; tc.queue_size = 1;
+    touchDevOk = spi_bus_add_device(SPI2_HOST, &tc, &touchDev) == ESP_OK;
+  }
+#endif
   pinMode(PIN_CS, OUTPUT); digitalWrite(PIN_CS, LOW);   // the screen is the only thing listening on these pins
   if (!lcdWindow(100)) return false;
   memset(stripBuf[0], 0, SCR_WMAX * STRIP * 2);
@@ -2971,6 +3042,11 @@ void setup() {
   if (!lcdDma) { beginBus(); tft.setSPISpeed(SPI_HZ); }   // DMA didn't answer: back to the Arduino way
   Serial.println(lcdDma ? F("[portal] screen DMA on") : F("[portal] screen DMA off"));
 #endif
+#if HOME_PAGE
+  tcalLoad();
+  homeIconInit();
+  Serial.println(tcalOk ? F("[portal] home button ready") : F("[portal] home button ready (touch setup on the first touch)"));
+#endif
 #if DUAL_CORE
   for (int i = 0; i < 2; i++) {
     readySem[i] = xSemaphoreCreateBinary();
@@ -3000,6 +3076,567 @@ void sendStrip(uint16_t *buf, int rows) {
 void sendStrip(uint16_t *buf, int rows) { tft.writePixels(buf, SCR_W * rows); }
 #endif
 
+#if HOME_PAGE
+// ---------- Home page: choose the wood, what's behind the cross and its colours on the screen itself ----------
+// (the Wooden cross on the 3.5" touch board). While the cross shows, a home button sits in the bottom corner.
+#include <Preferences.h>
+#include <Fonts/FreeSansBold9pt7b.h>
+#include <Fonts/FreeSansBold12pt7b.h>
+
+#define UI_ROWS 12                       // the page is drawn in bands of up to this many rows
+uint16_t *uiBuf = NULL;                  // one band (only while the page shows)
+int uiY0 = 0, uiRows = 0, uiMaxRows = UI_ROWS;
+bool uiOwnBuf = false;
+class BandGfx : public Adafruit_GFX {    // Adafruit_GFX shapes and text, drawn into the band
+ public:
+  BandGfx() : Adafruit_GFX(SCR_WMAX, SCR_WMAX) {}
+  void drawPixel(int16_t x, int16_t y, uint16_t c) override {
+    if ((uint16_t)x >= (uint16_t)SCR_W) return;
+    y -= uiY0;
+    if ((uint16_t)y >= (uint16_t)uiRows) return;
+    uiBuf[y * SCR_W + x] = c;
+  }
+  void writePixel(int16_t x, int16_t y, uint16_t c) override { drawPixel(x, y, c); }
+  void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) override {
+    int x0 = x < 0 ? 0 : x, x1 = x + w > SCR_W ? SCR_W : x + w;
+    int y0 = y < uiY0 ? uiY0 : y, y1 = y + h > uiY0 + uiRows ? uiY0 + uiRows : y + h;
+    for (int yy = y0; yy < y1; yy++) { uint16_t *p = uiBuf + (yy - uiY0) * SCR_W; for (int xx = x0; xx < x1; xx++) p[xx] = c; }
+  }
+  void writeFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) override { fillRect(x, y, w, h, c); }
+  void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t c) override { fillRect(x, y, w, 1, c); }
+  void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t c) override { fillRect(x, y, 1, h, c); }
+  void writeFastHLine(int16_t x, int16_t y, int16_t w, uint16_t c) override { fillRect(x, y, w, 1, c); }
+  void writeFastVLine(int16_t x, int16_t y, int16_t h, uint16_t c) override { fillRect(x, y, 1, h, c); }
+};
+BandGfx ug;
+
+struct UiRect { int16_t x, y, w, h; };
+UiRect uiWood[11], uiBack[9], uiCol[6], uiShow, uiHeadR;
+int uiLabWoodX, uiLabWoodY, uiLabBackX, uiLabBackY, uiLabColX, uiLabColY, uiSwR;
+const uint8_t UI_BACKS[9] = { 7, 8, 9, 10, 18, 3, 4, 14, 16 };   // what's behind the cross: warm glow, skies, then space
+const char *UI_BACK_NAMES[9] = { "Warm glow", "Blue sky", "Sunset", "Heavenly", "Full day", "Hyperspace", "Galaxy", "Nebula", "Meteors" };
+const char *UI_WOOD_NAMES[11] = { "Classic", "Pine", "Oak", "Walnut", "Cherry", "Mahogany", "Cedar", "Driftwood", "Ebony", "Maple", "Olive" };
+const uint32_t UI_GLOW[6][2] = { { 0xD26A00, 0xFFD27A }, { 0xFF3D00, 0xFFD36B }, { 0x3B1CFF, 0x38F0FF }, { 0xA400FF, 0xFF4FD8 }, { 0x0B6B1A, 0x8DFF4F }, { 0x9E0030, 0xFF7AB0 } };
+const uint32_t UI_SPACE[6][4] = { { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF }, { 0x3A0E8C, 0xE0287D, 0x17B3C7, 0xFFCF6E }, { 0x8A1032, 0xFF5A7E, 0x4D63FF, 0xFFE0B0 },
+                                  { 0x0F5A62, 0x3FC4A8, 0xD4892A, 0xFFF0B8 }, { 0x0D4A3A, 0x2FE08A, 0x3AA0FF, 0xC77DFF }, { 0x6B1400, 0xFF4D1A, 0xFFB02E, 0xFFE9B3 } };
+int uiSelWood = 0, uiSelBack = 0, uiSelCol = -1;
+uint32_t uiCore = 0, uiRim = 0, uiSpace[4];
+uint32_t uiLastTouch = 0;
+
+inline uint16_t uiRGB(uint32_t c) { return to565raw(c >> 16, (c >> 8) & 255, c & 255); }
+inline uint32_t uiMix(uint32_t a, uint32_t b, float f) { return mixColor(a, b, f < 0 ? 0 : f > 1 ? 1 : f); }
+inline bool uiIn(const UiRect &r, int x, int y) { return x >= r.x - 3 && x < r.x + r.w + 3 && y >= r.y - 3 && y < r.y + r.h + 3; }
+inline bool uiRowsHit(int y, int h) { return y < uiY0 + uiRows && y + h > uiY0; }
+int uiColKind() { uint8_t f = UI_BACKS[uiSelBack]; return f == 7 || f == 3 ? 1 : (f == 4 || f == 14 || f == 16) ? 2 : 0; }   // 1 glow colours, 2 space colours, 0 none (skies)
+int uiColMatch() {
+  int k = uiColKind();
+  for (int i = 0; i < 6; i++) {
+    if (k == 1 && UI_GLOW[i][0] == uiCore && UI_GLOW[i][1] == uiRim) return i;
+    if (k == 2 && UI_SPACE[i][0] == uiSpace[0] && UI_SPACE[i][1] == uiSpace[1] && UI_SPACE[i][2] == uiSpace[2] && UI_SPACE[i][3] == uiSpace[3]) return i;
+  }
+  return -1;
+}
+
+void uiLayout() {                         // where everything goes, for the way the screen is turned now
+  const int W = SCR_W, H = SCR_H;
+  auto grid = [](UiRect *r, int n, int cols, int x0, int y0, int w, int cw, int ch) {
+    int gap = 6;
+    int cwid = (w - gap * (cols - 1)) / cols;
+    for (int i = 0; i < n; i++) r[i] = { (int16_t)(x0 + (i % cols) * (cwid + gap)), (int16_t)(y0 + (i / cols) * (ch + gap)), (int16_t)cwid, (int16_t)ch };
+    (void)cw;
+  };
+  if (H > W) {                            // portrait, 320 x 480
+    uiHeadR = { 0, 0, (int16_t)W, 40 };
+    uiLabWoodX = 10; uiLabWoodY = 61;
+    grid(uiWood, 11, 4, 10, 68, W - 20, 0, 36);
+    uiLabBackX = 10; uiLabBackY = 211;
+    grid(uiBack, 9, 3, 10, 218, W - 20, 0, 36);
+    uiLabColX = 10; uiLabColY = 361;
+    uiSwR = 18;
+    for (int i = 0; i < 6; i++) uiCol[i] = { (int16_t)(10 + 4 + i * ((W - 20 - 8 - 2 * uiSwR) / 5)), 370, (int16_t)(2 * uiSwR), (int16_t)(2 * uiSwR) };
+    uiShow = { 10, 418, (int16_t)(W - 20), 52 };
+  } else {                                // landscape, 480 x 320
+    uiHeadR = { 0, 0, (int16_t)W, 38 };
+    uiLabWoodX = 8; uiLabWoodY = 59;
+    grid(uiWood, 11, 4, 8, 66, 248, 0, 38);
+    uiLabBackX = 264; uiLabBackY = 59;
+    grid(uiBack, 9, 3, 264, 66, W - 8 - 264, 0, 38);
+    uiLabColX = 8; uiLabColY = 221;
+    uiSwR = 18;
+    for (int i = 0; i < 6; i++) uiCol[i] = { (int16_t)(8 + 2 + i * ((248 - 4 - 2 * uiSwR) / 5)), 232, (int16_t)(2 * uiSwR), (int16_t)(2 * uiSwR) };
+    uiShow = { 264, 214, (int16_t)(W - 8 - 264), 64 };
+  }
+}
+
+// ---- small pictures on the buttons ----
+inline float uiHash(int x, int y) { return (hash32((uint32_t)(x * 73856093) ^ (uint32_t)(y * 19349663)) & 1023) / 1023.0f; }
+uint32_t uiWoodPx(int g, int x, int y) {
+  float s = x * 0.5f + 1.3f * sinf(y * 0.045f + g * 1.3f) + g;          // grain running along the board, swaying a little
+  int tn = (int)(15 + 7 * sinf(s) + 4 * sinf(x * 1.7f + 0.6f * sinf(y * 0.11f + g)) + 3 * (uiHash(x, y >> 3) - 0.5f));
+  tn = tn < 0 ? 0 : tn > 31 ? 31 : tn;
+  float c[3]; woodColorOf(g, tn, c);
+  for (int j = 0; j < 3; j++) c[j] = c[j] < 0 ? 0 : c[j] > 255 ? 255 : c[j];
+  return ((uint32_t)c[0] << 16) | ((uint32_t)c[1] << 8) | (uint32_t)c[2];
+}
+uint32_t uiGrad(const uint32_t *cols, const float *at, int n, float t) {
+  if (t <= at[0]) return cols[0];
+  for (int i = 1; i < n; i++) if (t <= at[i]) return uiMix(cols[i - 1], cols[i], (t - at[i - 1]) / (at[i] - at[i - 1]));
+  return cols[n - 1];
+}
+uint32_t uiBackPx(int k, int x, int y, int w, int h) {
+  float u = (x + 0.5f) / w, v = (y + 0.5f) / h;
+  bool star = uiHash(x, y) > 0.985f;
+  switch (UI_BACKS[k]) {
+    case 7: { const uint32_t c[4] = { 0xFFE7B0, 0xF0A040, 0x7A3A0C, 0x140804 }; const float a[4] = { 0, 0.25f, 0.6f, 1 };
+              return uiGrad(c, a, 4, sqrtf((u - 0.5f) * (u - 0.5f) * 1.2f + (v - 0.45f) * (v - 0.45f) * 2.2f) * 1.4f); }
+    case 8: { uint32_t s = uiMix(0x3F7FD6, 0xA8D4F5, v);
+              float cl = 0.5f + 0.5f * sinf(u * 9 + 1.3f) * sinf(v * 7 + u * 3); return cl > 0.78f ? uiMix(s, 0xFFFFFF, (cl - 0.78f) * 3.5f) : s; }
+    case 9: { const uint32_t c[4] = { 0x2A1B4A, 0xB0405A, 0xF59A3A, 0xFFD27A }; const float a[4] = { 0, 0.55f, 0.82f, 1 }; return uiGrad(c, a, 4, v); }
+    case 10: { const uint32_t c[3] = { 0xFFFBE6, 0xF2D58A, 0x8A9BB0 }; const float a[3] = { 0, 0.45f, 1 };
+               return uiGrad(c, a, 3, sqrtf((u - 0.5f) * (u - 0.5f) + v * v * 0.6f) * 1.3f); }
+    case 18: { const uint32_t c[3] = { 0x0B1A3A, 0x3F8FE0, 0xF07A3A }; const float a[3] = { 0, 0.5f, 1 }; return uiGrad(c, a, 3, u); }
+    case 3: { float dx = (u - 0.5f) * w, dy = (v - 0.5f) * h, r = sqrtf(dx * dx + dy * dy);
+              int a = (int)((atan2f(dy, dx) + 3.1416f) * 22);
+              float st = uiHash(a, 7) > 0.55f ? fminf(1, r / 30.0f) : 0;
+              return r < 3 ? 0xCFE8FF : uiMix(0x02040C, 0x7FB8FF, st * (0.4f + 0.6f * uiHash(a, 3))); }
+    case 4: { float dx = (u - 0.5f) / 0.42f, dy = (v - 0.5f) / 0.13f, e = dx * dx + dy * dy;
+              uint32_t g = e < 1 ? uiMix(0xFFF0D0, 0x3050A0, sqrtf(e)) : 0x03040A;
+              if (e < 1) g = uiMix(g, 0x03040A, powf(sqrtf(e), 3));
+              return star && e >= 1 ? 0xFFFFFF : g; }
+    case 14: { float a = expf(-((u - 0.35f) * (u - 0.35f) + (v - 0.5f) * (v - 0.5f)) * 14), b = expf(-((u - 0.7f) * (u - 0.7f) + (v - 0.45f) * (v - 0.45f)) * 16);
+               uint32_t c = uiMix(0x08040E, 0xE0287D, a); c = uiMix(c, 0x3A90FF, b * 0.9f); return star ? 0xFFFFFF : c; }
+    default: { float d = fmodf(u * 1.0f + v * 0.55f, 0.36f);
+               uint32_t c = uiMix(0x050818, 0x101830, v);
+               if (d < 0.025f && u > 0.15f && u < 0.9f) c = uiMix(c, 0xE8F0FF, 1 - d / 0.025f);
+               return star ? 0xFFFFFF : c; }
+  }
+}
+// a rounded-corner picture: f(k, x, y, w, h) for each pixel, darker along the bottom where the name goes
+void uiPicture(const UiRect &r, int kind, int k) {
+  int y0 = r.y > uiY0 ? r.y : uiY0, y1 = r.y + r.h < uiY0 + uiRows ? r.y + r.h : uiY0 + uiRows;
+  const int rad = 7;
+  for (int y = y0; y < y1; y++) {
+    int ly = y - r.y;
+    uint16_t *p = uiBuf + (y - uiY0) * SCR_W;
+    for (int lx = 0; lx < r.w; lx++) {
+      int cx = lx < rad ? rad - lx : lx >= r.w - rad ? lx - (r.w - rad - 1) : 0, cy = ly < rad ? rad - ly : ly >= r.h - rad ? ly - (r.h - rad - 1) : 0;
+      if (cx && cy && cx * cx + cy * cy > rad * rad) continue;
+      uint32_t c = kind == 0 ? uiWoodPx(k, lx, ly) : uiBackPx(k, lx, ly, r.w, r.h);
+      if (ly > r.h - 15) c = uiMix(c, 0x000000, 0.35f);
+      p[r.x + lx] = uiRGB(c);
+    }
+  }
+}
+void uiText(const char *s, int x, int y, uint16_t col, const GFXfont *f, bool centre, bool shadow) {   // y: the baseline (built-in font: the top)
+  ug.setFont(f);
+  if (centre) { int16_t bx, by; uint16_t bw, bh; ug.getTextBounds(s, 0, y, &bx, &by, &bw, &bh); x -= bw / 2 + bx; }
+  if (!uiRowsHit(y - 22, 30)) return;
+  if (shadow) { ug.setTextColor(0x0000); ug.setCursor(x + 1, y + 1); ug.print(s); }
+  ug.setTextColor(col); ug.setCursor(x, y); ug.print(s);
+}
+void uiFrame(const UiRect &r, bool sel) {
+  if (!uiRowsHit(r.y - 4, r.h + 8)) return;
+  if (sel) for (int i = 0; i < 3; i++) ug.drawRoundRect(r.x - 1 - i, r.y - 1 - i, r.w + 2 + 2 * i, r.h + 2 + 2 * i, 8 + i, uiRGB(0xFFD36B));
+  else ug.drawRoundRect(r.x, r.y, r.w, r.h, 7, uiRGB(0x3A2A1C));
+}
+void uiSwatch(int i, int kind) {
+  const UiRect &r = uiCol[i];
+  int cx = r.x + uiSwR, cy = r.y + uiSwR;
+  if (!uiRowsHit(cy - uiSwR - 5, 2 * uiSwR + 10)) return;
+  if (i == uiSelCol) { ug.fillCircle(cx, cy, uiSwR + 4, uiRGB(0xFFFFFF)); ug.fillCircle(cx, cy, uiSwR + 1, uiRGB(0x0B0B10)); }
+  for (int y = cy - uiSwR; y <= cy + uiSwR; y++) {
+    if (y < uiY0 || y >= uiY0 + uiRows) continue;
+    for (int x = cx - uiSwR; x <= cx + uiSwR; x++) {
+      float dx = x - cx, dy = y - cy, d = sqrtf(dx * dx + dy * dy) / uiSwR;
+      if (d > 1) continue;
+      uint32_t c;
+      if (kind == 1) c = uiMix(UI_GLOW[i][1], UI_GLOW[i][0], d * 1.1f);
+      else { float a = (atan2f(dy, dx) + 3.1416f) / 6.2832f * 4; int j = (int)a & 3; c = uiMix(UI_SPACE[i][j], UI_SPACE[i][(j + 1) & 3], a - (int)a); c = uiMix(UI_SPACE[i][3], c, d * 1.2f); }
+      if (d > 0.9f) c = uiMix(c, 0x000000, (d - 0.9f) * 6);
+      ug.drawPixel(x, y, uiRGB(c));
+    }
+  }
+}
+void uiPaintHomeBand() {
+  for (int i = 0; i < SCR_W * uiRows; i++) uiBuf[i] = uiRGB(0x0B0B10);
+  for (int y = uiY0; y < uiY0 + uiRows && y < uiHeadR.h; y++)    // the title bar
+    ug.drawFastHLine(0, y, SCR_W, uiRGB(y >= uiHeadR.h - 2 ? 0x6B4423 : uiMix(0x2A1A0E, 0x160D06, (float)y / uiHeadR.h)));
+  uiText("CHOOSE YOUR CROSS", SCR_W / 2, uiHeadR.h / 2 + 8, uiRGB(0xFFD99A), &FreeSansBold12pt7b, true, false);
+  const uint16_t lab = uiRGB(0xC9B08A);
+  uiText("WOOD", uiLabWoodX, uiLabWoodY, lab, &FreeSansBold9pt7b, false, false);
+  uiText("BEHIND THE CROSS", uiLabBackX, uiLabBackY, lab, &FreeSansBold9pt7b, false, false);
+  uiText("COLOURS", uiLabColX, uiLabColY, lab, &FreeSansBold9pt7b, false, false);
+  for (int i = 0; i < 11; i++) {
+    const UiRect &r = uiWood[i];
+    if (!uiRowsHit(r.y - 4, r.h + 8)) continue;
+    uiPicture(r, 0, i);
+    uiText(UI_WOOD_NAMES[i], r.x + r.w / 2, r.y + r.h - 11, 0xFFFF, NULL, true, true);
+    uiFrame(r, i == uiSelWood);
+  }
+  for (int i = 0; i < 9; i++) {
+    const UiRect &r = uiBack[i];
+    if (!uiRowsHit(r.y - 4, r.h + 8)) continue;
+    uiPicture(r, 1, i);
+    uiText(UI_BACK_NAMES[i], r.x + r.w / 2, r.y + r.h - 11, 0xFFFF, NULL, true, true);
+    uiFrame(r, i == uiSelBack);
+  }
+  int kind = uiColKind();
+  if (kind) for (int i = 0; i < 6; i++) uiSwatch(i, kind);
+  else uiText("This background has its own colours", uiLabColX + 2, uiCol[0].y + uiSwR - 4, uiRGB(0x9A8A70), NULL, false, false);
+  const UiRect &s = uiShow;              // SHOW
+  if (uiRowsHit(s.y, s.h)) {
+    for (int y = s.y; y < s.y + s.h; y++) {
+      if (y < uiY0 || y >= uiY0 + uiRows) continue;
+      int ly = y - s.y, in = ly < 12 ? 12 - ly : ly >= s.h - 12 ? ly - (s.h - 13) : 0, cut = in ? 12 - (int)sqrtf(144 - in * in) : 0;
+      ug.drawFastHLine(s.x + cut, y, s.w - 2 * cut, uiRGB(ly >= s.h - 3 ? 0x7A4210 : uiMix(0xE0912F, 0xB8661A, (float)ly / s.h)));
+    }
+    int16_t bx, by; uint16_t bw, bh;
+    ug.setFont(&FreeSansBold12pt7b); ug.getTextBounds("SHOW", 0, 0, &bx, &by, &bw, &bh);
+    int tx = s.x + s.w / 2 - (bw + 22) / 2, ty = s.y + s.h / 2 + 8;
+    uiText("SHOW", tx - bx, ty, 0xFFFF, &FreeSansBold12pt7b, false, false);
+    int ax = tx + bw + 10;
+    ug.fillTriangle(ax, ty - 16, ax, ty, ax + 13, ty - 8, 0xFFFF);
+  }
+}
+
+// ---- touch: the XPT2046 shares the screen's SPI pins ----
+uint16_t xptCmd(uint8_t c) {
+#if USE_DMA
+  if (lcdDma) {
+    if (!touchDevOk) return 0;
+    spi_transaction_t t;
+    memset(&t, 0, sizeof(t));
+    t.length = 24; t.rxlength = 24; t.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA;
+    t.tx_data[0] = c;
+    if (spi_device_polling_transmit(touchDev, &t) != ESP_OK) return 0;
+    return ((t.rx_data[1] << 8) | t.rx_data[2]) >> 3;
+  }
+#endif
+  SPI.transfer(c);
+  uint16_t h = SPI.transfer(0), l = SPI.transfer(0);
+  return ((h << 8) | l) >> 3;
+}
+bool touchRaw(int &rx, int &ry) {        // only between frames: the screen isn't being sent anything
+  if (digitalRead(TAP_PIN) != LOW) return false;
+#if USE_DMA
+  const bool dma = lcdDma;
+#else
+  const bool dma = false;
+#endif
+  digitalWrite(PIN_CS, HIGH);            // the screen stops listening
+  if (!dma) SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(TAP_CS, LOW);
+  uint16_t xs[7], ys[7];
+  xptCmd(0xD0);                          // (the first reading settles)
+  for (int i = 0; i < 7; i++) { xs[i] = xptCmd(0xD0); ys[i] = xptCmd(0x90); }
+  xptCmd(0x90);
+  digitalWrite(TAP_CS, HIGH);
+  if (!dma) SPI.endTransaction();
+  if (dma) digitalWrite(PIN_CS, LOW);    // the screen listens again
+  for (int i = 1; i < 7; i++) for (int j = i; j > 0 && xs[j] < xs[j - 1]; j--) { uint16_t t = xs[j]; xs[j] = xs[j - 1]; xs[j - 1] = t; }
+  for (int i = 1; i < 7; i++) for (int j = i; j > 0 && ys[j] < ys[j - 1]; j--) { uint16_t t = ys[j]; ys[j] = ys[j - 1]; ys[j - 1] = t; }
+  rx = xs[3]; ry = ys[3];
+  if (xs[5] - xs[1] > 150 || ys[5] - ys[1] > 150) return false;   // still moving, or a light touch
+  return digitalRead(TAP_PIN) == LOW && rx > 60 && rx < 4040 && ry > 60 && ry < 4040;
+}
+// raw touch -> the upright (portrait) screen, then to the way the screen is turned now
+void panelToScreen(float px, float py, int &x, int &y) {
+  int P = (int)px, Q = (int)py;
+  switch (rotNow()) {
+    case 0: x = P; y = Q; break;
+    case 1: x = Q; y = SCR_SHORT - 1 - P; break;
+    case 2: x = SCR_SHORT - 1 - P; y = SCR_WMAX - 1 - Q; break;
+    default: x = SCR_WMAX - 1 - Q; y = P; break;
+  }
+}
+void screenToPanel(int x, int y, float &px, float &py) {
+  switch (rotNow()) {
+    case 0: px = x; py = y; break;
+    case 1: px = SCR_SHORT - 1 - y; py = x; break;
+    case 2: px = SCR_SHORT - 1 - x; py = SCR_WMAX - 1 - y; break;
+    default: px = y; py = SCR_WMAX - 1 - x; break;
+  }
+}
+bool touchXY(int &x, int &y) {
+  int rx, ry;
+  if (!touchRaw(rx, ry)) return false;
+  panelToScreen(tcal[0] * rx + tcal[1] * ry + tcal[2], tcal[3] * rx + tcal[4] * ry + tcal[5], x, y);
+  return true;
+}
+void tcalLoad() {
+  Preferences pr;
+  if (pr.begin("touch", true)) {
+    float m[6];
+    if (pr.getBytes("cal", m, sizeof(m)) == sizeof(m) && pr.getUInt("ok", 0) == 0x5A17u) { for (int i = 0; i < 6; i++) tcal[i] = m[i]; tcalOk = true; }
+    pr.end();
+  }
+}
+void tcalSave() {
+  Preferences pr;
+  if (pr.begin("touch", false)) { pr.putBytes("cal", tcal, sizeof(float) * 6); pr.putUInt("ok", 0x5A17u); pr.end(); }
+  tcalOk = true;
+}
+// three touches -> the straight-line map from raw readings to the upright screen
+bool tcalSolve(const int *rx, const int *ry, const float *px, const float *py, float *m) {
+  double d = (double)rx[0] * (ry[1] - ry[2]) - (double)rx[1] * (ry[0] - ry[2]) + (double)rx[2] * (ry[0] - ry[1]);
+  if (fabs(d) < 200000.0) return false;  // the touches were too close together (or in a line)
+  const float *t[2] = { px, py };
+  for (int k = 0; k < 2; k++) {
+    const float *p = t[k];
+    m[k * 3 + 0] = (p[0] * (ry[1] - ry[2]) - p[1] * (ry[0] - ry[2]) + p[2] * (ry[0] - ry[1])) / d;
+    m[k * 3 + 1] = ((double)rx[0] * (p[1] - p[2]) - (double)rx[1] * (p[0] - p[2]) + (double)rx[2] * (p[0] - p[1])) / d;
+    m[k * 3 + 2] = ((double)rx[0] * (ry[1] * p[2] - ry[2] * p[1]) - (double)rx[1] * (ry[0] * p[2] - ry[2] * p[0]) + (double)rx[2] * (ry[0] * p[1] - ry[1] * p[0])) / d;
+  }
+  float cx = m[0] * 2048 + m[1] * 2048 + m[2], cy = m[3] * 2048 + m[4] * 2048 + m[5];   // the middle of the touch range should land near the screen
+  return cx > -SCR_SHORT && cx < 2 * SCR_SHORT && cy > -SCR_WMAX && cy < 2 * SCR_WMAX;
+}
+
+// ---- the home button, drawn over the picture ----
+#define HB 44
+uint8_t hbBox[HB * HB], hbLine[HB * HB], hbIcon[HB * HB];
+float hbSeg(float x, float y, float ax, float ay, float bx, float by) {
+  float vx = bx - ax, vy = by - ay, t = ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy);
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  float dx = x - ax - vx * t, dy = y - ay - vy * t;
+  return sqrtf(dx * dx + dy * dy);
+}
+void homeIconInit() {
+  const float S[8][4] = { { 10, 22, 22, 10.5f }, { 22, 10.5f, 34, 22 }, { 14, 19.5f, 14, 33 }, { 30, 19.5f, 30, 33 }, { 14, 33, 30, 33 }, { 19.5f, 33, 19.5f, 26 }, { 19.5f, 26, 24.5f, 26 }, { 24.5f, 26, 24.5f, 33 } };
+  for (int y = 0; y < HB; y++) for (int x = 0; x < HB; x++) {
+    float fx = x + 0.5f, fy = y + 0.5f;
+    float cx = fx < 11 ? 11 - fx : fx > HB - 11 ? fx - (HB - 11) : 0, cy = fy < 11 ? 11 - fy : fy > HB - 11 ? fy - (HB - 11) : 0;
+    float e = 11 - sqrtf(cx * cx + cy * cy);             // inside the rounded square (pixels from its edge)
+    hbBox[y * HB + x] = e <= 0 ? 0 : e >= 1 ? 255 : (uint8_t)(e * 255);
+    hbLine[y * HB + x] = e <= 0 || e >= 3 ? 0 : (uint8_t)(255 * fminf(1, e) * fminf(1, 3 - e));
+    float d = 99;
+    for (int k = 0; k < 8; k++) d = fminf(d, hbSeg(fx, fy, S[k][0], S[k][1], S[k][2], S[k][3]));
+    float a = 1.6f - d;
+    hbIcon[y * HB + x] = a <= 0 ? 0 : a >= 1 ? 255 : (uint8_t)(a * 255);
+  }
+}
+void homeIcon(uint16_t *buf, int y0, int rows) {   // a strip that's ready to send: draw the button where it overlaps
+  const int bx = SCR_W - HB - 8, by = SCR_H - HB - 8;
+  if (y0 + rows <= by || y0 >= by + HB) return;
+#if USE_DMA
+  const bool sw = lcdDma;
+#else
+  const bool sw = false;
+#endif
+  for (int y = (y0 > by ? y0 : by); y < y0 + rows && y < by + HB; y++) {
+    uint16_t *p = buf + (y - y0) * SCR_W + bx;
+    const int row = (y - by) * HB;
+    for (int x = 0; x < HB; x++) {
+      int a = hbBox[row + x];
+      if (!a) continue;
+      uint16_t v = p[x];
+      if (sw) v = (v >> 8) | (v << 8);
+      int r = (v >> 11) << 3, g = ((v >> 5) & 63) << 2, b = (v & 31) << 3;
+      int k = 256 - (a * 150 >> 8);                  // darker behind the button
+      r = r * k >> 8; g = g * k >> 8; b = b * k >> 8;
+      int l = hbIcon[row + x] > hbLine[row + x] ? hbIcon[row + x] : (hbLine[row + x] * 150 >> 8);   // the house and the edge, in gold
+      r += (0xFF - r) * l >> 8; g += (0xD9 - g) * l >> 8; b += (0x9A - b) * l >> 8;
+      v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+      if (sw) v = (v >> 8) | (v << 8);
+      p[x] = v;
+    }
+  }
+}
+
+// ---- sending the page to the screen ----
+void uiSend(int rows) {
+  swapBytes565(uiBuf, SCR_W * rows);
+#if USE_DMA
+  if (lcdDma) {
+    spi_transaction_t t, *r;
+    memset(&t, 0, sizeof(t));
+    t.length = SCR_W * rows * 16; t.tx_buffer = uiBuf; t.user = (void *)2;
+    if (spi_device_queue_trans(lcdDev, &t, pdMS_TO_TICKS(1000)) == ESP_OK) spi_device_get_trans_result(lcdDev, &r, pdMS_TO_TICKS(1000));
+    return;
+  }
+#endif
+  sendStrip(uiBuf, rows);
+}
+void uiPaintCalBand();
+void uiPaint() {
+#if USE_DMA
+  if (lcdDma) lcdWindow(1000); else
+#endif
+  { tft.startWrite(); tft.setAddrWindow(0, 0, SCR_W, SCR_H); }
+  for (uiY0 = 0; uiY0 < SCR_H; uiY0 += uiMaxRows) {
+    uiRows = SCR_H - uiY0 < uiMaxRows ? SCR_H - uiY0 : uiMaxRows;
+    if (uiMode == 2) uiPaintCalBand(); else uiPaintHomeBand();
+#if HOME_DUMP
+    if (dumpReq) for (int r = 0; r < uiRows; r++) {
+      Serial.print(F("ROW ")); Serial.print(uiY0 + r); Serial.print(' ');
+      for (int x = 0; x < SCR_W; x++) { uint16_t v = uiBuf[r * SCR_W + x]; const char *hx = "0123456789abcdef"; char o[5] = { hx[v >> 12], hx[(v >> 8) & 15], hx[(v >> 4) & 15], hx[v & 15], 0 }; Serial.print(o); }
+      Serial.println();
+    }
+#endif
+    uiSend(uiRows);
+  }
+#if USE_DMA
+  if (!lcdDma)
+#endif
+  tft.endWrite();
+#if HOME_DUMP
+  if (dumpReq) { dumpReq = false; Serial.println(F("DUMP END")); }
+#endif
+}
+
+// ---- touch setup: three targets ----
+int calStep = 0, calRx[3], calRy[3];
+bool calFailed = false;
+void calTarget(int k, int &x, int &y) {
+  const float fx[3] = { 0.12f, 0.88f, 0.12f }, fy[3] = { 0.12f, 0.5f, 0.88f };
+  x = (int)(SCR_W * fx[k]); y = (int)(SCR_H * fy[k]);
+}
+void uiPaintCalBand() {
+  for (int i = 0; i < SCR_W * uiRows; i++) uiBuf[i] = 0;
+  const int cy = SCR_H / 2;
+  uiText("Touch setup", SCR_W / 2, cy - 30, uiRGB(0xFFD99A), &FreeSansBold12pt7b, true, false);
+  uiText(calFailed ? "Not quite. Let's try again." : "Touch the red target", SCR_W / 2, cy + 2, 0xFFFF, &FreeSansBold9pt7b, true, false);
+  char step[12] = "1 of 3"; step[0] = '1' + calStep;
+  uiText(step, SCR_W / 2, cy + 26, uiRGB(0xC9B08A), &FreeSansBold9pt7b, true, false);
+  uiText("Hold the screen for 6 seconds to do this again", SCR_W / 2, cy + 44, uiRGB(0x8A8070), NULL, true, false);
+  int tx, ty; calTarget(calStep, tx, ty);
+  if (uiRowsHit(ty - 20, 40)) {
+    ug.drawCircle(tx, ty, 14, uiRGB(0xFF3030)); ug.drawCircle(tx, ty, 13, uiRGB(0xFF3030));
+    ug.fillCircle(tx, ty, 3, uiRGB(0xFF3030));
+    ug.drawFastHLine(tx - 20, ty, 41, 0xFFFF); ug.drawFastVLine(tx, ty - 20, 41, 0xFFFF);
+  }
+}
+
+// ---- opening and closing the page ----
+void uiOpen() {
+  uiOwnBuf = false;
+  if (picBuf2) {                           // core 1's fade strip is free while the page shows
+    uiBuf = picBuf2;
+    uiMaxRows = STRIP * SCR_WMAX / SCR_W;
+    if (uiMaxRows > 24) uiMaxRows = 24;
+  } else {
+    for (uiMaxRows = UI_ROWS; uiMaxRows >= 2 && !uiBuf; uiMaxRows /= 2) {
+#if USE_DMA
+      uiBuf = (uint16_t *)heap_caps_malloc(SCR_W * uiMaxRows * 2, MALLOC_CAP_DMA);
+#else
+      uiBuf = (uint16_t *)malloc(SCR_W * uiMaxRows * 2);
+#endif
+      if (uiBuf) break;
+    }
+    uiOwnBuf = true;
+  }
+  if (!uiBuf) { Serial.println(F("[portal] no memory for the home page")); uiMode = 0; return; }
+  ug.setTextWrap(false);
+  uiLayout();
+  uiSelWood = CROSS_RIPPLE <= 10 ? CROSS_RIPPLE : 0;
+  uiSelBack = 0;
+  for (int i = 0; i < 9; i++) if (UI_BACKS[i] == CROSS_FILL) uiSelBack = i;
+  uiCore = COLOR_CORE; uiRim = COLOR_RIM;
+  for (int k = 0; k < 4; k++) uiSpace[k] = SPACE_COLS[k];
+  uiSelCol = uiColMatch();
+  calStep = 0; calFailed = false;
+  uiHeld = true;                           // the touch that opened this has to lift first
+  uiDirty = true;
+  uiLastTouch = millis();
+}
+void uiClose(bool use) {
+  if (use) {                               // the choices become the board's settings (and are saved)
+    Saved s;
+    fillSaved(s);
+    s.crossRipple = uiSelWood;
+    s.crossFill = UI_BACKS[uiSelBack];
+    s.core = uiCore; s.rim = uiRim;
+    for (int k = 0; k < 4; k++) s.spaceCols[k] = uiSpace[k];
+    s.fadeOn = 0;                          // the colours picked here stay put
+    pendingSettings = s;
+    havePending = true;
+  }
+  if (uiOwnBuf) free(uiBuf);
+  uiBuf = NULL;
+  uiMode = 0;
+  Serial.println(use ? F("[portal] home page: new choices saved") : F("[portal] home page closed"));
+  tapIgnore = true;                        // the touch that closed it isn't a tap on the cross
+}
+void uiTouch(int x, int y) {
+  if (uiMode == 2) return;
+  for (int i = 0; i < 11; i++) if (uiIn(uiWood[i], x, y)) { uiSelWood = i; uiDirty = true; return; }
+  for (int i = 0; i < 9; i++) if (uiIn(uiBack[i], x, y)) { uiSelBack = i; uiSelCol = uiColMatch(); uiDirty = true; return; }
+  int kind = uiColKind();
+  if (kind) for (int i = 0; i < 6; i++) if (uiIn(uiCol[i], x, y)) {
+    uiSelCol = i;
+    if (kind == 1) { uiCore = UI_GLOW[i][0]; uiRim = UI_GLOW[i][1]; } else for (int k = 0; k < 4; k++) uiSpace[k] = UI_SPACE[i][k];
+    uiDirty = true; return;
+  }
+  if (uiIn(uiShow, x, y)) uiClose(true);
+}
+void uiCalTouch() {                        // one target touched: wait for a steady reading, then for the finger to lift
+  int rx = 0, ry = 0, n = 0;
+  uint32_t t0 = millis();
+  while (digitalRead(TAP_PIN) == LOW && millis() - t0 < 1500) {
+    int a, b;
+    if (touchRaw(a, b)) { rx += a; ry += b; n++; if (n >= 6) break; }
+    delay(15);
+  }
+  if (n < 3) return;
+  calRx[calStep] = rx / n; calRy[calStep] = ry / n;
+  calStep++;
+  if (calStep == 3) {
+    float px[3], py[3], m[6];
+    for (int k = 0; k < 3; k++) { int tx, ty; calTarget(k, tx, ty); screenToPanel(tx, ty, px[k], py[k]); }
+    if (tcalSolve(calRx, calRy, px, py, m)) {
+      for (int i = 0; i < 6; i++) tcal[i] = m[i];
+      tcalSave();
+      Serial.println(F("[portal] touch set up"));
+      uiClose(false);
+      return;
+    }
+    calStep = 0; calFailed = true;
+  }
+  uiDirty = true;
+}
+void uiLoop() {                            // runs instead of the drawing while the page (or touch setup) shows
+  static uint32_t upSince = 0;
+  if (!uiBuf) { uiOpen(); if (!uiBuf) return; }
+  if (havePending && uiMode == 1) { uiClose(false); return; }   // new settings from the Studio: show them
+  if (uiDirty) { uiDirty = false; uiPaint(); }
+  if (simTap) {                            // UITAP x y over USB (for testing)
+    simTap = false; uiLastTouch = millis();
+    if (uiMode == 1) uiTouch(simX, simY);
+    return;
+  }
+  if (digitalRead(TAP_PIN) == LOW) {
+    upSince = 0;
+    if (!uiHeld) {
+      uiHeld = true;
+      uiLastTouch = millis();
+      delay(25);                           // let the touch settle
+      if (uiMode == 2) uiCalTouch();
+      else { int x, y; if (touchXY(x, y)) uiTouch(x, y); }
+    }
+  } else {
+    if (!upSince) upSince = millis() | 1;
+    if (uiHeld && millis() - upSince > 80) uiHeld = false;
+  }
+  if (uiMode && millis() - uiLastTouch > (uiMode == 2 ? 45000UL : 90000UL)) uiClose(false);   // left alone: back to the cross
+  delay(4);
+}
+// between frames: was the home button pressed?
+void homeCheck() {
+  if (!homeActive()) {
+    if (pressPending) { pressPending = false; if (!TAP_OFF) tapCount++; }
+    calRequest = false;
+    return;
+  }
+  if (calRequest) { calRequest = false; pressPending = false; uiMode = 2; return; }
+  if (!pressPending) return;
+  pressPending = false;
+  if (!tcalOk) { uiMode = 2; return; }     // the first touch: line the touch up with the screen
+  int x, y;
+  if (touchXY(x, y) && x >= SCR_W - 74 && y >= SCR_H - 74) { uiMode = 1; return; }
+  if (!TAP_OFF) tapCount++;
+}
+#endif
+
+
 void loop() {
   readSerial();
 #if defined(ESP32)
@@ -3009,6 +3646,9 @@ void loop() {
   readBluetooth();
 #endif
   if (pausedForUpload()) return;         // the screen holds still while a picture arrives
+#if HOME_PAGE
+  if (uiMode) { uiLoop(); return; }      // the home page (or touch setup) is showing
+#endif
 #if DUAL_CORE
   static uint8_t b = 0;
   uint32_t frameT0 = micros();
@@ -3040,6 +3680,9 @@ void loop() {
     uint32_t t0 = micros();
     xSemaphoreTake(readySem[b], portMAX_DELAY);
     wait1Us += micros() - t0;
+#if HOME_PAGE
+    if (homeActive()) homeIcon(stripBuf[b], stripY0[b], rows);   // the home button in the corner
+#endif
 #if USE_DMA
     if (lcdDma) {                        // send this strip in the background, then free the one before
       lcdQueue(b, rows, 1000);
@@ -3062,6 +3705,9 @@ void loop() {
   if (!lcdDma)
 #endif
   tft.endWrite();
+#if HOME_PAGE
+  homeCheck();                           // the screen is quiet now: was that press on the home button?
+#endif
   countFrame();
   balanceCores(micros() - frameT0);
   return;
