@@ -132,7 +132,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xC8D867AAUL;
+const uint32_t BUILD_ID = 0x78F736B5UL;
 
 Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer
 
@@ -497,6 +497,7 @@ volatile uint8_t uiMode = 0;             // 0 the cross, 1 the home page, 2 touc
 volatile bool pressPending = false;      // a press while the Wooden cross shows: home button or tap? (decided between frames)
 volatile bool calRequest = false, tapIgnore = false, simTap = false, dumpReq = false, uiDirty = false;
 volatile int simX = 0, simY = 0;
+bool pressHave = false, pressOk = false; int pressX = 0, pressY = 0;   // where that press was (read straight away, mid-frame)
 bool uiHeld = false;                     // a finger is still down from before (it has to lift first)
 float tcal[6] = { 0.0865f, 0, -17.3f, 0, 0.1297f, -25.9f };   // raw touch -> upright screen (replaced by touch setup)
 bool tcalOk = false;
@@ -505,7 +506,7 @@ inline bool homeActive() { return STYLE == 17; }   // the home button is for the
 spi_device_handle_t touchDev;
 bool touchDevOk = false;
 #endif
-void tcalSave(); void tcalLoad(); void homeIconInit(); void uiLoop(); void homeCheck(); void homeIcon(uint16_t *buf, int y0, int rows);
+void tcalSave(); void tcalLoad(); void uiLoop(); void homeCheck(); void homeIcon(uint16_t *buf, int y0, int rows);
 #endif
 #if TAP_PIN >= 0
 void pollTap() {                         // the touch chip pulls its pin low while the screen is pressed
@@ -2009,7 +2010,8 @@ void frameStart() {
   if (woodOn) { prepareWood(); woodPulse = (int)(256 * (0.75f + 0.25f * sinf(millis() / 1000.0f * 1.3f))); }
   if (crossOn && !woodOn) buildCrossRipple(); else memset(crossRipT, 0, sizeof(crossRipT));
   if (woodOn && ((look >= 8 && look <= 10) || look == 18)) {           // a cloud sky (no room: the warm glow)
-    if (cloudMemory()) { prepareClouds(look == 18 ? 1 : look - 8, look == 18 ? FD_CLOUDS : -1); if (look == 18) prepareFullDay(); } else look = 7;
+    if (cloudMemory()) { prepareClouds(look == 18 ? 1 : look - 8, look == 18 ? FD_CLOUDS : -1); if (look == 18) prepareFullDay(); }
+    else { static bool said = false; if (!said) { said = true; Serial.printf("[portal] not enough memory for the sky (%u free, %u in one piece): showing the warm glow\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap()); } look = 7; }
   }
   bool baseCross = crossOn;
   int baseLook = look;
@@ -2392,6 +2394,8 @@ void prepareWood() {
 
 // ---------- Cloud skies behind the Wooden cross (CROSS_FILL 8 blue sky, 9 sunset, 10 heavenly light) ----------
 uint8_t *cloudTex = NULL;                       // 128 x 128 tileable cloud texture (made once, when first needed)
+// (read and written 4 bytes at a time, so it can live in the chip's word-only memory when the rest is full)
+static inline __attribute__((always_inline)) int ctAt(int i) { return (((const uint32_t *)cloudTex)[i >> 2] >> ((i & 3) << 3)) & 255; }
 uint8_t  cloudDensT[512], cloudShT[64], cloudGlowT[128], cloudRayT[256], cloudRayRT[256], cloudCol[16][3];
 float    cloudDrift = 0;
 int      cloudK1 = 0, cloudK2 = 0, cloudK3 = 0, cloudK4 = 0, cloudKey = -1;
@@ -2405,7 +2409,10 @@ const float   CL_GLOW[3] = { 0.7f, 0.7f, 0.35f }, CL_RAY[3] = { 0.55f, 0.55f, 0.
 uint8_t cloudLat(int ix, int iy, int p, int o) { ix &= p - 1; iy &= p - 1; return hash32((uint32_t)(ix * 73856093) ^ (uint32_t)(iy * 19349663) ^ (uint32_t)(o * 83492791)) & 255; }
 bool cloudMemory() {
   if (cloudTex) return true;
-  cloudTex = (uint8_t *)malloc(128 * 128);
+#if defined(ESP32)
+  cloudTex = (uint8_t *)heap_caps_malloc_prefer(128 * 128, 2, MALLOC_CAP_EXEC | MALLOC_CAP_32BIT, MALLOC_CAP_32BIT);   // word-only memory first: it's spare
+#endif
+  if (!cloudTex) cloudTex = (uint8_t *)malloc(128 * 128);
   if (!cloudTex && picBuf2) {            // memory is in pieces: hand over core 1's fade buffer (crosses don't use it) and try again
     free(picBuf2); picBuf2 = NULL;
     cloudTex = (uint8_t *)malloc(128 * 128);
@@ -2413,6 +2420,7 @@ bool cloudMemory() {
   if (!cloudTex) return false;
   const int per[4] = { 4, 8, 16, 32 };
   const float amp[4] = { 0.52f, 0.27f, 0.14f, 0.05f };
+  uint32_t word = 0;
   for (int y = 0; y < 128; y++) for (int x = 0; x < 128; x++) {
     float v = 0;
     for (int o = 0; o < 4; o++) {
@@ -2421,13 +2429,14 @@ bool cloudMemory() {
       float a = cloudLat(ix, iy, p, o), b = cloudLat(ix + 1, iy, p, o), c = cloudLat(ix, iy + 1, p, o), d = cloudLat(ix + 1, iy + 1, p, o);
       v += amp[o] * ((a + (b - a) * u) * (1 - w) + (c + (d - c) * u) * w);
     }
-    cloudTex[y * 128 + x] = (uint8_t)min(255.0f, v / 0.98f);
+    word |= (uint32_t)(uint8_t)min(255.0f, v / 0.98f) << ((x & 3) << 3);
+    if ((x & 3) == 3) { ((uint32_t *)cloudTex)[(y * 128 + x) >> 2] = word; word = 0; }
   }
   return true;
 }
 inline int cloudAt(int X, int Y) {              // bilinear, coordinates in 1/256 of a texel
   int ix = (X >> 8) & 127, iy = (Y >> 8) & 127, fx = X & 255, fy = Y & 255, ix1 = (ix + 1) & 127, iy1 = (iy + 1) & 127;
-  int a = cloudTex[iy * 128 + ix], b = cloudTex[iy * 128 + ix1], c = cloudTex[iy1 * 128 + ix], d = cloudTex[iy1 * 128 + ix1];
+  int a = ctAt(iy * 128 + ix), b = ctAt(iy * 128 + ix1), c = ctAt(iy1 * 128 + ix), d = ctAt(iy1 * 128 + ix1);
   int top = (a << 8) + (b - a) * fx, bot = (c << 8) + (d - c) * fx;
   return ((top << 8) + (bot - top) * fy) >> 16;
 }
@@ -2568,11 +2577,11 @@ HOT void renderCloudStrip(int y0, int rows, uint16_t *strip) {
     }
     const int Y3 = ((y * cloudK3) >> 8) + 11 * 128, Y4 = ((y * cloudK4) >> 8) + 7 * 128;
     {                                             // this row of the detail layers, worked out once (then only blended across)
-      const uint8_t *t0 = cloudTex + ((Y3 >> 8) & 127) * 128, *t1 = cloudTex + (((Y3 >> 8) + 1) & 127) * 128; const int f = Y3 & 255;
-      for (int i = 0; i < 128; i++) rowD[i] = (uint16_t)((t0[i] << 8) + (t1[i] - t0[i]) * f);
+      const int t0 = ((Y3 >> 8) & 127) * 128, t1 = (((Y3 >> 8) + 1) & 127) * 128; const int f = Y3 & 255;
+      for (int i = 0; i < 128; i++) { const int a = ctAt(t0 + i); rowD[i] = (uint16_t)((a << 8) + (ctAt(t1 + i) - a) * f); }
       if (fineK) {
-        const uint8_t *u0 = cloudTex + ((Y4 >> 8) & 127) * 128, *u1 = cloudTex + (((Y4 >> 8) + 1) & 127) * 128; const int g = Y4 & 255;
-        for (int i = 0; i < 128; i++) rowF[i] = (uint16_t)((u0[i] << 8) + (u1[i] - u0[i]) * g);
+        const int u0 = ((Y4 >> 8) & 127) * 128, u1 = (((Y4 >> 8) + 1) & 127) * 128; const int g = Y4 & 255;
+        for (int i = 0; i < 128; i++) { const int a = ctAt(u0 + i); rowF[i] = (uint16_t)((a << 8) + (ctAt(u1 + i) - a) * g); }
       }
     }
     float fyy = (float)y / SCR_H; if (fyy > 1) fyy = 1;   // the sky: a smooth fade from top to bottom
@@ -2849,6 +2858,16 @@ bool lcdSend(const uint8_t *d, int n, bool dc, uint32_t waitMs) {   // a command
   return spi_device_polling_end(lcdDev, pdMS_TO_TICKS(waitMs)) == ESP_OK;
 }
 
+bool lcdWindowFrom(int ys, uint32_t waitMs) {   // from row ys to the bottom, then "write memory"
+  const uint8_t ca = 0x2A, ra = 0x2B, wr = 0x2C;
+  const uint8_t x[4] = { 0, 0, (uint8_t)((SCR_W - 1) >> 8), (uint8_t)(SCR_W - 1) };
+  const uint8_t y[4] = { (uint8_t)(ys >> 8), (uint8_t)ys, (uint8_t)((SCR_H - 1) >> 8), (uint8_t)(SCR_H - 1) };
+  if (!lcdSend(&ca, 1, false, waitMs) || !lcdSend(x, 4, true, waitMs)) return false;
+  if (!lcdSend(&ra, 1, false, waitMs) || !lcdSend(y, 4, true, waitMs)) return false;
+  if (!lcdSend(&wr, 1, false, waitMs)) return false;
+  digitalWrite(PIN_DC, HIGH);
+  return true;
+}
 bool lcdWindow(uint32_t waitMs) {        // whole screen, then "write memory": the strips follow
   const uint8_t ca = 0x2A, ra = 0x2B, wr = 0x2C;
   const uint8_t x[4] = { 0, 0, (uint8_t)((SCR_W - 1) >> 8), (uint8_t)(SCR_W - 1) };
@@ -3054,6 +3073,9 @@ void setup() {
 #endif
   loadSettings();
   loadScenes();
+#if HOME_PAGE
+  if (STYLE == 17) cloudMemory();        // the Wooden cross: room for the sky backgrounds, while memory is still in one piece
+#endif
   buildTone();
   if (spaceLUT) buildSpaceLUT();
 #if TURNS
@@ -3075,7 +3097,6 @@ void setup() {
 #endif
 #if HOME_PAGE
   tcalLoad();
-  homeIconInit();
   Serial.println(tcalOk ? F("[portal] home button ready") : F("[portal] home button ready (touch setup on the first touch)"));
 #endif
 #if DUAL_CORE
@@ -3145,8 +3166,8 @@ struct UiRect { int16_t x, y, w, h; };
 UiRect uiWood[11], uiBack[9], uiCol[6], uiShow, uiHeadR;
 int uiLabWoodX, uiLabWoodY, uiLabBackX, uiLabBackY, uiLabColX, uiLabColY, uiSwR;
 const uint8_t UI_BACKS[9] = { 7, 8, 9, 10, 18, 3, 4, 14, 16 };   // what's behind the cross: warm glow, skies, then space
-const char *UI_BACK_NAMES[9] = { "Warm glow", "Blue sky", "Sunset", "Heavenly", "Full day", "Hyperspace", "Galaxy", "Nebula", "Meteors" };
-const char *UI_WOOD_NAMES[11] = { "Classic", "Pine", "Oak", "Walnut", "Cherry", "Mahogany", "Cedar", "Driftwood", "Ebony", "Maple", "Olive" };
+const char *const UI_BACK_NAMES[9] = { "Warm glow", "Blue sky", "Sunset", "Heavenly", "Full day", "Hyperspace", "Galaxy", "Nebula", "Meteors" };
+const char *const UI_WOOD_NAMES[11] = { "Classic", "Pine", "Oak", "Walnut", "Cherry", "Mahogany", "Cedar", "Driftwood", "Ebony", "Maple", "Olive" };
 const uint32_t UI_GLOW[6][2] = { { 0xD26A00, 0xFFD27A }, { 0xFF3D00, 0xFFD36B }, { 0x3B1CFF, 0x38F0FF }, { 0xA400FF, 0xFF4FD8 }, { 0x0B6B1A, 0x8DFF4F }, { 0x9E0030, 0xFF7AB0 } };
 const uint32_t UI_SPACE[6][4] = { { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF }, { 0x3A0E8C, 0xE0287D, 0x17B3C7, 0xFFCF6E }, { 0x8A1032, 0xFF5A7E, 0x4D63FF, 0xFFE0B0 },
                                   { 0x0F5A62, 0x3FC4A8, 0xD4892A, 0xFFF0B8 }, { 0x0D4A3A, 0x2FE08A, 0x3AA0FF, 0xC77DFF }, { 0x6B1400, 0xFF4D1A, 0xFFB02E, 0xFFE9B3 } };
@@ -3424,28 +3445,14 @@ bool tcalSolve(const int *rx, const int *ry, const float *px, const float *py, f
 
 // ---- the home button, drawn over the picture ----
 #define HB 44
-uint8_t hbBox[HB * HB], hbLine[HB * HB], hbIcon[HB * HB];
 float hbSeg(float x, float y, float ax, float ay, float bx, float by) {
   float vx = bx - ax, vy = by - ay, t = ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy);
   t = t < 0 ? 0 : t > 1 ? 1 : t;
   float dx = x - ax - vx * t, dy = y - ay - vy * t;
   return sqrtf(dx * dx + dy * dy);
 }
-void homeIconInit() {
-  const float S[8][4] = { { 10, 22, 22, 10.5f }, { 22, 10.5f, 34, 22 }, { 14, 19.5f, 14, 33 }, { 30, 19.5f, 30, 33 }, { 14, 33, 30, 33 }, { 19.5f, 33, 19.5f, 26 }, { 19.5f, 26, 24.5f, 26 }, { 24.5f, 26, 24.5f, 33 } };
-  for (int y = 0; y < HB; y++) for (int x = 0; x < HB; x++) {
-    float fx = x + 0.5f, fy = y + 0.5f;
-    float cx = fx < 11 ? 11 - fx : fx > HB - 11 ? fx - (HB - 11) : 0, cy = fy < 11 ? 11 - fy : fy > HB - 11 ? fy - (HB - 11) : 0;
-    float e = 11 - sqrtf(cx * cx + cy * cy);             // inside the rounded square (pixels from its edge)
-    hbBox[y * HB + x] = e <= 0 ? 0 : e >= 1 ? 255 : (uint8_t)(e * 255);
-    hbLine[y * HB + x] = e <= 0 || e >= 3 ? 0 : (uint8_t)(255 * fminf(1, e) * fminf(1, 3 - e));
-    float d = 99;
-    for (int k = 0; k < 8; k++) d = fminf(d, hbSeg(fx, fy, S[k][0], S[k][1], S[k][2], S[k][3]));
-    float a = 1.6f - d;
-    hbIcon[y * HB + x] = a <= 0 ? 0 : a >= 1 ? 255 : (uint8_t)(a * 255);
-  }
-}
-void homeIcon(uint16_t *buf, int y0, int rows) {   // a strip that's ready to send: draw the button where it overlaps
+const float HB_SEGS[8][4] = { { 10, 22, 22, 10.5f }, { 22, 10.5f, 34, 22 }, { 14, 19.5f, 14, 33 }, { 30, 19.5f, 30, 33 }, { 14, 33, 30, 33 }, { 19.5f, 33, 19.5f, 26 }, { 19.5f, 26, 24.5f, 26 }, { 24.5f, 26, 24.5f, 33 } };
+void homeIcon(uint16_t *buf, int y0, int rows) {   // a strip that's ready to send: draw the button where it overlaps (worked out each time: no memory kept)
   const int bx = SCR_W - HB - 8, by = SCR_H - HB - 8;
   if (y0 + rows <= by || y0 >= by + HB) return;
 #if USE_DMA
@@ -3455,16 +3462,23 @@ void homeIcon(uint16_t *buf, int y0, int rows) {   // a strip that's ready to se
 #endif
   for (int y = (y0 > by ? y0 : by); y < y0 + rows && y < by + HB; y++) {
     uint16_t *p = buf + (y - y0) * SCR_W + bx;
-    const int row = (y - by) * HB;
+    const float fy = y - by + 0.5f, cy = fy < 11 ? 11 - fy : fy > HB - 11 ? fy - (HB - 11) : 0;
     for (int x = 0; x < HB; x++) {
-      int a = hbBox[row + x];
-      if (!a) continue;
+      const float fx = x + 0.5f, cx = fx < 11 ? 11 - fx : fx > HB - 11 ? fx - (HB - 11) : 0;
+      const float e = 11 - sqrtf(cx * cx + cy * cy);       // inside the rounded square (pixels from its edge)
+      if (e <= 0) continue;
+      const int a = e >= 1 ? 255 : (int)(e * 255);
+      int l = e < 3 ? (int)(150 * fminf(1, e) * fminf(1, 3 - e)) : 0;   // the gold edge
+      if (fx > 8 && fx < 36 && fy > 8 && fy < 36) {        // the house
+        float d = 99;
+        for (int k = 0; k < 8; k++) d = fminf(d, hbSeg(fx, fy, HB_SEGS[k][0], HB_SEGS[k][1], HB_SEGS[k][2], HB_SEGS[k][3]));
+        if (d < 1.6f) { int ic = d < 0.6f ? 255 : (int)((1.6f - d) * 255); if (ic > l) l = ic; }
+      }
       uint16_t v = p[x];
       if (sw) v = (v >> 8) | (v << 8);
       int r = (v >> 11) << 3, g = ((v >> 5) & 63) << 2, b = (v & 31) << 3;
       int k = 256 - (a * 150 >> 8);                  // darker behind the button
       r = r * k >> 8; g = g * k >> 8; b = b * k >> 8;
-      int l = hbIcon[row + x] > hbLine[row + x] ? hbIcon[row + x] : (hbLine[row + x] * 150 >> 8);   // the house and the edge, in gold
       r += (0xFF - r) * l >> 8; g += (0xD9 - g) * l >> 8; b += (0x9A - b) * l >> 8;
       v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
       if (sw) v = (v >> 8) | (v << 8);
@@ -3545,7 +3559,7 @@ void uiOpen() {
     uiMaxRows = STRIP * SCR_WMAX / SCR_W;
     if (uiMaxRows > 24) uiMaxRows = 24;
   } else {
-    for (uiMaxRows = UI_ROWS; uiMaxRows >= 2 && !uiBuf; uiMaxRows /= 2) {
+    for (uiMaxRows = 8; uiMaxRows >= 2 && !uiBuf; uiMaxRows /= 2) {
 #if USE_DMA
       uiBuf = (uint16_t *)heap_caps_malloc(SCR_W * uiMaxRows * 2, MALLOC_CAP_DMA);
 #else
@@ -3554,6 +3568,12 @@ void uiOpen() {
       if (uiBuf) break;
     }
     uiOwnBuf = true;
+    if (!uiBuf && picBuf) {                // memory is tight (the sky's clouds): borrow the fade strip once the other core has paused
+      delay(200);
+      uiBuf = picBuf; uiOwnBuf = false;
+      uiMaxRows = STRIP * SCR_WMAX / SCR_W;
+      if (uiMaxRows > 24) uiMaxRows = 24;
+    }
   }
   if (!uiBuf) { Serial.println(F("[portal] no memory for the home page")); uiMode = 0; return; }
   ug.setTextWrap(false);
@@ -3570,6 +3590,8 @@ void uiOpen() {
   uiLastTouch = millis();
 }
 void uiClose(bool use) {
+  if (uiOwnBuf) free(uiBuf);               // give the page's memory back first
+  uiBuf = NULL;
   if (use) {                               // the choices become the board's settings (and are saved)
     Saved s;
     fillSaved(s);
@@ -3578,14 +3600,14 @@ void uiClose(bool use) {
     s.core = uiCore; s.rim = uiRim;
     for (int k = 0; k < 4; k++) s.spaceCols[k] = uiSpace[k];
     s.fadeOn = 0;                          // the colours picked here stay put
+    const uint8_t f = s.crossFill;
+    if ((f >= 8 && f <= 10) || f == 18) cloudMemory();   // a sky: make room for its clouds now, while the other core is paused
     pendingSettings = s;
     havePending = true;
   }
-  if (uiOwnBuf) free(uiBuf);
-  uiBuf = NULL;
   uiMode = 0;
-  Serial.println(use ? F("[portal] home page: new choices saved") : F("[portal] home page closed"));
   tapIgnore = true;                        // the touch that closed it isn't a tap on the cross
+  Serial.println(use ? F("[portal] home page: new choices saved") : F("[portal] home page closed"));
 }
 void uiTouch(int x, int y) {
   if (uiMode == 2) return;
@@ -3654,15 +3676,18 @@ void uiLoop() {                            // runs instead of the drawing while 
 void homeCheck() {
   if (!homeActive()) {
     if (pressPending) { pressPending = false; if (!TAP_OFF) tapCount++; }
-    calRequest = false;
+    pressHave = false; calRequest = false;
     return;
   }
-  if (calRequest) { calRequest = false; pressPending = false; uiMode = 2; return; }
+  if (calRequest) { calRequest = false; pressPending = false; pressHave = false; uiMode = 2; return; }
   if (!pressPending) return;
   pressPending = false;
+  const bool had = pressHave;
+  pressHave = false;
   if (!tcalOk) { uiMode = 2; return; }     // the first touch: line the touch up with the screen
-  int x, y;
-  if (touchXY(x, y) && x >= SCR_W - 74 && y >= SCR_H - 74) { uiMode = 1; return; }
+  int x = pressX, y = pressY;
+  bool ok = had ? pressOk : touchXY(x, y);
+  if (ok && x >= SCR_W - 74 && y >= SCR_H - 74) { uiMode = 1; return; }
   if (!TAP_OFF) tapCount++;
 }
 #endif
@@ -3727,6 +3752,21 @@ void loop() {
       sendUs += micros() - t0;
       xSemaphoreGive(freeSem[b]);
     }
+#if HOME_PAGE
+    if (pressPending && !pressHave) {    // a press on the Wooden cross: read where it is now, before the finger lifts
+      const int ny = y0 + rows;          // (the screen pauses between two strips, then carries on from the next row)
+#if USE_DMA
+      if (lcdDma) { if (pending >= 0) { lcdFinish(pending, 1000); xSemaphoreGive(freeSem[pending]); pending = -1; } } else
+#endif
+      tft.endWrite();
+      pressOk = touchXY(pressX, pressY);
+      pressHave = true;
+#if USE_DMA
+      if (lcdDma) { if (ny < SCR_H) lcdWindowFrom(ny, 1000); } else
+#endif
+      { tft.startWrite(); if (ny < SCR_H) tft.setAddrWindow(0, ny, SCR_W, SCR_H - ny); }
+    }
+#endif
     b ^= 1;
     readSerialQuick();                   // new settings get an answer even while a slow frame is drawn
     pollTap();
