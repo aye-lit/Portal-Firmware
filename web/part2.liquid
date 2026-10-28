@@ -1479,9 +1479,16 @@ function fullDayState(nowMs) {
   const cyc = S.fdLen * 60;                          // Day length setting (minutes)
   const tc = FD_T != null ? FD_T : ((nowMs / 1000) % cyc) / cyc;
   let i = 0; while (i < FD_KEYS.length - 2 && tc >= FD_KEYS[i + 1][0]) i++;
-  const A = FD_KEYS[i], B = FD_KEYS[i + 1], f0 = (tc - A[0]) / (B[0] - A[0]), f = f0 * f0 * (3 - 2 * f0);
-  const mix = (a, b) => a.map((v, j) => v + (b[j] - v) * f);
-  const st = { top: mix(A[1], B[1]), mid: mix(A[2], B[2]), bot: mix(A[3], B[3]), lit: mix(A[4], B[4]), sh: mix(A[5], B[5]), stars: A[6] + (B[6] - A[6]) * f };
+  const N = FD_KEYS.length - 1, A = FD_KEYS[i], B = FD_KEYS[i + 1], f = (tc - A[0]) / (B[0] - A[0]);
+  const K = k => FD_KEYS[((k % N) + N) % N], T = k => K(k)[0] + Math.floor(k / N);   // the keys repeat every day
+  const curve = get => {                               // a smooth curve through all the keys (no pause at each one), never past either key
+    const p0 = get(K(i)), p1 = get(K(i + 1)), h = T(i + 1) - T(i), s2 = f * f, s3 = s2 * f;
+    const m0 = (p1 - get(K(i - 1))) / (T(i + 1) - T(i - 1)), m1 = (get(K(i + 2)) - p0) / (T(i + 2) - T(i));
+    const v = (2 * s3 - 3 * s2 + 1) * p0 + (s3 - 2 * s2 + f) * h * m0 + (-2 * s3 + 3 * s2) * p1 + (s3 - s2) * h * m1;
+    return Math.min(Math.max(p0, p1), Math.max(Math.min(p0, p1), v));
+  };
+  const mix = c => [0, 1, 2].map(j => curve(k => k[c][j]));
+  const st = { top: mix(1), mid: mix(2), bot: mix(3), lit: mix(4), sh: mix(5), stars: curve(k => k[6]) };
   const day = (tc - 0.02) / 0.60;                    // the sun: up from the lower left, over the top, down at the lower right
   st.sun = day > -0.05 && day < 1.05 ? { x: 0.06 + day * 0.88, alt: Math.sin(Math.min(1, Math.max(0, day)) * Math.PI), set: day } : null;
   const nt = (tc - 0.66) / 0.32;                     // the moon, through the night
