@@ -2487,9 +2487,9 @@ bool lcdSend(const uint8_t *d, int n, bool dc, uint32_t waitMs) {   // a command
   return spi_device_polling_end(lcdDev, pdMS_TO_TICKS(waitMs)) == ESP_OK;
 }
 
-bool lcdWindowFrom(int ys, uint32_t waitMs) {   // from row ys to the bottom, then "write memory"
+bool lcdWindowFrom(int ys, uint32_t waitMs, int xa = 0, int xe = SCR_W - 1) {   // from row ys to the bottom (columns xa to xe), then "write memory"
   const uint8_t ca = 0x2A, ra = 0x2B, wr = 0x2C;
-  const uint8_t x[4] = { 0, 0, (uint8_t)((SCR_W - 1) >> 8), (uint8_t)(SCR_W - 1) };
+  const uint8_t x[4] = { (uint8_t)(xa >> 8), (uint8_t)xa, (uint8_t)(xe >> 8), (uint8_t)xe };
   const uint8_t y[4] = { (uint8_t)(ys >> 8), (uint8_t)ys, (uint8_t)((SCR_H - 1) >> 8), (uint8_t)(SCR_H - 1) };
   if (!lcdSend(&ca, 1, false, waitMs) || !lcdSend(x, 4, true, waitMs)) return false;
   if (!lcdSend(&ra, 1, false, waitMs) || !lcdSend(y, 4, true, waitMs)) return false;
@@ -2793,14 +2793,18 @@ const uint32_t UI_SPACE[6][4] = { { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF }, { 
 int uiSelWood = 0, uiSelBack = 0, uiSelCol = -1;
 uint32_t uiCore = 0, uiRim = 0, uiSpace[4];
 uint32_t uiLastTouch = 0;
-int uiPage = 0;                           // 0 the home page, 1 settings
+int uiPage = 0;                           // 0 the home page, 1 settings, 2 the colour wheel
 int uiKind = 0;                           // which home page: 0 the Wooden cross, 1 portals, 2 space
 const uint8_t UI_PS[2][4] = { { 0, 1, 2, 6 }, { 3, 4, 14, 16 } };   // the styles on the portal and space pages
 const char *const UI_PS_NAMES[2][4] = { { "Vortex", "Toon Spiral", "Starburst", "Cartoon Swirl" }, { "Hyperspace", "Galaxy", "Nebula", "Meteor Shower" } };
 UiRect uiTile[4];
 int uiSelStyle = 0, uiSparks = 28, uiStars = 3, stSparks = 28, stStars = 3, uiArms = 4; float uiTwist = 2.4f;
 float uiStarCut = 0.985f;                 // (pictures: how many stars, higher = fewer)
-UiRect uiSetBtn, uiBackBtn, uiSave, uiPrev, uiSl[4], uiSetCol[6];
+UiRect uiSetBtn, uiBackBtn, uiSave, uiPrev, uiSl[4], uiSetCol[7];
+UiRect uiWDone, uiWPrev, uiWChip[4], uiWSl, uiPrevSet;   // the colour wheel page
+int uiWCX = 0, uiWCY = 0, uiWR = 100, uiWT = 0, uiWHintY = 0, uiColA = 0, uiColB = 480;   // (uiColA-uiColB: the columns being redrawn)
+float uiWH = 0, uiWS = 1, uiWV = 1;       // the colour on the wheel: hue, how strong, how bright
+uint32_t uiWBak[6]; int uiWBakSel = -1;
 int uiNoteY = -1, uiSetSwR = 13, uiSetColLabY = 0;
 uint32_t stCore = 0, stRim = 0, stSpace[4]; int stSelCol = -1;   // the colours, while on the settings page
 const uint32_t *uiBackCols = NULL;        // (the preview: draw the backgrounds in these colours: core, rim, then the four space colours)
@@ -2848,7 +2852,7 @@ void uiLayout() {                         // where everything goes, for the way 
     uiPrev = { (int16_t)((W - 120) / 2), 46, 120, 120 };
     for (int k = 0; k < 4; k++) uiSl[k] = { 16, (int16_t)(176 + k * 42), (int16_t)(W - 32), 36 };
     uiSetColLabY = 357; uiSetSwR = 17;
-    for (int i = 0; i < 6; i++) uiSetCol[i] = { (int16_t)(18 + i * 50), 364, 34, 34 };
+    for (int i = 0; i < 7; i++) uiSetCol[i] = { (int16_t)(14 + i * 43), 364, 34, 34 };
     uiSave = { 10, 412, (int16_t)(W - 20), 56 };
     uiNoteY = -1;
   } else {                                // landscape, 480 x 320
@@ -2866,7 +2870,7 @@ void uiLayout() {                         // where everything goes, for the way 
     uiPrev = { 10, 52, 180, 120 };
     for (int k = 0; k < 4; k++) uiSl[k] = { 206, (int16_t)(50 + k * 48), (int16_t)(W - 12 - 206), 36 };
     uiSetColLabY = 198; uiSetSwR = 13;
-    for (int i = 0; i < 6; i++) uiSetCol[i] = { (int16_t)(12 + i * 29), 210, 26, 26 };
+    for (int i = 0; i < 7; i++) uiSetCol[i] = { (int16_t)(10 + i * 27), 210, 26, 26 };
     uiSave = { 206, 248, (int16_t)(W - 12 - 206), 60 };
     uiNoteY = -1;
   }
@@ -3185,7 +3189,7 @@ void uiPreviewPS() {                      // portal or space: a still picture wi
 }
 void uiPreview() {                        // a small still picture of the cross with these settings
   const UiRect &r = uiPrev;
-  if (!uiRowsHit(r.y - 3, r.h + 6)) return;
+  if (!uiRowsHit(r.y - 3, r.h + 6) || r.x + r.w + 3 <= uiColA || r.x - 3 >= uiColB) return;
   if (uiKind) { uiPreviewPS(); return; }
   const float R = fminf(stRadius, (SCR_H - 8) * (100.0f - BAR) / 100), top = R * BAR / (100.0f - BAR);   // the cross, as the board works it out
   const float aw = fmaxf(2, R * stBeam / 100.0f), hhl = fmaxf(aw + 1, fminf(R * CROSS_W / 100.0f, SCR_W / 2.0f - 2));
@@ -3216,6 +3220,177 @@ void uiPreview() {                        // a small still picture of the cross 
   ug.drawRoundRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4, 5, uiRGB(0x6B4423));
   ug.drawRoundRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, 4, uiRGB(0x6B4423));
 }
+// ---- the colour wheel: any colour, picked by dragging round a wheel (from the settings page's last swatch) ----
+void uiPaintRows(int ya, int yb, int xa = 0, int xb = SCR_W);
+uint32_t uiHsv(float h, float s, float v) {   // hue 0-1 round the wheel, strength, brightness -> 0xRRGGBB
+  h -= floorf(h); h *= 6;
+  const int i = (int)h; const float f = h - i, p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+  float r, g, b;
+  switch (i) { case 0: r = v; g = t; b = p; break; case 1: r = q; g = v; b = p; break; case 2: r = p; g = v; b = t; break;
+               case 3: r = p; g = q; b = v; break; case 4: r = t; g = p; b = v; break; default: r = v; g = p; b = q; }
+  return ((uint32_t)(r * 255 + 0.5f) << 16) | ((uint32_t)(g * 255 + 0.5f) << 8) | (uint32_t)(b * 255 + 0.5f);
+}
+void uiToHsv(uint32_t c, float &h, float &s, float &v) {
+  const float r = ((c >> 16) & 255) / 255.0f, g = ((c >> 8) & 255) / 255.0f, b = (c & 255) / 255.0f;
+  const float mx = fmaxf(r, fmaxf(g, b)), mn = fminf(r, fminf(g, b)), d = mx - mn;
+  v = mx; s = mx > 0 ? d / mx : 0;
+  if (d <= 0) return;                     // a grey: keep the hue it had
+  h = mx == r ? (g - b) / d : mx == g ? 2 + (b - r) / d : 4 + (r - g) / d;
+  h /= 6; if (h < 0) h += 1;
+}
+uint32_t *uiWCol(int t) { return uiColKind() == 1 ? (t == 0 ? &stCore : &stRim) : &stSpace[t & 3]; }   // the colour being changed
+int uiWCount() { return uiColKind() == 1 ? 2 : 4; }
+void uiWLoad() { uiToHsv(*uiWCol(uiWT), uiWH, uiWS, uiWV); if (uiWV < 0.1f) uiWV = 0.1f; }
+void uiWheelLayout() {
+  const int W = SCR_W, H = SCR_H, n = uiWCount();
+  uiWDone = { (int16_t)(W - 82), (int16_t)(H > W ? 6 : 5), 74, 28 };
+  if (H > W) {                            // portrait: preview and the colours up top, the wheel, then the shade
+    uiWPrev = { 10, 48, 120, 96 };
+    for (int i = 0; i < 4; i++) uiWChip[i] = n == 2 ? UiRect{ (int16_t)(140 + i * 88), 52, 82, 44 } : UiRect{ (int16_t)(140 + i * 44), 52, 38, 44 };
+    uiWHintY = 112;
+    uiWCX = W / 2; uiWCY = 272; uiWR = 104;
+    uiWSl = { 16, 400, (int16_t)(W - 32), 36 };
+  } else {                                // landscape: the wheel on the left, the rest on the right
+    uiWCX = 126; uiWCY = 180; uiWR = 116;
+    uiWPrev = { 262, 46, 206, 104 };
+    for (int i = 0; i < 4; i++) uiWChip[i] = n == 2 ? UiRect{ (int16_t)(262 + i * 106), 162, 100, 40 } : UiRect{ (int16_t)(262 + i * 53), 162, 47, 40 };
+    uiWHintY = 214;
+    uiWSl = { 262, 238, 206, 36 };
+  }
+}
+void uiWheelOpen() {
+  uiWBak[0] = stCore; uiWBak[1] = stRim; for (int k = 0; k < 4; k++) uiWBak[2 + k] = stSpace[k]; uiWBakSel = stSelCol;
+  uiWheelLayout();
+  uiPrevSet = uiPrev; uiPrev = uiWPrev;   // the preview moves for this page
+  uiWT = 0; uiWLoad();
+  uiPage = 2; uiDirty = true;
+}
+void uiWheelClose(bool keep) {
+  if (keep) stSelCol = 6;                 // the wheel's swatch is the one chosen now
+  else { stCore = uiWBak[0]; stRim = uiWBak[1]; for (int k = 0; k < 4; k++) stSpace[k] = uiWBak[2 + k]; stSelCol = uiWBakSel; }
+  uiPrev = uiPrevSet;
+  uiPage = 1; uiDirty = true;
+}
+void uiWMarker(int &mx, int &my) {        // where the picked colour sits on the wheel
+  const float a = uiWH * 6.2832f;
+  mx = uiWCX + (int)lroundf(cosf(a) * uiWS * uiWR); my = uiWCY - (int)lroundf(sinf(a) * uiWS * uiWR);
+}
+void uiSwatchWheel(const UiRect &r, int R, int kind, bool sel) {   // the settings page's last swatch: a rainbow ring round the colours picked
+  const int cx = r.x + R, cy = r.y + R;
+  if (!uiRowsHit(cy - R - 5, 2 * R + 10)) return;
+  if (sel) { ug.fillCircle(cx, cy, R + 4, uiRGB(0xFFFFFF)); ug.fillCircle(cx, cy, R + 1, uiRGB(0x0B0B10)); }
+  for (int y = cy - R; y <= cy + R; y++) {
+    if (y < uiY0 || y >= uiY0 + uiRows) continue;
+    for (int x = cx - R; x <= cx + R; x++) {
+      const float dx = x - cx, dy = y - cy, d = sqrtf(dx * dx + dy * dy) / R;
+      if (d > 1) continue;
+      uint32_t c;
+      if (d > 0.6f) c = uiHsv(atan2f(-dy, dx) / 6.2832f, 1, 1);
+      else if (d > 0.52f) c = 0x0B0B10;
+      else if (kind == 1) c = uiMix(stRim, stCore, d / 0.52f);
+      else { float a = (atan2f(dy, dx) + 3.1416f) / 6.2832f * 4; int j = (int)a & 3; c = uiMix(stSpace[j], stSpace[(j + 1) & 3], a - (int)a); }
+      if (d > 0.9f) c = uiMix(c, 0x000000, (d - 0.9f) * 6);
+      ug.drawPixel(x, y, uiRGB(c));
+    }
+  }
+}
+void uiWChipDraw(int i) {                 // one of the colours being picked (core / rim, or the four space colours)
+  const UiRect &r = uiWChip[i];
+  if (!uiRowsHit(r.y - 4, r.h + 8) || r.x + r.w + 4 <= uiColA || r.x - 4 >= uiColB) return;
+  const uint32_t c = *uiWCol(i);
+  if (i == uiWT) for (int k = 0; k < 3; k++) ug.drawRoundRect(r.x - 1 - k, r.y - 1 - k, r.w + 2 + 2 * k, r.h + 2 + 2 * k, 8 + k, uiRGB(0xFFFFFF));
+  else ug.drawRoundRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, 8, uiRGB(0x3A2A1C));
+  ug.fillRoundRect(r.x, r.y, r.w, r.h, 7, uiRGB(c));
+  const int lum = ((c >> 16) & 255) * 3 + ((c >> 8) & 255) * 6 + (c & 255);
+  const char *lab[4] = { "1", "2", "3", "4" };
+  const char *s = uiWCount() == 2 ? (i == 0 ? "Core" : "Rim") : lab[i];
+  uiText(s, r.x + r.w / 2, r.y + r.h / 2 + 6, lum > 1400 ? 0x0000 : 0xFFFF, &FreeSansBold9pt7b, true, false);
+}
+void uiWSlider() {                        // the shade: dark to full
+  const UiRect &r = uiWSl;
+  if (!uiRowsHit(r.y - 4, r.h + 8)) return;
+  char v[8]; snprintf(v, 8, "%d%%", (int)lroundf(uiWV * 100));
+  uiText("SHADE", r.x, r.y + 13, uiRGB(0xC9B08A), &FreeSansBold9pt7b, false, false);
+  int16_t bx, by; uint16_t bw, bh;
+  ug.setFont(&FreeSansBold9pt7b); ug.getTextBounds(v, 0, 0, &bx, &by, &bw, &bh);
+  uiText(v, r.x + r.w - bw - bx, r.y + 13, uiRGB(0xFFD99A), &FreeSansBold9pt7b, false, false);
+  const int ty = r.y + 22, kx = r.x + (int)((uiWV - 0.1f) / 0.9f * r.w + 0.5f);
+  const uint32_t full = uiHsv(uiWH, uiWS, 1);
+  for (int x = r.x; x < r.x + r.w; x++) ug.drawFastVLine(x, ty + ((x - r.x < 4 || r.x + r.w - x <= 4) ? 2 : 0), (x - r.x < 4 || r.x + r.w - x <= 4) ? 8 : 12, uiRGB(uiMix(0x000000, full, (x - r.x) / (float)r.w)));
+  ug.drawRoundRect(r.x - 1, ty - 1, r.w + 2, 14, 5, uiRGB(0x6B4423));
+  ug.fillCircle(kx, ty + 6, 12, uiRGB(0x7A4210));
+  ug.fillCircle(kx, ty + 6, 9, uiRGB(*uiWCol(uiWT)));
+}
+void uiWheelDraw() {
+  const int R = uiWR;
+  const int ya = uiY0 > uiWCY - R - 1 ? uiY0 : uiWCY - R - 1, yb = uiY0 + uiRows < uiWCY + R + 2 ? uiY0 + uiRows : uiWCY + R + 2;
+  const int xa = uiColA > uiWCX - R - 1 ? uiColA : uiWCX - R - 1, xb = uiColB < uiWCX + R + 2 ? uiColB : uiWCX + R + 2;
+  const float inv = 1.0f / R;
+  for (int y = ya; y < yb; y++) {
+    uint16_t *p = uiBuf + (y - uiY0) * SCR_W;
+    const float dy = y - uiWCY;
+    for (int x = xa; x < xb; x++) {
+      const float dx = x - uiWCX, d = sqrtf(dx * dx + dy * dy);
+      if (d > R + 0.5f) continue;
+      uint32_t c = uiHsv(atan2f(-dy, dx) * 0.159155f, fminf(1, d * inv), uiWV);
+      if (d > R - 0.5f) c = uiMix(c, 0x0B0B10, d - (R - 0.5f));   // a smooth edge
+      p[x] = uiRGB(c);
+    }
+  }
+  int mx, my; uiWMarker(mx, my);           // the ring on the colour picked
+  ug.drawCircle(mx, my, 11, uiRGB(0x000000)); ug.drawCircle(mx, my, 10, uiRGB(0xFFFFFF)); ug.drawCircle(mx, my, 9, uiRGB(0xFFFFFF));
+  ug.drawCircle(mx, my, 8, uiRGB(0x000000)); ug.fillCircle(mx, my, 7, uiRGB(*uiWCol(uiWT)));
+}
+void uiPaintWheelBand() {
+  for (int i = 0; i < SCR_W * uiRows; i++) uiBuf[i] = uiRGB(0x0B0B10);
+  for (int y = uiY0; y < uiY0 + uiRows && y < uiHeadR.h; y++)
+    ug.drawFastHLine(0, y, SCR_W, uiRGB(y >= uiHeadR.h - 2 ? 0x6B4423 : uiMix(0x2A1A0E, 0x160D06, (float)y / uiHeadR.h)));
+  uiText("COLOUR", SCR_W / 2, uiHeadR.h / 2 + 8, uiRGB(0xFFD99A), &FreeSansBold12pt7b, true, false);
+  uiButton(uiBackBtn, "< Back", false, 0);
+  uiButton(uiWDone, "Done", true, 3);
+  uiPreview();
+  for (int i = 0; i < uiWCount(); i++) uiWChipDraw(i);
+  uiText("Tap one, then the wheel", SCR_W > SCR_H ? uiWChip[0].x : uiWChip[0].x, uiWHintY, uiRGB(0x9A8A70), NULL, false, false);
+  uiWheelDraw();
+  uiWSlider();
+}
+void uiWBox(int x0, int y0, int x1, int y1) { uiPaintRows(y0, y1, x0, x1); }
+void uiWheelAt(int x, int y) {            // a finger on the wheel: that colour
+  int ox, oy; uiWMarker(ox, oy);
+  const float dx = x - uiWCX, dy = y - uiWCY, d = sqrtf(dx * dx + dy * dy);
+  uiWS = fminf(1, d / uiWR);
+  if (d > 2) { uiWH = atan2f(-dy, dx) * 0.159155f; if (uiWH < 0) uiWH += 1; }
+  *uiWCol(uiWT) = uiHsv(uiWH, uiWS, uiWV);
+  int nx, ny; uiWMarker(nx, ny);
+  uiWBox((ox < nx ? ox : nx) - 13, (oy < ny ? oy : ny) - 13, (ox > nx ? ox : nx) + 14, (oy > ny ? oy : ny) + 14);   // just round the ring
+  const UiRect &c = uiWChip[uiWT];
+  uiWBox(c.x - 4, c.y - 4, c.x + c.w + 4, c.y + c.h + 4);
+  uiWBox(uiWSl.x - 14, uiWSl.y - 2, uiWSl.x + uiWSl.w + 14, uiWSl.y + uiWSl.h + 4);
+}
+void uiWSlideTo(int x) {                  // the shade slider
+  float f = (x - uiWSl.x) / (float)uiWSl.w; f = f < 0 ? 0 : f > 1 ? 1 : f;
+  uiWV = 0.1f + 0.9f * f;
+  *uiWCol(uiWT) = uiHsv(uiWH, uiWS, uiWV);
+  const UiRect &c = uiWChip[uiWT];
+  uiWBox(c.x - 4, c.y - 4, c.x + c.w + 4, c.y + c.h + 4);
+  uiWBox(uiWSl.x - 14, uiWSl.y - 2, uiWSl.x + uiWSl.w + 14, uiWSl.y + uiWSl.h + 4);
+}
+void uiWheelDragEnd(int k) {              // let go: the preview (and, after the shade, the wheel) catches up
+  uiWBox(uiPrev.x - 3, uiPrev.y - 3, uiPrev.x + uiPrev.w + 3, uiPrev.y + uiPrev.h + 3);
+  if (k == 11) uiWBox(uiWCX - uiWR - 12, uiWCY - uiWR - 12, uiWCX + uiWR + 13, uiWCY + uiWR + 13);
+}
+void uiWheelTouch(int x, int y) {
+  if (uiIn(uiBackBtn, x, y)) { uiWheelClose(false); return; }   // back: the colours as they were
+  if (uiIn(uiWDone, x, y)) { uiWheelClose(true); return; }
+  for (int i = 0; i < uiWCount(); i++) if (uiIn(uiWChip[i], x, y)) {
+    if (i != uiWT) { uiWT = i; uiWLoad(); uiDirty = true; }
+    return;
+  }
+  const float dx = x - uiWCX, dy = y - uiWCY;
+  if (dx * dx + dy * dy <= (uiWR + 14.0f) * (uiWR + 14)) { uiDrag = 10; uiWheelAt(x, y); return; }
+  const UiRect &r = uiWSl;
+  if (y >= r.y - 8 && y < r.y + r.h + 10 && x >= r.x - 14 && x < r.x + r.w + 14) { uiDrag = 11; uiWSlideTo(x); }
+}
 void uiPaintSetBand() {
   for (int i = 0; i < SCR_W * uiRows; i++) uiBuf[i] = uiRGB(0x0B0B10);
   for (int y = uiY0; y < uiY0 + uiRows && y < uiHeadR.h; y++)
@@ -3230,7 +3405,7 @@ void uiPaintSetBand() {
   for (int k = 0; k < 4; k++) uiSlider(k);
   uiText("COLOURS", uiSetCol[0].x - 2, uiSetColLabY, uiRGB(0xC9B08A), &FreeSansBold9pt7b, false, false);
   const int kind = uiColKind();
-  if (kind) for (int i = 0; i < 6; i++) uiSwatchAt(uiSetCol[i], uiSetSwR, i, kind, i == stSelCol);
+  if (kind) { for (int i = 0; i < 6; i++) uiSwatchAt(uiSetCol[i], uiSetSwR, i, kind, i == stSelCol); uiSwatchWheel(uiSetCol[6], uiSetSwR, kind, stSelCol < 0 || stSelCol == 6); }
   else uiText("This background has its own colours", uiSetCol[0].x, uiSetCol[0].y + uiSetSwR - 4, uiRGB(0x9A8A70), NULL, false, false);
   uiButton(uiSave, "SAVE", true, 3);
 }
@@ -3357,13 +3532,13 @@ void homeIcon(uint16_t *buf, int y0, int rows) {   // a strip that's ready to se
 }
 
 // ---- sending the page to the screen ----
-void uiSend(int rows) {
-  swapBytes565(uiBuf, SCR_W * rows);
+void uiSend(int rows, int w = SCR_W) {
+  swapBytes565(uiBuf, w * rows);
 #if USE_DMA
   if (lcdDma) {
     spi_transaction_t t, *r;
     memset(&t, 0, sizeof(t));
-    t.length = SCR_W * rows * 16; t.tx_buffer = uiBuf; t.user = (void *)2;
+    t.length = w * rows * 16; t.tx_buffer = uiBuf; t.user = (void *)2;
     if (spi_device_queue_trans(lcdDev, &t, pdMS_TO_TICKS(1000)) == ESP_OK) spi_device_get_trans_result(lcdDev, &r, pdMS_TO_TICKS(1000));
     return;
   }
@@ -3371,15 +3546,23 @@ void uiSend(int rows) {
   sendStrip(uiBuf, rows);
 }
 void uiPaintSetBand();
-void uiPaintRows(int ya, int yb) {         // redraw rows ya to yb (the whole page, or just what changed)
+void uiPaintRows(int ya, int yb, int xa, int xb) {   // redraw rows ya to yb (the whole page, or just what changed; columns xa to xb)
   const int start = ya < 0 ? 0 : (ya / uiMaxRows) * uiMaxRows;
+  xa = xa < 0 ? 0 : xa; xb = xb > SCR_W ? SCR_W : xb;
 #if USE_DMA
-  if (lcdDma) lcdWindowFrom(start, 1000); else
+  if (!lcdDma || xb - xa < 8) { xa = 0; xb = SCR_W; }
+#else
+  xa = 0; xb = SCR_W;
+#endif
+  const int w = xb - xa;
+  uiColA = xa; uiColB = xb;
+#if USE_DMA
+  if (lcdDma) lcdWindowFrom(start, 1000, xa, xb - 1); else
 #endif
   { tft.startWrite(); tft.setAddrWindow(0, start, SCR_W, SCR_H - start); }
   for (uiY0 = start; uiY0 < SCR_H && uiY0 < yb; uiY0 += uiMaxRows) {
     uiRows = SCR_H - uiY0 < uiMaxRows ? SCR_H - uiY0 : uiMaxRows;
-    if (uiPage == 1) uiPaintSetBand(); else if (uiKind) uiPaintPSBand(); else uiPaintHomeBand();
+    if (uiPage == 2) uiPaintWheelBand(); else if (uiPage == 1) uiPaintSetBand(); else if (uiKind) uiPaintPSBand(); else uiPaintHomeBand();
 #if HOME_DUMP
     if (dumpReq) for (int r = 0; r < uiRows; r++) {
       Serial.print(F("ROW ")); Serial.print(uiY0 + r); Serial.print(' ');
@@ -3387,8 +3570,10 @@ void uiPaintRows(int ya, int yb) {         // redraw rows ya to yb (the whole pa
       Serial.println();
     }
 #endif
-    uiSend(uiRows);
+    if (w < SCR_W) for (int r = 0; r < uiRows; r++) memmove(uiBuf + r * w, uiBuf + r * SCR_W + xa, w * 2);   // just these columns
+    uiSend(uiRows, w);
   }
+  uiColA = 0; uiColB = SCR_W;
 #if USE_DMA
   if (!lcdDma)
 #endif
@@ -3469,7 +3654,7 @@ void uiClose(bool use) {
 }
 void uiSetTouch(int x, int y);
 void uiTouch(int x, int y) {
-  if (uiPage == 1) { uiSetTouch(x, y); return; }
+  if (uiPage >= 1) { uiSetTouch(x, y); return; }
   if (uiKind) {                            // portal and space pages
     for (int i = 0; i < 4; i++) if (uiIn(uiTile[i], x, y)) {
       if (i != uiSelStyle) {               // another style: its own shape and colours, as in the Studio
@@ -3509,13 +3694,13 @@ void uiTouch(int x, int y) {
   }
   if (uiIn(uiShow, x, y)) uiClose(true);
 }
-void uiPaintRows(int ya, int yb);
 void uiSlideTo(int k, int x) {             // a slider moved: redraw just that slider
   const UiRect &r = uiSl[k];
   uiSlSet(k, (x - r.x) / (float)r.w);
   uiPaintRows(r.y - 4, r.y + r.h + 4);
 }
 void uiSetTouch(int x, int y) {            // the settings page
+  if (uiPage == 2) { uiWheelTouch(x, y); return; }
   if (uiIn(uiBackBtn, x, y)) { uiPage = 0; uiDirty = true; return; }   // back: forget the changes
   if (uiIn(uiSave, x, y)) {                 // SAVE: keep them, back to the home page
     uiBright = stBright; uiRadius = stRadius; uiBeam = stBeam; uiSpeed = stSpeed; uiFdLen = stFdLen; uiSparks = stSparks; uiStars = stStars;
@@ -3523,6 +3708,7 @@ void uiSetTouch(int x, int y) {            // the settings page
     uiSaved = true; uiPage = 0; uiDirty = true; return;
   }
   const int kind = uiColKind();
+  if (kind && uiIn(uiSetCol[6], x, y)) { uiWheelOpen(); return; }   // the colour wheel
   if (kind) for (int i = 0; i < 6; i++) if (uiIn(uiSetCol[i], x, y)) {   // a colour: the preview shows it straight away
     stSelCol = i;
     if (kind == 1) { stCore = UI_GLOW[i][0]; stRim = UI_GLOW[i][1]; } else for (int k = 0; k < 4; k++) stSpace[k] = UI_SPACE[i][k];
@@ -3539,6 +3725,7 @@ void uiDragEnd() {                         // let go of a slider: the preview ca
   if (uiDrag < 0) return;
   const int k = uiDrag;
   uiDrag = -1;
+  if (k >= 10) { uiWheelDragEnd(k); return; }
   uiPaintRows(uiPrev.y - 4, uiPrev.y + uiPrev.h + 4);
   uiPaintRows(uiSl[k].y - 4, uiSl[k].y + uiSl[k].h + 4);
 }
@@ -3565,7 +3752,7 @@ void uiLoop() {                            // runs instead of the drawing while 
       if (millis() - lastDrag > 30) {
         lastDrag = millis(); uiLastTouch = lastDrag;
         int x, y;
-        if (touchXY(x, y)) uiSlideTo(uiDrag, x);
+        if (touchXY(x, y)) { if (uiDrag == 10) uiWheelAt(x, y); else if (uiDrag == 11) uiWSlideTo(x); else uiSlideTo(uiDrag, x); }
       }
     }
   } else {
