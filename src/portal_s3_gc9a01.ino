@@ -125,7 +125,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xD10316FBUL;
+const uint32_t BUILD_ID = 0xAB2B10A1UL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -3200,6 +3200,9 @@ UiRect uiWDone, uiWPrev, uiWChip[4], uiWSl, uiPrevSet;   // the colour wheel pag
 int uiWCX = 0, uiWCY = 0, uiWR = 100, uiWT = 0, uiWHintY = 0, uiColA = 0, uiColB = 480;   // (uiColA-uiColB: the columns being redrawn)
 float uiWH = 0, uiWS = 1, uiWV = 1;       // the colour on the wheel: hue, how strong, how bright
 uint32_t uiWBak[6]; int uiWBakSel = -1;
+UiRect uiRotBtn;                          // the settings page's Rotate button
+uint8_t uiRotTo = 255;                    // a quarter turn asked for (portrait | flip << 1), 255 none
+bool uiReopen = false;                    // after turning: open the settings page again
 int uiNoteY = -1, uiSetSwR = 13, uiSetColLabY = 0;
 uint32_t stCore = 0, stRim = 0, stSpace[4]; int stSelCol = -1;   // the colours, while on the settings page
 const uint32_t *uiBackCols = NULL;        // (the preview: draw the backgrounds in these colours: core, rim, then the four space colours)
@@ -3271,6 +3274,7 @@ void uiLayout() {                         // where everything goes, for the way 
   }
 }
 
+void uiRotLayout() { uiRotBtn = { (int16_t)(SCR_W - 92), (int16_t)(SCR_H > SCR_W ? 6 : 5), 84, 28 }; }
 void uiLayoutPS() {                       // the portal and space pages: four big pictures, then the colours
   const int W = SCR_W, H = SCR_H;
   if (H > W) {
@@ -3431,6 +3435,12 @@ void uiButton(const UiRect &s, const char *label, bool gold, int icon) {   // ic
   if (icon == 2) {                          // a gear
     for (int t = 0; t < 8; t++) { float a = t * 0.7854f; ug.fillCircle(ix + 7 + (int)lroundf(cosf(a) * 7), iy + (int)lroundf(sinf(a) * 7), 2, col); }
     ug.fillCircle(ix + 7, iy, 6, col); ug.fillCircle(ix + 7, iy, 2, uiRGB(0x2A1D12));
+  }
+  if (icon == 4) {                          // a turning arrow
+    const int cx = ix + 6;
+    for (int t = 0; t <= 40; t++) { const float a = 1.0f + t * 0.12f; ug.fillRect(cx + (int)lroundf(cosf(a) * 6) - 1, iy + (int)lroundf(sinf(a) * 6) - 1, 2, 2, col); }
+    const float e = 5.8f, ex = cx + cosf(e) * 6, ey = iy + sinf(e) * 6, tx = -sinf(e), ty = cosf(e), nx = cosf(e), ny = sinf(e);
+    ug.fillTriangle((int)lroundf(ex + tx * 5), (int)lroundf(ey + ty * 5), (int)lroundf(ex + nx * 4 - tx), (int)lroundf(ey + ny * 4 - ty), (int)lroundf(ex - nx * 4 - tx), (int)lroundf(ey - ny * 4 - ty), col);
   }
   if (icon == 3) for (int w = -1; w <= 1; w++) { ug.drawLine(ix, iy + w, ix + 5, iy + 5 + w, col); ug.drawLine(ix + 5, iy + 5 + w, ix + 14, iy - 5 + w, col); }   // a tick
 }
@@ -3792,6 +3802,7 @@ void uiPaintSetBand() {
     ug.drawFastHLine(0, y, SCR_W, uiRGB(y >= uiHeadR.h - 2 ? 0x6B4423 : uiMix(0x2A1A0E, 0x160D06, (float)y / uiHeadR.h)));
   uiText("SETTINGS", SCR_W / 2, uiHeadR.h / 2 + 8, uiRGB(0xFFD99A), &FreeSansBold12pt7b, true, false);
   uiButton(uiBackBtn, "< Back", false, 0);
+  uiButton(uiRotBtn, "Rotate", false, 4);
   uiPreview();
   if (uiNoteY > 0) {
     uiText("Drag a slider: the preview", uiPrev.x + uiPrev.w / 2, uiNoteY, uiRGB(0x9A8A70), NULL, true, false);
@@ -4019,6 +4030,8 @@ void uiOpen() {
   uiSelCol = uiColMatch();
   uiBright = BRIGHTNESS; uiRadius = (int)RADIUS; uiBeam = BEAM; uiSpeed = SPEED; uiFdLen = FD_LEN;
   uiSaved = false; uiPage = 0; uiDrag = -1;
+  uiRotLayout();
+  if (uiReopen) { uiReopen = false; uiToSettings(); }   // back from a quarter turn: straight to the settings
   uiHeld = true;                           // the touch that opened this has to lift first
   uiDirty = true;
   uiLastTouch = millis();
@@ -4037,6 +4050,7 @@ void uiClose(bool use) {
     s.core = uiCore; s.rim = uiRim;
     for (int k = 0; k < 4; k++) s.spaceCols[k] = uiSpace[k];
     s.fadeOn = 0;                          // the colours picked here stay put
+    if (uiRotTo != 255) { s.portrait = uiRotTo; uiRotTo = 255; }   // Rotate: turned at the start of the next frame
     s.bright = uiBright; s.radius = uiRadius; s.beam = uiBeam; s.speed = uiSpeed; s.fdLen = uiFdLen;   // and the settings page's
     const uint8_t f = s.crossFill;
     if (uiKind == 0 && ((f >= 8 && f <= 10) || f == 18)) cloudMemory();   // a sky: make room for its clouds now, while the other core is paused
@@ -4048,6 +4062,11 @@ void uiClose(bool use) {
   Serial.println(use ? F("[portal] home page: new choices saved") : F("[portal] home page closed"));
 }
 void uiSetTouch(int x, int y);
+void uiToSettings() {                      // open the settings page with the choices as they are
+  stBright = uiBright; stRadius = uiRadius; stBeam = uiBeam; stSpeed = uiSpeed; stFdLen = uiFdLen; stSparks = uiSparks; stStars = uiStars;
+  stCore = uiCore; stRim = uiRim; for (int k = 0; k < 4; k++) stSpace[k] = uiSpace[k]; stSelCol = uiSelCol;
+  uiPage = 1; uiDirty = true;
+}
 void uiTouch(int x, int y) {
   if (uiPage >= 1) { uiSetTouch(x, y); return; }
   if (uiKind) {                            // portal and space pages
@@ -4082,11 +4101,7 @@ void uiTouch(int x, int y) {
       uiDirty = true; return;
     }
   }
-  if (uiIn(uiSetBtn, x, y)) {
-    stBright = uiBright; stRadius = uiRadius; stBeam = uiBeam; stSpeed = uiSpeed; stFdLen = uiFdLen; stSparks = uiSparks; stStars = uiStars;
-    stCore = uiCore; stRim = uiRim; for (int k = 0; k < 4; k++) stSpace[k] = uiSpace[k]; stSelCol = uiSelCol;
-    uiPage = 1; uiDirty = true; return;
-  }
+  if (uiIn(uiSetBtn, x, y)) { uiToSettings(); return; }
   if (uiIn(uiShow, x, y)) uiClose(true);
 }
 void uiSlideTo(int k, int x) {             // a slider moved: redraw just that slider
@@ -4097,6 +4112,15 @@ void uiSlideTo(int k, int x) {             // a slider moved: redraw just that s
 void uiSetTouch(int x, int y) {            // the settings page
   if (uiPage == 2) { uiWheelTouch(x, y); return; }
   if (uiIn(uiBackBtn, x, y)) { uiPage = 0; uiDirty = true; return; }   // back: forget the changes
+  if (uiIn(uiRotBtn, x, y)) {               // Rotate: keep the settings, turn a quarter (as the Studio's Rotate 90), then come back here
+    uiBright = stBright; uiRadius = stRadius; uiBeam = stBeam; uiSpeed = stSpeed; uiFdLen = stFdLen; uiSparks = stSparks; uiStars = stStars;
+    uiCore = stCore; uiRim = stRim; for (int k = 0; k < 4; k++) uiSpace[k] = stSpace[k]; uiSelCol = stSelCol;
+    const bool p = !PORTRAIT, f = PORTRAIT ? FLIP : !FLIP;
+    uiRotTo = (p ? 1 : 0) | (f ? 2 : 0);
+    uiClose(true);
+    uiReopen = true;
+    return;
+  }
   if (uiIn(uiSave, x, y)) {                 // SAVE: keep them, back to the home page
     uiBright = stBright; uiRadius = stRadius; uiBeam = stBeam; uiSpeed = stSpeed; uiFdLen = stFdLen; uiSparks = stSparks; uiStars = stStars;
     uiCore = stCore; uiRim = stRim; for (int k = 0; k < 4; k++) uiSpace[k] = stSpace[k]; uiSelCol = stSelCol;
@@ -4186,6 +4210,10 @@ void loop() {
 #endif
   if (pausedForUpload()) return;         // the screen holds still while a picture arrives
 #if HOME_PAGE
+  if (uiReopen && !uiMode && !havePending && wantPortrait == PORTRAIT && wantFlip == FLIP && !turnPending) {   // turned: the settings page again
+    static uint8_t frames = 0;
+    if (++frames > 2) { frames = 0; uiMode = 1; }
+  }
   if (uiMode) { uiLoop(); return; }      // the home page is showing
 #endif
 #if DUAL_CORE
