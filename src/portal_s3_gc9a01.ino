@@ -66,6 +66,7 @@ void beginBus() {
 
 #define TAP_PIN    -1
 #define HOME_PAGE  0
+#define SHOW_BOARD 0
 #define PX         1            // one drawn pixel per screen pixel
 #define TURNS      0
 #define SCR_W      240          // drawing width and height (the screen is PX times bigger)
@@ -98,6 +99,8 @@ uint8_t  BRIGHTNESS = 100;     // 10-100 %: dims the portal's colours
 uint8_t  STYLE      = 0;       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy (Hubble-style spiral), 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
                                 // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
                                 // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
+                                // cross fractals: 20 Cross of Crosses, 21 Cross Tunnel
+uint8_t  CF_BG = 0, CF_GAP = 80, CF_TGT = 0, CF_PAL = 0, CF_TWIST = 6, CF_WOB = 30, CF_FLOW = 20;
 uint8_t  CROSS_RIPPLE = 0;      // crosses: Ripple, rings echoing the outline inside the cross (0 off, 1 outward, 2 inward; +3 Gradient colours); the Wooden cross: its wood (0 classic, 1 pine, 2 rustic oak, 3 walnut, 4 cherry, 5 mahogany, 6 cedar, 7 driftwood, 8 ebony, 9 maple, 10 olive wood)
 uint8_t  CROSS_FILL = 3;       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower, 11 Solid colour; the Wooden cross: what's behind it, 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
 uint32_t SPACE_COLS[4] = { 0x4A2C1A, 0xFF5C9A, 0x6EA8FF, 0xFFF0CF };   // Galaxy, Nebula, Wormhole, Meteor Shower: four colours blended together
@@ -125,7 +128,7 @@ uint8_t  FRAME_PCT  = 50;      // "portal around a picture" scenes (128 + pictur
 
 // Changes every time you copy a new sketch, so freshly uploaded settings
 // win over ones saved earlier by live tuning.
-const uint32_t BUILD_ID = 0xAB2B10A1UL;
+const uint32_t BUILD_ID = 0x5479845EUL;
 
 Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);
 
@@ -165,6 +168,16 @@ int      spCY = QY;                     // centre row for the space styles (the 
 #else
   #define DUAL_CORE 0
 #endif
+#if SHOW_BOARD && HAS_PICS && DUAL_CORE
+  #define SHOW_ON 1                     // the Picture Display (style 22)
+  #if defined(CONFIG_IDF_TARGET_ESP32) && __has_include("driver/dac_continuous.h")
+    #define SHOW_AUDIO 1
+  #else
+    #define SHOW_AUDIO 0
+  #endif
+#else
+  #define SHOW_ON 0
+#endif
 #if defined(LCD_DMA) && LCD_DMA && DUAL_CORE && PX == 1 && defined(CONFIG_IDF_TARGET_ESP32)
   #define USE_DMA 1                     // pixels go out by DMA while both cores draw
   #include "driver/spi_master.h"
@@ -191,7 +204,7 @@ static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM")
 
 // Scenes with their own settings: each "another style" scene can keep its own size, colours, speed...
 struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn, style, crossFill, crossRipple, beam, crossW, bar; uint32_t ripC[4]; uint8_t rimW, crossOut; uint32_t crossCol; };
-struct Extra { uint32_t id; uint32_t ripC[4]; uint8_t rimW, crossOut; uint32_t crossCol; };   // settings that don't fit the first 128 bytes
+struct Extra { uint32_t id; uint32_t ripC[4]; uint8_t rimW, crossOut; uint32_t crossCol; uint8_t cf[7]; };   // settings that don't fit the first 128 bytes
 struct SceneSaved { uint32_t id; uint8_t has[8]; Look look[8]; };
 #define EE_SIZE (128 + sizeof(SceneSaved) + sizeof(Extra))   // main settings, the scenes' own settings, then the extras
 #define EXTRA_AT (128 + sizeof(SceneSaved))
@@ -199,6 +212,11 @@ uint32_t pendRipC[4]; bool pendRip = false;
 uint8_t  pendRimW = 100; bool pendRim = false;
 uint8_t  pendOut = 255; bool pendXout = false;
 uint32_t pendCol = 0x1000000; bool pendXcol = false;
+uint8_t  pendCf[7]; bool pendCfOn = false;   // the cross fractals' settings (CFR)
+void cfSet(const uint8_t *c) {            // the cross fractals' settings, checked
+  CF_BG = c[0] <= 6 ? c[0] : 0; CF_GAP = c[1] < 55 ? 55 : c[1] > 100 ? 100 : c[1]; CF_TGT = c[2] ? 1 : 0; CF_PAL = c[3] <= 4 ? c[3] : 0;
+  CF_TWIST = c[4] > 30 ? 30 : c[4]; CF_WOB = c[5] > 100 ? 100 : c[5]; CF_FLOW = c[6] > 100 ? 100 : c[6];
+}
 uint8_t  SCENE_HAS[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };   // 1 = that scene has its own settings
 Look     SCENE_LOOKS[8] = {
   { 6, 1, 0, 0, 0.09f, 0.55f, 0, 0, { 0, 0, 0, 0 }, 1, 0, 0, 100, 0, 1, 0, 0, 0, 0, 0, 14, 46, 32, { 0xFFD36B, 0xFF2D8A, 0x8A3DFF, 0x3DE0FF }, 100, 255, 0x1000000 },
@@ -489,7 +507,7 @@ bool pressHave = false, pressOk = false; int pressX = 0, pressY = 0;   // where 
 bool uiHeld = false;                     // a finger is still down from before (it has to lift first)
 float tcal[6] = { 0.091822f, 0, -23.31f, 0, -0.131399f, 513.11f };   // raw touch -> upright screen: the panel maker's calibration for this board (TCAL over USB can change it)
 bool tcalOk = false;
-inline int homeKind() { return STYLE == 17 ? 0 : (STYLE <= 2 || STYLE == 6) ? 1 : (STYLE == 3 || STYLE == 4 || STYLE == 14 || STYLE == 16) ? 2 : -1; }   // 0 the Wooden cross, 1 a portal, 2 space
+inline int homeKind() { return STYLE == 17 ? 0 : (STYLE <= 2 || STYLE == 6) ? 1 : (STYLE == 3 || STYLE == 4 || STYLE == 14 || STYLE == 16) ? 2 : (STYLE == 20 || STYLE == 21) ? 3 : -1; }   // 0 the Wooden cross, 1 a portal, 2 space, 3 the cross fractals
 inline bool homeActive() { return homeKind() >= 0; }   // the home button: the Wooden cross, the portals and the space styles
 #if USE_DMA
 spi_device_handle_t touchDev;
@@ -542,7 +560,7 @@ bool valid(const Saved &s) {
   return s.radius >= 6 && s.radius <= RADIUS_MAX && s.oval >= 1 && s.oval <= 2 &&
          s.arms >= 1 && s.arms <= 8 && s.twist >= 0 && s.twist <= 6 &&
          s.speed >= 0 && s.speed <= 0.4f && s.sparks <= MAX_SPARKS &&
-         s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && s.style <= 17 && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
+         s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && (s.style <= 17 || s.style == 20 || s.style == 21 || (SHOW_ON && s.style == 22)) && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
          s.ripples <= 6 && s.ripSpeed >= 0.03f && s.ripSpeed <= 0.3f && s.glow >= 0.3f && s.glow <= 0.9f &&
          validScenes(s);
 }
@@ -619,7 +637,7 @@ uint8_t clampb(uint8_t v, uint8_t lo, uint8_t hi) { return v < lo ? lo : v > hi 
 void clampSettings(Saved &s) {
   s.radius = clampf(s.radius, 6, RADIUS_MAX); s.oval = clampf(s.oval, 1, 2); s.arms = clampb(s.arms, 1, 8);
   s.twist = clampf(s.twist, 0, 6); s.speed = clampf(s.speed, 0, 0.4f); if (s.sparks > MAX_SPARKS) s.sparks = MAX_SPARKS;
-  s.core &= 0xFFFFFF; s.rim &= 0xFFFFFF; s.bright = clampb(s.bright, 10, 100); if (s.style > 17) s.style = 0;
+  s.core &= 0xFFFFFF; s.rim &= 0xFFFFFF; s.bright = clampb(s.bright, 10, 100); if (s.style > 17 && s.style != 20 && s.style != 21 && !(SHOW_ON && s.style == 22)) s.style = 0;
   s.stars = clampb(s.stars, 1, 6); s.fadeCount = clampb(s.fadeCount, 1, 3); s.fadeSecs = clampf(s.fadeSecs, 1, 3600);
   if (s.rimSmooth > 100) s.rimSmooth = 100; if (s.ripples > 6) s.ripples = 6;
   s.ripSpeed = clampf(s.ripSpeed, 0.03f, 0.3f); s.glow = clampf(s.glow, 0.3f, 0.9f);
@@ -681,7 +699,7 @@ void beginPictures() {
     uint32_t room = stageOff, keepPics = min((uint32_t)5, room / slotSize);
     uint32_t n = (room - keepPics * slotSize) / crossPlane;
     if (n < 1) { n = 1; }
-    nPlanes = min((uint32_t)MAX_PLANES, n);
+    nPlanes = min((uint32_t)(SHOW_ON ? 5 : MAX_PLANES), n);   // (the Picture Display needs the room)
   }
   planesOff = stageOff - nPlanes * crossPlane;
   crossOff = woodOff = planesOff;
@@ -734,6 +752,7 @@ int unbase64(const char *in, uint8_t *out) {   // returns bytes written, -1 on b
   return n;
 }
 
+uint8_t jpgPool[3100];                    // the JPEG decoder's work area (pictures arriving, and the Picture Display)
 UINT jpgIn(JDEC *jd, BYTE *buf, UINT n) {        // JPEG bytes come from the staging area
   if (n > upLen - jpgPos) n = upLen - jpgPos;
   if (buf) esp_partition_read(picPart, stageOff + jpgPos, buf, n);
@@ -757,10 +776,9 @@ UINT jpgOut(JDEC *jd, void *bmp, JRECT *r) {     // one block of pixels: collect
 const char *finishPicture() {
   uploading = false;
   if (upPos != upLen) return "ERR incomplete";
-  static uint8_t pool[3100];               // the JPEG decoder's work area
   JDEC jd;
   jpgPos = 0;
-  if (jd_prepare(&jd, jpgIn, pool, sizeof(pool), NULL) != JDR_OK) return "ERR jpeg";
+  if (jd_prepare(&jd, jpgIn, jpgPool, sizeof(jpgPool), NULL) != JDR_OK) return "ERR jpeg";
   if (jd.width != SCR_W || jd.height != SCR_H) return "ERR size";
   band = (uint16_t *)malloc(SCR_W * 16 * 2);
   if (!band) return "ERR memory";
@@ -775,6 +793,209 @@ const char *finishPicture() {
   picW[upSlot] = SCR_W;
   return "OK";
 }
+
+#if SHOW_ON
+// ---------- the Picture Display (style 22): your own photos, GIFs and videos, sent from the Studio ----------
+// The Studio packs the show: every frame a JPEG made for this screen (or half its size, doubled up here), the clips in
+// order, and any sound (8-bit, one channel). It is kept at the start of the pictures' flash area. Each frame is unpacked
+// as it is shown, a band at a time, straight into the strips the other core sends to the screen.
+// Commands: SHOWINFO, SHOW bytes id, B base64..., SHOWEND, SHOWOFF, BAUD rate.
+struct ShowHead { uint32_t magic, size, id, check; uint16_t w, h, nClips, fadeMs; uint8_t shuffle, vol; uint16_t rsv; uint32_t done; };   // 32 bytes
+struct ShowClip { uint32_t framesOff; uint16_t nFrames, frameMs, repeats; uint8_t scale, flags; uint32_t audioOff, audioLen; uint16_t audioRate, rsv; uint32_t rsv2, rsv3; };   // 32 bytes
+const uint32_t SHOW_MAGIC = 0x57485356UL;  // "VSHW"
+const uint32_t SHOW_DONE = 0x4B4F4B4FUL;   // written once the whole show has arrived and checks out
+const int SHOW_MAX_CLIPS = 64;
+ShowHead showH;
+ShowClip *showClips = NULL;
+bool     showOk = false, showUp = false;   // a show is ready; one is arriving
+uint32_t showMax = 0, showErased = 0;      // room for it (bytes); how far the arriving one has been made ready
+volatile bool showSkip = false;           // a tap: on to the next clip
+uint8_t  showOrder[SHOW_MAX_CLIPS];
+int      showPos = 0;                     // which clip (in showOrder) is playing
+uint32_t showClipAt = 0;                  // when it started
+uint16_t *showBand = NULL, *showLine = NULL;
+uint8_t  *showPool = NULL;
+bool     showOwnBand = false, showOwnPool = false;
+const int SHOW_POOL = 3100;
+uint32_t baudFastAt = 0;
+uint8_t  showLastClip = 255;
+uint8_t  showData[800];                   // a piece of an arriving show              // the clip whose sound has been started
+void showShuffle();                  // a faster link while a show arrives (back to 115200 when it goes quiet)
+
+uint32_t showRoom() { return planesOff; }   // the pictures' area, from the start up to the cross outlines
+
+void showLoad() {                        // at start-up, and after a show arrives: is there one, and what's in it
+  showOk = false;
+  if (!picPart) return;
+  showMax = showRoom();
+  esp_partition_read(picPart, 0, &showH, sizeof(showH));
+  if (showH.magic != SHOW_MAGIC || showH.done != SHOW_DONE || showH.size > showMax || !showH.nClips || showH.nClips > SHOW_MAX_CLIPS) return;
+  if (!showClips) showClips = (ShowClip *)malloc(sizeof(ShowClip) * SHOW_MAX_CLIPS);
+  if (!showClips) return;
+  esp_partition_read(picPart, sizeof(ShowHead), showClips, sizeof(ShowClip) * showH.nClips);
+  for (int i = 0; i < showH.nClips; i++) {
+    const ShowClip &c = showClips[i];
+    if (!c.nFrames || !c.frameMs || !c.repeats || (c.scale != 1 && c.scale != 2) || c.framesOff + c.nFrames * 8UL > showH.size) return;
+  }
+  for (int i = 0; i < showH.nClips; i++) showOrder[i] = i;
+  if (showH.shuffle) showShuffle();
+  showPos = 0; showClipAt = millis(); showLastClip = 255;
+  showOk = true;
+}
+void showForget() {                      // a picture is going where the show was: the show is gone
+  if (!showOk && !showUp) return;
+  showOk = false; showUp = false;
+  esp_partition_erase_range(picPart, 0, 4096);
+}
+void showShuffle() {
+  for (int i = showH.nClips - 1; i > 0; i--) { int j = esp_random() % (i + 1); uint8_t k = showOrder[i]; showOrder[i] = showOrder[j]; showOrder[j] = k; }
+}
+
+// ---- sound: the board's speaker socket (DAC on GPIO 26, its amplifier switched on by a low on GPIO 4) ----
+#if SHOW_AUDIO
+#include "driver/dac_continuous.h"
+dac_continuous_handle_t dacH = NULL;       // (only the sound task touches the DAC: if it ever stalls, the pictures carry on)
+uint16_t dacRate = 0;
+volatile uint32_t audSeq = 0, audReqOff = 0, audReqLen = 0;
+volatile uint16_t audReqRate = 0;
+volatile uint8_t audVol = 80;
+bool audWant = false, audTask = false;
+void audioTask(void *) {
+  static uint8_t buf[512];
+  uint32_t seen = 0, pos = 0, end = 0;
+  bool on = false;
+  for (;;) {
+    if (audSeq != seen) {                // a new clip (or quiet)
+      seen = audSeq;
+      const uint32_t len = audReqLen; const uint16_t rate = audReqRate;
+      static bool dacBad = false;          // the sound hardware wouldn't start: don't keep trying
+      if (len && rate != dacRate && !dacBad) {
+        if (dacH) { dac_continuous_disable(dacH); dac_continuous_del_channels(dacH); dacH = NULL; dacRate = 0; }
+        dac_continuous_config_t cfg = {};
+        cfg.chan_mask = DAC_CHANNEL_MASK_CH1; cfg.desc_num = 4; cfg.buf_size = 512; cfg.freq_hz = rate; cfg.offset = 0;
+        cfg.clk_src = DAC_DIGI_CLK_SRC_DEFAULT; cfg.chan_mode = DAC_CHANNEL_MODE_SIMUL;
+        if (dac_continuous_new_channels(&cfg, &dacH) == ESP_OK) { dac_continuous_enable(dacH); dacRate = rate; } else { dacH = NULL; dacBad = true; }
+      }
+      pos = audReqOff; end = pos + len;
+      if (on && !(len && dacH)) { memset(buf, 128, sizeof(buf)); size_t w = 0; dac_continuous_write(dacH, buf, sizeof(buf), &w, 50); }
+      on = len && dacH;
+      digitalWrite(SHOW_AMP, on ? LOW : HIGH);
+    }
+    if (!on) { vTaskDelay(5); continue; }
+    uint32_t n = end - pos; if (n > sizeof(buf)) n = sizeof(buf);
+    if (!n) {                            // the end: quiet, and the amplifier off
+      memset(buf, 128, sizeof(buf)); size_t w = 0; dac_continuous_write(dacH, buf, sizeof(buf), &w, 50);
+      digitalWrite(SHOW_AMP, HIGH); on = false; continue;
+    }
+    esp_partition_read(picPart, pos, buf, n);
+    const int v = audVol;
+    for (uint32_t i = 0; i < n; i++) buf[i] = (uint8_t)(128 + (((int)buf[i] - 128) * v) / 100);
+    size_t w = 0;
+    dac_continuous_write(dacH, buf, n, &w, 200);
+    pos += n;
+  }
+}
+void audioStop() {
+  if (!audWant) return;
+  audWant = false; audReqLen = 0; audSeq++;
+}
+void audioStart(uint32_t off, uint32_t len, uint16_t rate, uint8_t vol) {
+  if (!len || rate < 4000 || rate > 32000) { audioStop(); return; }
+  if (!audTask) audTask = xTaskCreatePinnedToCore(audioTask, "sound", 2560, NULL, 1, NULL, 1) == pdPASS;   // started the first time there's sound (its memory is only taken then)
+  if (!audTask) return;
+  audVol = vol; audReqOff = off; audReqLen = len; audReqRate = rate; audWant = true; audSeq++;
+}
+#else
+void audioStop() {}
+void audioStart(uint32_t, uint32_t, uint16_t, uint8_t) {}
+#endif
+
+void showBegin() {                       // in setup(): the backlight dims for fades; the sound
+#if SHOW_BL >= 0
+  ledcAttach(SHOW_BL, 12000, 8); ledcWrite(SHOW_BL, 255);
+#endif
+#if SHOW_AUDIO
+  pinMode(SHOW_AMP, OUTPUT); digitalWrite(SHOW_AMP, HIGH);
+#endif
+  showLoad();
+}
+uint8_t blNow = 255;
+void showBacklight(float level) {        // 0-1 (and the Brightness setting)
+#if SHOW_BL >= 0
+  int d = (int)(255 * level * level * BRIGHTNESS / 100.0f + 0.5f);
+  if (d < 0) d = 0; if (d > 255) d = 255;
+  if (d != blNow) { blNow = (uint8_t)d; ledcWrite(SHOW_BL, d); }
+#endif
+}
+
+// ---- the commands ----
+const char *showCommand(char *line) {
+  if (strcasecmp(line, "SHOWINFO") == 0) {       // SHOWINFO -> SHOW room width height id (id 0: none)
+    static char r[64];
+    snprintf(r, sizeof(r), "SHOW %lu %u %u %lx", (unsigned long)showRoom(), SCR_W, SCR_H, (unsigned long)(showOk ? showH.id : 0));
+    return r;
+  }
+  if (strncasecmp(line, "SHOW ", 5) == 0) {      // SHOW bytes id: a show is coming
+    unsigned long len, id;
+    if (!picPart || sscanf(line + 5, "%lu %lx", &len, &id) != 2 || len < sizeof(ShowHead) || len > showRoom()) return "ERR";
+    audioStop();
+    showOk = false; showUp = true;
+    for (uint8_t i = 0; i < picSlots; i++) if ((uint32_t)i * slotSize < len) picId[i] = 0;   // pictures it covers are gone
+    esp_partition_erase_range(picPart, 0, 4096); showErased = 4096;
+    upLen = len; upPos = 0; upId = id;
+    uploading = true; upLast = millis();
+    return "READY";
+  }
+  if (line[0] == 'B' && line[1] == ' ' && showUp) {   // a piece of the show, in base64
+    uint8_t *data = showData;
+    int n = strlen(line + 2) <= 1064 ? unbase64(line + 2, data) : -1;
+    if (n < 0 || upPos + n > upLen) { showUp = false; uploading = false; return "ERR data"; }
+    while (showErased < upPos + n) {             // make room as it arrives: a big block at a time where it can
+      uint32_t left = upLen - showErased;
+      if ((showErased & 0xFFFF) == 0 && left >= 0x10000) { esp_partition_erase_range(picPart, showErased, 0x10000); showErased += 0x10000; }
+      else { esp_partition_erase_range(picPart, showErased, 4096); showErased += 4096; }
+    }
+    esp_partition_write(picPart, upPos, data, n);
+    upPos += n; upLast = millis();
+    return "K";
+  }
+  if (strcasecmp(line, "SHOWEND") == 0 && showUp) {   // all there: check it, then it's the show
+    showUp = false; uploading = false;
+    if (upPos != upLen) return "ERR incomplete";
+    ShowHead h; esp_partition_read(picPart, 0, &h, sizeof(h));
+    if (h.magic != SHOW_MAGIC || h.size != upLen || h.done != 0xFFFFFFFFUL) return "ERR head";
+    uint32_t f = 2166136261UL; uint8_t *buf = showData; const uint32_t bufSize = sizeof(showData);
+    for (uint32_t p = sizeof(ShowHead); p < upLen; ) {
+      uint32_t n = min(bufSize, upLen - p);
+      esp_partition_read(picPart, p, buf, n);
+      for (uint32_t i = 0; i < n; i++) f = (f ^ buf[i]) * 16777619UL;
+      p += n;
+      if ((p & 0x3FFFF) < n) delay(1);
+    }
+    if (f != h.check) return "ERR check";
+    uint32_t ok = SHOW_DONE; esp_partition_write(picPart, offsetof(ShowHead, done), &ok, 4);
+    showLoad();
+    if (!showOk) return "ERR show";
+    return "OK";
+  }
+  if (strcasecmp(line, "SHOWOFF") == 0) { audioStop(); showForget(); return "OK"; }
+  if (strncasecmp(line, "BAUD ", 5) == 0) {      // BAUD rate: a faster link (back to 115200 by itself after 10 quiet seconds)
+    long r = atol(line + 5);
+    if (r != 115200 && r != 230400 && r != 460800 && r != 921600) return "ERR";
+    Serial.println("OK"); Serial.flush(); delay(30);
+    Serial.updateBaudRate(r);
+    baudFastAt = r == 115200 ? 0 : millis();
+    return NULL;
+  }
+  return NULL;
+}
+void showSerialTick(bool got) {           // from the serial reader: a fast link goes back to normal when it falls quiet
+  if (!baudFastAt) return;
+  if (got) { baudFastAt = millis(); return; }
+  if (millis() - baudFastAt > 10000) { Serial.flush(); Serial.updateBaudRate(115200); baudFastAt = 0; }
+}
+
+#endif
 
 // ---------- cross shapes (styles 8-13), from the Cross Portal Tuner ----------
 // Each cross is a union of simple shapes around its junction (the screen centre). The board works out
@@ -937,6 +1158,9 @@ extern uint8_t *woodBuf;
 const uint8_t *woodRows(int y0) { return planeMap ? planeMap + (woodOff - planesOff) + 16 + (uint32_t)y0 * SCR_W : woodBuf; }   // a strip of the wood (either core)
 
 const char *pictureCommand(char *line) {
+#if SHOW_ON
+  { const char *r = showCommand(line); if (r) return r; }
+#endif
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
     static char info[128];
     int n = snprintf(info, sizeof(info), "PICS %u %u %u", picSlots, SCR_W, SCR_H);
@@ -947,6 +1171,9 @@ const char *pictureCommand(char *line) {
     unsigned slot; unsigned long len, id;
     if (!picPart || sscanf(line + 4, "%u %lu %lx", &slot, &len, &id) != 3 || slot >= picSlots || !len || len > STAGE_SIZE || !id) return "ERR";
     picId[slot] = 0;                             // stop showing the old picture
+#if SHOW_ON
+    if ((showOk && (uint32_t)slot * slotSize < showH.size) || showUp) showForget();   // pictures and the Picture Display share this room
+#endif
     upSlot = slot; upLen = len; upId = id; upPos = 0;
     esp_partition_erase_range(picPart, stageOff, (len + 4095) & ~4095UL);   // only what this picture needs
     uploading = true; upLast = millis();
@@ -991,7 +1218,7 @@ const char *pictureCommand(char *line) { return strcasecmp(line, "INFO") == 0 ? 
 //              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar [space1..space4 [crossfill [ripple [portrait [tone [warm]]]]]]]]]   (reply: OK or ERR)
 //          scenes: 255 the portal, 0-7 pictures, 128-135 portal around a picture, 200-216 another style (200 + style number)
 // Pictures: INFO, then IMG slot bytes id / D base64... / END   (see "pictures" above)
-char cmd[384];
+char cmd[SHOW_ON ? 1100 : 384];
 uint16_t cmdLen = 0;
 
 uint32_t rebootAt = 0;                   // set by the REBOOT command
@@ -1086,6 +1313,10 @@ const char* handleCommand(char *line) {   // returns the reply to send back
   if (strncasecmp(line, "XCOL ", 5) == 0) {   // XCOL rgb: the cross outline colour (16777216: the main colours; no reply, applied with the SET that follows)
     long c = atol(line + 5); pendCol = (c < 0 || c > 0xFFFFFF) ? 0x1000000 : (uint32_t)c; pendXcol = true;
     return NULL;
+  }
+  if (strncasecmp(line, "CFR ", 4) == 0) {   // CFR background spacing target colours twist wobble flow: the cross fractals (no reply; applied with the SET that follows)
+    char *q = line + 4; for (int i = 0; i < 7; i++) { long v = strtol(q, &q, 10); pendCf[i] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
+    pendCfOn = true; return NULL;
   }
   if (strcasecmp(line, "PING") == 0) return "PORTAL";
 #if defined(ESP32)
@@ -1235,13 +1466,14 @@ void saveScenes() {
 }
 void saveExtra() {
   Extra x; x.id = BUILD_ID ^ 0xE7A00005UL; for (int j = 0; j < 4; j++) x.ripC[j] = RIP_C[j]; x.rimW = RIM_W; x.crossOut = CROSS_OUT; x.crossCol = CROSS_COL;
+  x.cf[0] = CF_BG; x.cf[1] = CF_GAP; x.cf[2] = CF_TGT; x.cf[3] = CF_PAL; x.cf[4] = CF_TWIST; x.cf[5] = CF_WOB; x.cf[6] = CF_FLOW;
   EEPROM.put(EXTRA_AT, x);
 #if defined(ESP32) || defined(ESP8266) || defined(ARDUINO_ARCH_RP2040)
   EEPROM.commit();
 #endif
 }
 void loadScenes() {                      // after loadSettings()
-  { Extra x; EEPROM.get(EXTRA_AT, x); if (x.id == (BUILD_ID ^ 0xE7A00005UL)) { for (int j = 0; j < 4; j++) RIP_C[j] = x.ripC[j] & 0xFFFFFF; if (x.rimW >= 25 && x.rimW <= 200) RIM_W = x.rimW; if (validOut(x.crossOut)) CROSS_OUT = x.crossOut; CROSS_COL = x.crossCol > 0xFFFFFF ? 0x1000000 : x.crossCol; } }
+  { Extra x; EEPROM.get(EXTRA_AT, x); if (x.id == (BUILD_ID ^ 0xE7A00005UL)) { for (int j = 0; j < 4; j++) RIP_C[j] = x.ripC[j] & 0xFFFFFF; if (x.rimW >= 25 && x.rimW <= 200) RIM_W = x.rimW; if (validOut(x.crossOut)) CROSS_OUT = x.crossOut; CROSS_COL = x.crossCol > 0xFFFFFF ? 0x1000000 : x.crossCol; cfSet(x.cf); } }
   grabLook(mainLook); curLook = -1;
   SceneSaved z; EEPROM.get(128, z);
   if (z.id == (BUILD_ID ^ 0x5CE20007UL)) for (int k = 0; k < 8; k++) {
@@ -1277,6 +1509,9 @@ const uint8_t TAP_STYLES[] = { 0, 1, 2, 3, 4, 6, 14, 16 };   // styles a tap ste
 const int TAP_N = sizeof(TAP_STYLES);
 
 void onTap() {
+#if SHOW_ON
+  if (STYLE == 22) { showSkip = true; return; }   // the Picture Display: on to the next picture
+#endif
 #if TAP_PIN >= 0
   if (SCENE_COUNT >= 2 && !TAP_OFF) {    // tap for next scene: only a tap moves on
     if (tapCur != tapNext) tapCur = tapNext;                         // (still fading: finish that one first)
@@ -1966,6 +2201,7 @@ void frameStart() {
     if (pendRim) { pendRim = false; if (pendRimW != RIM_W) { RIM_W = pendRimW; saveExtra(); buildParams(); } }
     if (pendXout) { pendXout = false; if (pendOut != CROSS_OUT) { CROSS_OUT = pendOut; saveExtra(); } }
     if (pendXcol) { pendXcol = false; if (pendCol != CROSS_COL) { CROSS_COL = pendCol; saveExtra(); } }
+    if (pendCfOn) { pendCfOn = false; cfSet(pendCf); saveExtra(); }
     grabLook(mainLook); curLook = -1;      // the main settings are loaded now
     buildTone();
     if (spaceLUT) buildSpaceLUT();       // space colours go through the colour curve too
@@ -1989,6 +2225,7 @@ void frameStart() {
   if (isCross && crossAvailable() && edgeBuf) prepareCross();
   crossOn = isCross && crossReady;
   woodOn = crossOn && STYLE == 17;
+  if (STYLE == 20 || STYLE == 21) cfPrep(STYLE);   // the cross fractals: this frame's zoom and colours
   look = crossOn ? CROSS_FILL : isCross ? 0 : STYLE;   // crosses: the chosen style is drawn inside (the Wooden cross: behind)
   if (crossOn && ((look >= 7 && look <= 10) || look == 18) && !woodOn) look = 0;   // the warm glow and the skies are only for the Wooden cross
   if (woodOn && look == 11) look = 7;                            // solid colour is for the glowing crosses
@@ -2078,6 +2315,7 @@ void frameEnd() {
   cloudDrift += 6 * min(8.0f, (now - lastMs) / 1000.0f) * (SPEED / 0.12f);   // clouds drift by the clock, faster with a higher Spin speed
   if (cloudDrift > 1e6f) cloudDrift = 0;
   ripplePh = fmodf(ripplePh + 0.3f * min(8.0f, (now - lastMs) / 1000.0f) * (SPEED / 0.12f), 1.0f);   // Ripple rings move by the clock, faster with a higher Spin speed
+  cfClock(min(8.0f, (now - lastMs) / 1000.0f));   // the cross fractals
   lastMs = now;
   if (spaceT > 1e7) spaceT = 0;
   if (t > TWO_PI * 100) t -= TWO_PI * 100;   // wrap seamlessly so it can run forever
@@ -2752,8 +2990,292 @@ template <int L> static inline __attribute__((always_inline)) void portalRows(in
   }
 }
 
+// ---------- Cross fractals: 20 Cross of Crosses (each cross made of smaller crosses, zooming in forever), 21 Cross Tunnel ----------
+// CF_BG: what fills the space between the crosses (0 plain, 1 stars, 2 rays of light, 3 ripples, 4 plasma, 5 stained glass, 6 little crosses)
+// CF_GAP: how much of its square each small cross fills (55-100 %); CF_TGT: where the zoom goes (0 where the beams meet, 1 down the long beam)
+// CF_PAL: colours (0 portal blue, 1 fire, 2 rainbow, 3 gold, 4 purple space); CF_TWIST: the tunnel's turn per cross (degrees);
+// CF_WOB: the tunnel's ripple (%); CF_FLOW: how fast the colours run (%)
+uint8_t cfR[256], cfG[256], cfB[256];    // the colours, 0-1 round the palette (brightness included)
+int     cfPalBuilt = -1, cfBriBuilt = -1;
+float   cfZ = 0, cfTm = 0, cfPh = 0;     // zoom (0-1 per loop), seconds, colour flow
+static inline __attribute__((always_inline)) uint32_t cfHash(int a, int b) { return hash32(((uint32_t)a * 73856093u) ^ ((uint32_t)b * 19349663u)); }
+static inline __attribute__((always_inline)) float cfH01(int a, int b) { return (cfHash(a, b) & 65535) / 65536.0f; }
+static inline __attribute__((always_inline)) float cfFrac(float x) { return x - floorf(x); }
+static inline __attribute__((always_inline)) float cfSin(float x) {   // a quick sine, good to about 0.001
+  x = x * 0.159155f; x -= floorf(x + 0.5f);   // -0.5 .. 0.5 turns
+  float y = 8 * x - 16 * x * fabsf(x);
+  return 0.225f * (y * fabsf(y) - y) + y;
+}
+static inline __attribute__((always_inline)) float cfExp(float x) {   // a quick e^x for x <= 0 (about 2 % off)
+  if (x < -15) return 0;
+  float y = 1 + x * 0.0625f; y *= y; y *= y; y *= y; y *= y; return y;
+}
+static inline __attribute__((always_inline)) float cfAtan2(float y, float x) {   // a quick atan2, good to about 0.005 rad
+  const float ax = fabsf(x), ay = fabsf(y), mx = ax > ay ? ax : ay, mn = ax > ay ? ay : ax;
+  if (mx < 1e-9f) return 0;
+  const float a = mn / mx, s = a * a;
+  float r = ((-0.0464964749f * s + 0.15931422f) * s - 0.327622764f) * s * a + a;
+  if (ay > ax) r = 1.57079637f - r;
+  if (x < 0) r = 3.14159274f - r;
+  return y < 0 ? -r : r;
+}
+static const uint8_t cfP[5][6][3] = {   // the colours: portal blue, fire, (rainbow), gold, purple space
+    { { 0, 5, 26 }, { 13, 89, 242 }, { 140, 242, 255 }, { 255, 255, 255 }, { 51, 26, 179 }, { 0, 5, 26 } },
+    { { 13, 0, 0 }, { 153, 13, 0 }, { 255, 115, 13 }, { 255, 230, 102 }, { 204, 51, 0 }, { 13, 0, 0 } },
+    { { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 } },
+    { { 20, 10, 0 }, { 140, 82, 13 }, { 255, 217, 115 }, { 255, 255, 217 }, { 153, 89, 13 }, { 20, 10, 0 } },
+    { { 5, 0, 20 }, { 89, 13, 153 }, { 242, 102, 242 }, { 102, 179, 255 }, { 38, 13, 115 }, { 5, 0, 20 } } };
+uint32_t cfPalColor(int p, float t) {    // one of the colours at 0-1 round it, as 0xRRGGBB (for the home page)
+  t -= floorf(t); float c[3];
+  if (p == 2) { for (int j = 0; j < 3; j++) c[j] = 255 * (0.5f + 0.5f * cosf(6.2832f * (t + 0.33f * j))); }
+  else { const float s = t * 5; const int a = (int)s; const float u = s - a, u2 = u * u * (3 - 2 * u); for (int j = 0; j < 3; j++) c[j] = cfP[p][a][j] + (cfP[p][a + 1][j] - cfP[p][a][j]) * u2; }
+  return ((uint32_t)c[0] << 16) | ((uint32_t)c[1] << 8) | (uint32_t)c[2];
+}
+void cfBuildPal() {
+  const int p = CF_PAL < 5 ? CF_PAL : 0;
+  const float k = BRIGHTNESS / 100.0f;
+  for (int i = 0; i < 256; i++) {
+    const float t = i / 256.0f;
+    float c[3];
+    if (p == 2) { for (int j = 0; j < 3; j++) c[j] = 255 * (0.5f + 0.5f * cosf(6.2832f * (t + 0.33f * j))); }
+    else {
+      const float s = t * 5; const int a = (int)s; const float u = s - a, u2 = u * u * (3 - 2 * u);
+      for (int j = 0; j < 3; j++) c[j] = cfP[p][a][j] + (cfP[p][a + 1][j] - cfP[p][a][j]) * u2;
+    }
+    cfR[i] = (uint8_t)(c[0] * k); cfG[i] = (uint8_t)(c[1] * k); cfB[i] = (uint8_t)(c[2] * k);
+  }
+  cfPalBuilt = CF_PAL; cfBriBuilt = BRIGHTNESS;
+}
+static inline __attribute__((always_inline)) int cfIdx(float x) { return (int)(cfFrac(x) * 256) & 255; }
+
+// per frame
+float cfSC, cfOX, cfOY, cfFU, cfFV, cfCX, cfCY, cfU0, cfV0, cfDU, cfPPU;   // Cross of Crosses: the scale of each smaller cross, where it sits, the zoom point
+int   cfUp = 3;
+int   cfLvR[24], cfLvG[24], cfLvB[24], cfInR[24], cfInG[24], cfInB[24], cfEdR[24], cfEdG[24], cfEdB[24];   // colours for each depth
+float cfLvT[24];
+float cfTR = 0.55f, cfCt, cfSt, cfRc, cfRs, cfS, cfU, cfOy, cfK4, cfC4, cfS4, cfSc0, cfIS;   // Cross Tunnel: size of each cross in the one around it, its turn, the zoom turn
+uint8_t cfCore[64], cfGlow[64], cfHalo[64];
+uint8_t cfJit[256][3];                  // stained glass: where each pane's centre sits in its square, and its colour (0-255)   // the neon outline: how bright at 0-63 pixels from a cross edge (x 4 for the halo)
+
+void cfPrepWH(int look, float W, float H) {   // before each frame (W x H: the screen, or a little picture of it)
+  if (cfPalBuilt != CF_PAL || cfBriBuilt != BRIGHTNESS) cfBuildPal();
+  static bool tabs = false;
+  if (!tabs) {
+    for (int i = 0; i < 64; i++) { cfCore[i] = (uint8_t)(200 * expf(-i / 1.1f)); cfGlow[i] = (uint8_t)(230 * expf(-i / 3.5f)); cfHalo[i] = (uint8_t)(90 * expf(-i * 4 / 10.0f)); }
+    for (int k = 0; k < 256; k++) { cfJit[k][0] = (uint8_t)(cfH01(k >> 4, k & 15) * 255); cfJit[k][1] = (uint8_t)(cfH01((k & 15) + 5, (k >> 4) + 2) * 255); cfJit[k][2] = (uint8_t)(cfHash(k + 3, k * 7 + 11) & 255); }
+    tabs = true;
+  }
+  if (look == 20) {
+    const float g = CF_GAP / 100.0f;
+    cfSC = g / 4; cfOX = (1 - 0.75f * g) / 2; cfOY = (1 - g) / 2;
+    const float z = cfFrac(cfZ);
+    const int ci = 1, cj = CF_TGT ? 2 : 1;
+    cfCX = ci + cfOX; cfCY = cj + cfOY;
+    cfFU = cfCX / (1 - cfSC); cfFV = cfCY / (1 - cfSC);
+    const float s = expf(z * logf(1 / cfSC)), view = 4.6f * (W > H ? 0.78f : 1.0f);
+    cfPPU = H / view * s;
+    float u = cfFU - (W / 2) / cfPPU, v = cfFV - (H / 2) / cfPPU, du = 1 / cfPPU, ppu = cfPPU;
+    for (int k = 0; k < cfUp; k++) { u = cfCX + u * cfSC; v = cfCY + v * cfSC; du *= cfSC; ppu /= cfSC; }
+    cfU0 = u; cfV0 = v; cfDU = du; cfPPU = ppu;
+    for (int d = 0; d < 24; d++) {      // depth -cfUp + d
+      const float t = (d - cfUp) - z;
+      cfLvT[d] = t;
+      const float kk = (0.26f + 0.10f * sinf(t * 1.7f)) * (CF_BG ? 0.45f : 1.0f);
+      int i = cfIdx(t * 0.22f + cfPh);
+      cfLvR[d] = (int)(cfR[i] * kk); cfLvG[d] = (int)(cfG[i] * kk); cfLvB[d] = (int)(cfB[i] * kk);
+      i = cfIdx(t * 0.22f + cfPh + 0.08f); cfEdR[d] = cfR[i]; cfEdG[d] = cfG[i]; cfEdB[d] = cfB[i];
+      i = cfIdx(t * 0.22f + cfPh + 0.04f); cfInR[d] = cfR[i] * 230 >> 8; cfInG[d] = cfG[i] * 230 >> 8; cfInB[d] = cfB[i] * 230 >> 8;
+    }
+  } else {
+    const float z = cfFrac(cfZ * 1.6f), tw = CF_TWIST * 0.0174533f;
+    cfS = expf(z * logf(1 / cfTR));
+    const float rot = -z * tw;
+    cfRc = cosf(rot); cfRs = sinf(rot); cfCt = cosf(tw); cfSt = sinf(tw);
+    cfU = (W < H ? W : H) * 0.42f; cfOy = H * 0.42f;
+    cfK4 = cfTR * cfTR * cfTR * cfTR; cfC4 = cosf(4 * tw); cfS4 = sinf(4 * tw); cfSc0 = 1 / (cfS * cfK4); cfIS = 1 / cfS;
+    for (int d = 0; d < 24; d++) {      // level -4 + d
+      const float t = (d - 4) - z;
+      cfLvT[d] = t;
+      const float band = 0.5f + 0.5f * sinf(t * 3.1416f + cfTm * 2.5f), k = 0.07f + 0.10f * band;
+      int i = cfIdx(t * 0.13f + cfPh), i2 = cfIdx(t * 0.13f + cfPh + 0.5f);
+      cfLvR[d] = (int)(cfR[i2] * k); cfLvG[d] = (int)(cfG[i2] * k); cfLvB[d] = (int)(cfB[i2] * k);
+      cfEdR[d] = cfR[i]; cfEdG[d] = cfG[i]; cfEdB[d] = cfB[i];
+    }
+  }
+}
+
+
+// what fills the space between the crosses, at a point in that level's own terms (u, v: the cross is 3 x 4), adding to r g b (0-255)
+static inline void cfBack(float u, float v, float ppu, float t, int &r, int &g, int &b) {
+  const float dx = u - 1.5f, dy = v - 1.3333f;
+  switch (CF_BG) {
+    case 1: {                            // stars, twinkling, and a faint nebula
+      const int N = 7, gx = (int)floorf(u * N), gy = (int)floorf(v * N);
+      int lum = 0;
+      if (ppu >= N * 7) {
+        const uint32_t h = cfHash(gx, gy + (int)lroundf(t) * 31);
+        if ((h & 255) < 140) {
+          const float sx = (gx + 0.2f + 0.6f * cfH01(gy, gx)) / N, sy = (gy + 0.2f + 0.6f * cfH01(gx + 7, gy + 3)) / N;
+          const float ex = (u - sx) * ppu, ey = (v - sy) * ppu, sz = 0.7f + 1.6f * ((h >> 8) & 255) / 255.0f, d2 = (ex * ex + ey * ey) / (sz * sz);
+          if (d2 < 4) {
+            const float tw = 0.55f + 0.45f * cfSin(cfTm * (1.5f + 3 * (h & 255) / 255.0f) + (h >> 16));
+            lum = (int)(255 * cfExp(-d2) * tw);
+          }
+        }
+      }
+      const float neb = 0.12f * (0.5f + 0.5f * cfSin(u * 2.1f + v * 1.3f + cfTm * 0.2f));
+      const int i = cfIdx(t * 0.22f + cfPh + 0.3f);
+      r += lum + (int)(cfR[i] * neb); g += lum + (int)(cfG[i] * neb); b += lum + (int)(cfB[i] * neb); return;
+    }
+    case 2: {                            // rays of light from the middle of each cross
+      const float a = cfAtan2(dy, dx), rr = sqrtf(dx * dx + dy * dy);
+      float c1 = 0.5f + 0.5f * cfSin(a * 14 + cfTm * 0.6f + 1.5708f), c2 = 0.5f + 0.5f * cfSin(a * 7 - cfTm * 0.35f + 1.5708f);
+      float c1_2 = c1 * c1, c2_2 = c2 * c2, c2_4 = c2_2 * c2_2;
+      const float ray = c1_2 * c1_2 * c1 * 0.8f + c2_4 * c2_4 * 0.5f, w = ray * cfExp(-rr * 0.45f);
+      const int i = cfIdx(t * 0.22f + cfPh + 0.15f);
+      r += (int)(w * (153 + 0.4f * cfR[i])); g += (int)(w * (140 + 0.4f * cfG[i])); b += (int)(w * (102 + 0.4f * cfB[i])); return;
+    }
+    case 3: {                            // ripples spreading out from each cross
+      const float rr = sqrtf(dx * dx + dy * dy), s = 0.5f + 0.5f * cfSin(rr * 16 - cfTm * 3), w = s * s * s * cfExp(-rr * 0.35f) * 0.8f;
+      const int i = cfIdx(t * 0.22f + cfPh + rr * 0.08f);
+      r += (int)(cfR[i] * w); g += (int)(cfG[i] * w); b += (int)(cfB[i] * w); return;
+    }
+    case 4: {                            // plasma
+      const float rr = sqrtf(dx * dx + dy * dy);
+      const float p = cfSin(u * 3.1f + cfTm) + cfSin(v * 2.3f - cfTm * 1.3f) + cfSin((u + v) * 2.2f + cfTm * 0.7f) + cfSin(rr * 4.5f - cfTm);
+      const int i = cfIdx(p * 0.18f + t * 0.22f + cfPh);
+      r += cfR[i] * 140 >> 8; g += cfG[i] * 140 >> 8; b += cfB[i] * 140 >> 8; return;
+    }
+    case 5: {                            // stained glass: coloured panes with dark lead between them
+      const int N = 3, gx = (int)floorf(u * N), gy = (int)floorf(v * N);
+      float d1 = 99, d2 = 99; uint32_t id = 0;
+      for (int oy = -1; oy <= 1; oy++) for (int ox = -1; ox <= 1; ox++) {
+        const int ix = gx + ox, iy = gy + oy, k = ((ix & 15) << 4) | (iy & 15);
+        const float sx = (ix + 0.15f + cfJit[k][0] * (0.7f / 255)) * (1.0f / N), sy = (iy + 0.15f + cfJit[k][1] * (0.7f / 255)) * (1.0f / N);
+        const float ex = u - sx, ey = v - sy, dd = ex * ex + ey * ey;
+        if (dd < d1) { d2 = d1; d1 = dd; id = k; } else if (dd < d2) d2 = dd;
+      }
+      float lead = (sqrtf(d2) - sqrtf(d1)) * ppu / 2.5f; if (lead > 1) lead = 1;
+      const float f = cfJit[id][2] * (1.0f / 255), w = lead * (0.45f + 0.25f * cfSin(cfTm * 0.8f + f * 20));
+      const int i = cfIdx(f * 0.9f + t * 0.22f + cfPh);
+      r += (int)(cfR[i] * w); g += (int)(cfG[i] * w); b += (int)(cfB[i] * w); return;
+    }
+    case 6: {                            // little crosses, like a woven pattern
+      const float N = 8, fx = u * N - floorf(u * N) - 0.5f, fy = v * N - floorf(v * N) - 0.5f, ax = fabsf(fx), ay = fabsf(fy);
+      if ((ax < 0.09f && ay < 0.32f) || (ay < 0.09f && ax < 0.24f && fy > -0.2f && fy < 0.02f)) {
+        const float w = 0.35f + 0.15f * cfSin(cfTm * 2 + u * 3 + v * 2);
+        const int i = cfIdx(t * 0.22f + cfPh + 0.5f);
+        r += (int)(cfR[i] * w); g += (int)(cfG[i] * w); b += (int)(cfB[i] * w);
+      }
+      return;
+    }
+  }
+}
+
+static inline __attribute__((always_inline)) float cfDist(float u, float v) {   // how far outside the cross (0 inside): the long beam [1,2] x [0,4] and the arms [0,3] x [1,2]
+  const float ax = u < 1 ? 1 - u : u > 2 ? u - 2 : 0, ay = v < 0 ? -v : v > 4 ? v - 4 : 0;
+  const float bx = u < 0 ? -u : u > 3 ? u - 3 : 0, by = v < 1 ? 1 - v : v > 2 ? v - 2 : 0;
+  const float a2 = ax * ax + ay * ay, b2 = bx * bx + by * by;
+  return sqrtf(a2 < b2 ? a2 : b2);
+}
+
+static inline __attribute__((always_inline)) uint16_t cfPixCC(float u, float v) {   // one pixel of the Cross of Crosses (u, v: where it is in the outermost cross's terms)
+  const float SC = cfSC, OX = cfOX, OY = cfOY, iSC = 1 / cfSC;
+  float ppu = cfPPU;
+  int d = 0, r, g, b;
+  for (;;) {
+    if (!((u >= 1 && u <= 2 && v >= 0 && v <= 4) || (u >= 0 && u <= 3 && v >= 1 && v <= 2))) {   // outside the cross at this depth: the space between
+      const float dd = cfDist(u, v);
+      r = cfLvR[d]; g = cfLvG[d]; b = cfLvB[d];
+      if (CF_BG) cfBack(u, v, ppu, cfLvT[d], r, g, b);
+      const float e = 1 - dd * ppu * (1 / 3.5f);
+      if (e > 0) { r += (int)(cfEdR[d] * e); g += (int)(cfEdG[d] * e); b += (int)(cfEdB[d] * e); }
+      break;
+    }
+    if (ppu < 2.0f || d >= 23) { r = cfInR[d]; g = cfInG[d]; b = cfInB[d]; break; }   // smaller than a couple of pixels: just its colour
+    const int fi = (int)u, fj = (int)v;   // (inside the cross: never below 0)
+    u = (u - fi - OX) * iSC; v = (v - fj - OY) * iSC; ppu *= SC; d++;
+  }
+  return to565i(r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b);
+}
+static inline __attribute__((always_inline)) uint16_t cfAvg565(uint16_t a, uint16_t b) { return ((a & 0xF7DE) >> 1) + ((b & 0xF7DE) >> 1); }
+
+HOT void cfRowCC(int y, uint16_t *p) {    // one row of the Cross of Crosses (big screens: every other pixel worked out, the one between blended)
+  const int W = SCR_W; const float v = cfV0 + y * cfDU;
+  if (W < 400) { for (int x = 0; x < W; x++) p[x] = cfPixCC(cfU0 + x * cfDU, v); return; }
+  uint16_t c0 = cfPixCC(cfU0, v);
+  for (int x = 0; x < W; x += 2) {
+    const uint16_t c2 = x + 2 < W ? cfPixCC(cfU0 + (x + 2) * cfDU, v) : c0;
+    p[x] = c0; if (x + 1 < W) p[x + 1] = cfAvg565(c0, c2);
+    c0 = c2;
+  }
+}
+HOT void cfRender(int y0, int rows, uint16_t *strip, void (*row)(int, uint16_t *)) {   // big screens: every other row worked out, the one between blended
+  const int W = SCR_W;
+  if (W < 400 && SCR_H < 400) { for (int y = y0; y < y0 + rows; y++) row(y, strip + (y - y0) * W); return; }
+  for (int y = y0; y < y0 + rows; y++) if (!(y & 1)) row(y, strip + (y - y0) * W);
+  for (int y = y0; y < y0 + rows; y++) if (y & 1) {
+    uint16_t *p = strip + (y - y0) * W;
+    if (y - 1 < y0 || y + 1 >= y0 + rows) { row(y, p); continue; }   // at the strip's edge: worked out
+    const uint16_t *a = p - W, *b = p + W;
+    for (int x = 0; x < W; x++) p[x] = cfAvg565(a[x], b[x]);
+  }
+}
+HOT void renderCrossOfCrosses(int y0, int rows, uint16_t *strip) { cfRender(y0, rows, strip, cfRowCC); }
+
+static inline __attribute__((always_inline)) bool cfInTunnelCross(float x, float y) { return (fabsf(x) <= 0.2f && y >= -1.0f && y <= 2.1f) || (fabsf(x) <= 0.78f && fabsf(y) <= 0.2f); }
+static inline __attribute__((always_inline)) float cfBox(float x, float y, float cy, float hx, float hy) {
+  const float dx = fabsf(x) - hx, dy = fabsf(y - cy) - hy, ox = dx > 0 ? dx : 0, oy = dy > 0 ? dy : 0;
+  const float in = dx > dy ? dx : dy;
+  return sqrtf(ox * ox + oy * oy) + (in < 0 ? in : 0);
+}
+
+static inline __attribute__((always_inline)) uint16_t cfPixTun(float px, float py) {   // one pixel of the Cross Tunnel (px, py: from the zoom point, in cross units)
+  const float U = cfU, TR = cfTR, iTR = 1 / cfTR, ct = cfCt, st = cfSt, wob = CF_WOB * 0.0006f;
+  if (wob > 0) {
+    const float r = sqrtf(px * px + py * py);
+    const float qx = px + wob * cfSin(py * 5 + cfTm * 1.3f + r * 3), qy = py + wob * cfSin(px * 5 - cfTm * 1.1f + r * 3);
+    px = qx; py = qy;
+  }
+  float wx = (px * cfRc - py * cfRs) * cfIS, wy = (px * cfRs + py * cfRc) * cfIS;
+  { const float ax = (wx * cfC4 - wy * cfS4) * cfK4, ay = (wx * cfS4 + wy * cfC4) * cfK4; wx = ax; wy = ay; }   // start four crosses further out: the corners are crosses too
+  float scale = cfSc0;                   // screen units per cross unit, / U
+  int d = 0;
+  while (d < 23 && cfInTunnelCross(wx, wy) && U * scale >= 1.5f) {
+    const float ax = (wx * ct + wy * st) * iTR, ay = (-wx * st + wy * ct) * iTR;
+    wx = ax; wy = ay; scale *= TR; d++;
+  }
+  float sd = cfBox(wx, wy, 0.55f, 0.2f, 1.55f); { const float s2 = cfBox(wx, wy, 0, 0.78f, 0.2f); if (s2 < sd) sd = s2; }
+  int pd = (int)(fabsf(sd) * U * scale); if (pd > 63) pd = 63;
+  const int core = cfCore[pd], k = cfGlow[pd] + cfHalo[pd >> 2];
+  const int r = cfLvR[d] + (cfEdR[d] * k >> 8) + core, g = cfLvG[d] + (cfEdG[d] * k >> 8) + core, b = cfLvB[d] + (cfEdB[d] * k >> 8) + core;
+  return to565i(r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b);
+}
+
+HOT void cfRowTun(int y, uint16_t *p) {   // one row of the Cross Tunnel
+  const int W = SCR_W; const float iU = 1 / cfU, ox = W / 2.0f, py = (y - cfOy) * iU;
+  if (W < 400) { for (int x = 0; x < W; x++) p[x] = cfPixTun((x - ox) * iU, py); return; }
+  uint16_t c0 = cfPixTun(-ox * iU, py);
+  for (int x = 0; x < W; x += 2) {
+    const uint16_t c2 = x + 2 < W ? cfPixTun((x + 2 - ox) * iU, py) : c0;
+    p[x] = c0; if (x + 1 < W) p[x + 1] = cfAvg565(c0, c2);
+    c0 = c2;
+  }
+}
+HOT void renderCrossTunnel(int y0, int rows, uint16_t *strip) { cfRender(y0, rows, strip, cfRowTun); }
+
+void cfPrep(int look) { cfPrepWH(look, SCR_W, SCR_H); }
+
+void cfClock(float secs) {               // by the clock, from frameEnd
+  cfZ += secs * SPEED; if (cfZ > 1000) cfZ -= 1000;
+  cfTm += secs; if (cfTm > 100000) cfTm = 0;
+  cfPh += secs * (CF_FLOW / 100.0f * 0.15f + (STYLE == 21 ? 0.02f : 0)); if (cfPh > 1000) cfPh -= 1000;
+}
+
 HOT void renderStrip(int y0, int rows, uint16_t *strip) {
   const SceneLook &LKc = lk[CORE_ID()]; const uint8_t look = LKc.look; const bool crossOn = LKc.cross, woodOn = LKc.wood;   // this core's style
+  if (look == 20 && !crossOn) { renderCrossOfCrosses(y0, rows, strip); return; }   // the cross fractals
+  if (look == 21 && !crossOn) { renderCrossTunnel(y0, rows, strip); return; }
   const int8_t *edgeBuf = edgeRows(y0);
   const int phase = (int)(t * 1.5f * 40.74f), phase2 = (int)(-t * 40.74f);
   uint16_t *p = strip;
@@ -2997,6 +3519,116 @@ void balanceCores(uint32_t frameUs) {    // move rows toward whichever core is w
   wait0Us = 0; wait1Us = 0;
 }
 
+#if SHOW_ON
+// ---- playing it (core 0, in place of drawing a style) ----
+struct ShowDec { uint32_t off, len, pos; };
+ShowDec showIn;
+int showB, showY0, showRow, showRows, showScale, showJW;
+UINT showJpgIn(JDEC *jd, BYTE *buf, UINT n) {
+  if (n > showIn.len - showIn.pos) n = showIn.len - showIn.pos;
+  if (buf) esp_partition_read(picPart, showIn.off + showIn.pos, buf, n);
+  showIn.pos += n;
+  return n;
+}
+void showStripStart() {
+  xSemaphoreTake(freeSem[showB], portMAX_DELAY);
+  showRows = min(STRIP, SCR_H - showY0);
+  stripY0[showB] = showY0; stripRows[showB] = showRows; stripHelp[showB] = 0;
+  xSemaphoreGive(goSem[showB]);
+  showRow = 0;
+}
+void showEmit(const uint16_t *line) {    // one screen line into the strip being filled (sent on when full)
+  if (showY0 >= SCR_H) return;
+  memcpy(stripBuf[showB] + showRow * SCR_W, line, SCR_W * 2);
+  if (++showRow == showRows) {
+    swapBytes565(stripBuf[showB], SCR_W * showRows);
+    xSemaphoreGive(readySem[showB]);
+    showB ^= 1; showY0 += showRows;
+    if (showY0 < SCR_H) showStripStart();
+  }
+}
+float showLevel = 1;
+UINT showJpgOut(JDEC *jd, void *bmp, JRECT *r) {   // a block of pixels into the band; a finished band row goes to the screen
+  BYTE *c = (BYTE *)bmp;
+  const int top = r->top & ~15;
+  for (int y = r->top; y <= r->bottom; y++)
+    for (int x = r->left; x <= r->right; x++, c += 3)
+      showBand[(y - top) * showJW + x] = to565raw(c[0], c[1], c[2]);
+  if (r->right >= showJW - 1) {
+    for (int y = r->top; y <= r->bottom; y++) {
+      const uint16_t *src = showBand + (y - top) * showJW;
+      if (showScale == 1) showEmit(src);
+      else { for (int x = 0; x < showJW; x++) showLine[2 * x] = showLine[2 * x + 1] = src[x]; showEmit(showLine); showEmit(showLine); }
+    }
+  }
+  return 1;
+}
+void showFrame(uint8_t &b) {             // one frame of the show (or black, with none)
+  showB = b; showY0 = 0;
+  showStripStart();
+  bool drawn = false;
+  if (!showLine) showLine = (uint16_t *)malloc(SCR_WMAX * 2);
+  if (showOk && showH.w == SCR_W && showH.h == SCR_H && showLine) {
+    if (!showBand) {                       // a band of the picture: the scene-fade strip when it's big enough (no scenes here), or its own
+      showOwnBand = !(picBuf && STRIP >= 16);
+      showBand = showOwnBand ? (uint16_t *)malloc(SCR_WMAX * 16 * 2) : picBuf;
+    }
+    if (!showPool) {                       // the JPEG decoder's work area: core 1's fade strip, or its own (not the pictures' one: a picture may arrive meanwhile)
+      showOwnPool = !(picBuf2 && SCR_WMAX * STRIP * 2 >= SHOW_POOL);
+      showPool = showOwnPool ? (uint8_t *)malloc(SHOW_POOL) : (uint8_t *)picBuf2;
+    }
+    if (showBand && showPool) {
+      uint32_t now = millis();
+      const ShowClip *c = &showClips[showOrder[showPos % showH.nClips]];
+      uint32_t dur = (uint32_t)c->nFrames * c->frameMs * c->repeats;
+      if (showSkip || now - showClipAt >= dur) {  // the next clip
+        if (showSkip) { showSkip = false; showClipAt = now; } else showClipAt += dur;
+        if (now - showClipAt > 2000) showClipAt = now;
+        if (++showPos >= showH.nClips) { showPos = 0; if (showH.shuffle) showShuffle(); }
+        c = &showClips[showOrder[showPos]];
+        dur = (uint32_t)c->nFrames * c->frameMs * c->repeats;
+        showLastClip = 255;
+      }
+      const uint32_t e = now - showClipAt;
+      if (showLastClip != showPos) { showLastClip = showPos; if (c->audioLen) audioStart(c->audioOff, c->audioLen, c->audioRate, showH.vol); else audioStop(); }
+      float half = showH.nClips > 1 ? showH.fadeMs / 2.0f : 0;   // fading through black, by the backlight
+      if (half > dur / 3.0f) half = dur / 3.0f;
+      showLevel = 1;
+      if (half > 0) { if (e < half) showLevel = e / half; if (dur - e < half) showLevel = min(showLevel, (dur - e) / half); }
+      const int fi = (int)((e / c->frameMs) % c->nFrames);
+      uint32_t fe[2]; esp_partition_read(picPart, c->framesOff + fi * 8UL, fe, 8);
+      JDEC jd;
+      showIn.off = fe[0]; showIn.len = fe[1]; showIn.pos = 0; showScale = c->scale;
+      if (fe[0] + fe[1] <= showH.size && jd_prepare(&jd, showJpgIn, showPool, SHOW_POOL, NULL) == JDR_OK
+          && jd.width * c->scale == SCR_W && jd.height * c->scale == SCR_H) {
+        showJW = jd.width;
+        showBacklight(showLevel);
+        jd_decomp(&jd, showJpgOut, 0);
+        drawn = true;
+      }
+    }
+  }
+  if (!drawn) { showBacklight(1); audioStop(); }
+  if (showLine) memset(showLine, 0, SCR_W * 2);
+  while (showY0 < SCR_H) {                 // whatever is left: black (a show that didn't unpack, or none)
+    if (showLine) { showEmit(showLine); continue; }
+    uint16_t *p = stripBuf[showB] + showRow * SCR_W;   // (no memory for a line: straight into the strip)
+    memset(p, 0, SCR_W * 2); showEmit(p);
+  }
+  b = showB;
+}
+void showLeave() {                       // another style now: full backlight, quiet, memory back
+  audioStop();
+  showBacklight(1); blNow = 0;
+#if SHOW_BL >= 0
+  ledcWrite(SHOW_BL, 255); blNow = 255;
+#endif
+  if (showOwnBand) free(showBand);
+  if (showOwnPool) free(showPool);
+  free(showLine); showBand = showLine = NULL; showPool = NULL;
+}
+#endif
+
 void renderTask(void *) {         // runs on core 0
   uint8_t b = 0;
   bool first = true;
@@ -3007,6 +3639,11 @@ void renderTask(void *) {         // runs on core 0
     if (!first) frameEnd();
     first = false;
     frameStart();
+#if SHOW_ON
+    static bool showWas = false;
+    if (STYLE == 22) { sharing = false; showWas = true; showFrame(b); vTaskDelay(1); continue; }   // the Picture Display
+    if (showWas) { showWas = false; showLeave(); }
+#endif
     bool share = canShare();
     sharing = share;
     for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
@@ -3059,7 +3696,7 @@ bool allocBuffers() {
 
 void setup() {
 #if defined(ESP32)
-  Serial.setRxBufferSize(1024);          // room for picture data
+  Serial.setRxBufferSize(SHOW_ON ? 4096 : 1024);   // room for picture data
 #endif
   Serial.begin(115200);
   delay(300);
@@ -3074,6 +3711,9 @@ void setup() {
   Serial.println(F("[portal] bluetooth ready"));
 #endif
   beginPictures();
+#if SHOW_ON
+  showBegin();
+#endif
   bool bufsOk = allocBuffers();
 #if DUAL_CORE
   if (bufsOk && picBuf) picBuf2 = (uint16_t *)malloc(SCR_WMAX * STRIP * 2);   // optional: smoother fades
@@ -3200,6 +3840,9 @@ UiRect uiWDone, uiWPrev, uiWChip[4], uiWSl, uiPrevSet;   // the colour wheel pag
 int uiWCX = 0, uiWCY = 0, uiWR = 100, uiWT = 0, uiWHintY = 0, uiColA = 0, uiColB = 480;   // (uiColA-uiColB: the columns being redrawn)
 float uiWH = 0, uiWS = 1, uiWV = 1;       // the colour on the wheel: hue, how strong, how bright
 uint32_t uiWBak[6]; int uiWBakSel = -1;
+int uiCf[7], stCf[7];                    // the cross fractals: background, spacing, zoom target, colours, twist, wobble, colour flow (kept here until SHOW / SAVE)
+const char *const UI_CF_NAMES[2] = { "Cross of Crosses", "Cross Tunnel" };
+const char *const UI_CF_BG[7] = { "Plain", "Stars", "Rays", "Ripples", "Plasma", "Glass", "Crosses" };
 UiRect uiRotBtn;                          // the settings page's Rotate button
 uint8_t uiRotTo = 255;                    // a quarter turn asked for (portrait | flip << 1), 255 none
 bool uiReopen = false;                    // after turning: open the settings page again
@@ -3215,9 +3858,10 @@ inline uint16_t uiRGB(uint32_t c) { return to565raw(c >> 16, (c >> 8) & 255, c &
 inline uint32_t uiMix(uint32_t a, uint32_t b, float f) { return mixColor(a, b, f < 0 ? 0 : f > 1 ? 1 : f); }
 inline bool uiIn(const UiRect &r, int x, int y) { return x >= r.x - 3 && x < r.x + r.w + 3 && y >= r.y - 3 && y < r.y + r.h + 3; }
 inline bool uiRowsHit(int y, int h) { return y < uiY0 + uiRows && y + h > uiY0; }
-int uiCurCode() { return uiKind == 0 ? UI_BACKS[uiSelBack] : UI_PS[uiKind - 1][uiSelStyle]; }   // the background (cross) or the style (portal, space) chosen now
-int uiColKind() { const int f = uiCurCode(); return f == 7 || f == 3 || (uiKind == 1) ? 1 : (f == 4 || f == 14 || f == 16) ? 2 : 0; }   // 1 glow colours, 2 space colours, 0 none (skies)
+int uiCurCode() { return uiKind == 0 ? UI_BACKS[uiSelBack] : uiKind == 3 ? 20 + uiSelStyle : UI_PS[uiKind - 1][uiSelStyle]; }   // the background (cross) or the style (portal, space) chosen now
+int uiColKind() { if (uiKind == 3) return 3; const int f = uiCurCode(); return f == 7 || f == 3 || (uiKind == 1) ? 1 : (f == 4 || f == 14 || f == 16) ? 2 : 0; }   // 1 glow colours, 2 space colours, 0 none (skies)
 int uiColMatch() {
+  if (uiKind == 3) return -1;
   int k = uiColKind();
   for (int i = 0; i < 6; i++) {
     if (k == 1 && UI_GLOW[i][0] == uiCore && UI_GLOW[i][1] == uiRim) return i;
@@ -3277,6 +3921,11 @@ void uiLayout() {                         // where everything goes, for the way 
 void uiRotLayout() { uiRotBtn = { (int16_t)(SCR_W - 92), (int16_t)(SCR_H > SCR_W ? 6 : 5), 84, 28 }; }
 void uiLayoutPS() {                       // the portal and space pages: four big pictures, then the colours
   const int W = SCR_W, H = SCR_H;
+  if (uiKind == 3) {                      // the cross fractals: two big pictures
+    if (H > W) { for (int i = 0; i < 2; i++) uiTile[i] = { (int16_t)(10 + i * 154), 66, 146, 248 }; uiLabColX = 10; uiLabColY = 336; uiSwR = 17; for (int i = 0; i < 6; i++) uiCol[i] = { (int16_t)(14 + i * 50), 346, 34, 34 }; }
+    else { for (int i = 0; i < 2; i++) uiTile[i] = { (int16_t)(8 + i * 236), 66, 228, 118 }; uiLabColX = 10; uiLabColY = 210; uiSwR = 15; for (int i = 0; i < 6; i++) uiCol[i] = { (int16_t)(12 + i * 40), 222, 30, 30 }; }
+    return;
+  }
   if (H > W) {
     for (int i = 0; i < 4; i++) uiTile[i] = { (int16_t)(10 + (i % 2) * 154), (int16_t)(66 + (i / 2) * 128), 146, 120 };
     uiLabColX = 10; uiLabColY = 336; uiSwR = 17;
@@ -3474,12 +4123,29 @@ void uiPaintHomeBand() {
   uiButton(uiSetBtn, "Settings", false, 2);
 }
 
+void uiCfPicture(const UiRect &r, int look, const int *cf, int bright, bool rounded);
+void uiCfSwatch(const UiRect &r, int R, int i, bool sel);
 void uiPaintPSBand() {                    // the portal and space home pages
   for (int i = 0; i < SCR_W * uiRows; i++) uiBuf[i] = uiRGB(0x0B0B10);
   for (int y = uiY0; y < uiY0 + uiRows && y < uiHeadR.h; y++)
     ug.drawFastHLine(0, y, SCR_W, uiRGB(y >= uiHeadR.h - 2 ? 0x6B4423 : uiMix(0x2A1A0E, 0x160D06, (float)y / uiHeadR.h)));
-  uiText(uiKind == 1 ? "CHOOSE YOUR PORTAL" : "CHOOSE A SPACE SCENE", SCR_W / 2, uiHeadR.h / 2 + 8, uiRGB(0xFFD99A), &FreeSansBold12pt7b, true, false);
+  uiText(uiKind == 1 ? "CHOOSE YOUR PORTAL" : uiKind == 3 ? "CROSS FRACTALS" : "CHOOSE A SPACE SCENE", SCR_W / 2, uiHeadR.h / 2 + 8, uiRGB(0xFFD99A), &FreeSansBold12pt7b, true, false);
   const uint16_t lab = uiRGB(0xC9B08A);
+  if (uiKind == 3) {                      // the cross fractals: two pictures, then their colours
+    uiText("PATTERN", 10, 60, lab, &FreeSansBold9pt7b, false, false);
+    uiText("COLOURS", uiLabColX, uiLabColY, lab, &FreeSansBold9pt7b, false, false);
+    for (int i = 0; i < 2; i++) {
+      const UiRect &r = uiTile[i];
+      if (!uiRowsHit(r.y - 4, r.h + 8)) continue;
+      uiCfPicture(r, 20 + i, uiCf, 100, true);
+      uiText(UI_CF_NAMES[i], r.x + r.w / 2, r.y + r.h - 11, 0xFFFF, NULL, true, true);
+      uiFrame(r, i == uiSelStyle);
+    }
+    for (int i = 0; i < 5; i++) uiCfSwatch(uiCol[i], uiSwR, i, i == uiCf[3]);
+    uiButton(uiShow, "SHOW", true, 1);
+    uiButton(uiSetBtn, "Settings", false, 2);
+    return;
+  }
   uiText(uiKind == 1 ? "STYLE" : "SCENE", 10, 60, lab, &FreeSansBold9pt7b, false, false);
   uiText("COLOURS", uiLabColX, uiLabColY, lab, &FreeSansBold9pt7b, false, false);
   const uint32_t cols[6] = { uiCore, uiRim, uiSpace[0], uiSpace[1], uiSpace[2], uiSpace[3] };
@@ -3506,11 +4172,49 @@ void uiPaintPSBand() {                    // the portal and space home pages
   uiButton(uiSetBtn, "Settings", false, 2);
 }
 
+void uiCfPicture(const UiRect &r, int look, const int *cf, int bright, bool rounded) {   // a cross fractal, still, in a box (the drawing is paused while the page shows)
+  int y0 = r.y > uiY0 ? r.y : uiY0, y1 = r.y + r.h < uiY0 + uiRows ? r.y + r.h : uiY0 + uiRows;
+  if (y0 >= y1) return;
+  const uint8_t keep[8] = { CF_BG, CF_GAP, CF_TGT, CF_PAL, CF_TWIST, CF_WOB, CF_FLOW, BRIGHTNESS };
+  CF_BG = cf[0]; CF_GAP = cf[1]; CF_TGT = cf[2]; CF_PAL = cf[3]; CF_TWIST = cf[4]; CF_WOB = cf[5]; CF_FLOW = cf[6]; BRIGHTNESS = bright;
+  cfPrepWH(look, r.w, r.h);
+  const int rad = 7;
+  for (int y = y0; y < y1; y++) {
+    const int ly = y - r.y;
+    uint16_t *p = uiBuf + (y - uiY0) * SCR_W;
+    for (int lx = 0; lx < r.w; lx++) {
+      if (rounded) { int cx = lx < rad ? rad - lx : lx >= r.w - rad ? lx - (r.w - rad - 1) : 0, cy = ly < rad ? rad - ly : ly >= r.h - rad ? ly - (r.h - rad - 1) : 0; if (cx && cy && cx * cx + cy * cy > rad * rad) continue; }
+      p[r.x + lx] = look == 20 ? cfPixCC(cfU0 + lx * cfDU, cfV0 + ly * cfDU) : cfPixTun((lx - r.w / 2.0f) / cfU, (ly - cfOy) / cfU);
+    }
+  }
+  CF_BG = keep[0]; CF_GAP = keep[1]; CF_TGT = keep[2]; CF_PAL = keep[3]; CF_TWIST = keep[4]; CF_WOB = keep[5]; CF_FLOW = keep[6]; BRIGHTNESS = keep[7];
+}
+void uiCfSwatch(const UiRect &r, int R, int i, bool sel) {   // one of the cross fractals' colour sets: the colours round a ring
+  const int cx = r.x + R, cy = r.y + R;
+  if (!uiRowsHit(cy - R - 5, 2 * R + 10)) return;
+  if (sel) { ug.fillCircle(cx, cy, R + 4, uiRGB(0xFFFFFF)); ug.fillCircle(cx, cy, R + 1, uiRGB(0x0B0B10)); }
+  for (int y = cy - R; y <= cy + R; y++) {
+    if (y < uiY0 || y >= uiY0 + uiRows) continue;
+    for (int x = cx - R; x <= cx + R; x++) {
+      const float dx = x - cx, dy = y - cy, d = sqrtf(dx * dx + dy * dy) / R;
+      if (d > 1) continue;
+      uint32_t c = cfPalColor(i, (atan2f(dy, dx) + 3.1416f) / 6.2832f * (i == 2 ? 1 : 0.8f) + (i == 2 ? 0 : 0.1f));
+      if (d > 0.9f) c = uiMix(c, 0x000000, (d - 0.9f) * 6);
+      ug.drawPixel(x, y, uiRGB(c));
+    }
+  }
+}
+
 // ---- the settings page ----
 int uiCrossMax() { return (int)((SCR_H - 8) * 0.8f); }   // the biggest cross for the way the screen is turned (as in the Studio)
 bool uiFullDay() { return uiKind == 0 && UI_BACKS[uiSelBack] == 18; }
 int uiPortalMax() { return min(SCR_W, SCR_H) / 2 - 1; }   // the biggest portal
 float uiSlFrac(int k) {                   // where each slider's knob sits, 0-1
+  if (uiKind == 3 && k > 0) {             // the cross fractals: zoom speed, then background or twist, then spacing or wobble
+    if (k == 1) return (stSpeed - 0.02f) / 0.28f;
+    if (k == 2) return uiSelStyle ? stCf[4] / 30.0f : stCf[0] / 6.0f;
+    return uiSelStyle ? stCf[5] / 100.0f : (stCf[1] - 55) / 45.0f;
+  }
   switch (k) {
     case 0: return (stBright - 10) / 90.0f;
     case 1: if (uiKind) return (stRadius * 100.0f / uiPortalMax() - 30) / 70.0f; else { float pct = stRadius * 100.0f / uiCrossMax(); return (pct - 40) / 60.0f; }
@@ -3520,6 +4224,12 @@ float uiSlFrac(int k) {                   // where each slider's knob sits, 0-1
 }
 void uiSlSet(int k, float f) {
   f = f < 0 ? 0 : f > 1 ? 1 : f;
+  if (uiKind == 3 && k > 0) {
+    if (k == 1) stSpeed = 0.02f + f * 0.28f;
+    else if (k == 2) { if (uiSelStyle) stCf[4] = (int)lroundf(f * 30); else stCf[0] = (int)lroundf(f * 6); }
+    else { if (uiSelStyle) stCf[5] = (int)lroundf(f * 20) * 5; else stCf[1] = 55 + (int)lroundf(f * 45); }
+    return;
+  }
   switch (k) {
     case 0: stBright = 10 + (int)lroundf(f * 90); break;
     case 1: stRadius = uiKind ? (int)lroundf((30 + f * 70) * uiPortalMax() / 100.0f) : (int)lroundf((40 + f * 60) * uiCrossMax() / 100.0f); break;
@@ -3533,6 +4243,7 @@ void uiSlSet(int k, float f) {
 }
 const char *uiSlName(int k) {
   if (k == 0) return "BRIGHTNESS";
+  if (uiKind == 3) return k == 1 ? "ZOOM SPEED" : k == 2 ? (uiSelStyle ? "TWIST" : "BETWEEN") : (uiSelStyle ? "WOBBLE" : "SPACING");
   if (uiKind) { if (k == 1) return uiKind == 1 ? "PORTAL SIZE" : "SIZE"; if (k == 2) return uiKind == 1 ? "SPIN SPEED" : "SPEED"; return uiKind == 1 ? "SPARKS" : "STAR DENSITY"; }
   if (k == 1) return "CROSS SIZE";
   if (k == 2) return "BEAM THICKNESS";
@@ -3542,6 +4253,11 @@ const char *uiSlName(int k) {
 void uiSlValue(int k, char *out) {
   const char *spd = stSpeed < 0.09f ? "Slow" : stSpeed < 0.18f ? "Medium" : stSpeed < 0.25f ? "Fast" : "Very fast";
   if (k == 0) snprintf(out, 16, "%d%%", stBright);
+  else if (uiKind == 3) {
+    if (k == 1) snprintf(out, 16, "%s", spd);
+    else if (k == 2) { if (uiSelStyle) snprintf(out, 16, "%d deg", stCf[4]); else snprintf(out, 16, "%s", UI_CF_BG[stCf[0] <= 6 ? stCf[0] : 0]); }
+    else snprintf(out, 16, "%d%%", uiSelStyle ? stCf[5] : stCf[1]);
+  }
   else if (uiKind) {
     if (k == 1) snprintf(out, 16, "%d%%", (int)lroundf(stRadius * 100.0f / uiPortalMax()));
     else if (k == 2) snprintf(out, 16, "%s", spd);
@@ -3569,6 +4285,12 @@ void uiSlider(int k) {
 }
 void uiPreviewPS() {                      // portal or space: a still picture with these settings
   const UiRect &r = uiPrev;
+  if (uiKind == 3) {                      // the cross fractals
+    uiCfPicture(r, 20 + uiSelStyle, stCf, stBright, false);
+    ug.drawRoundRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4, 5, uiRGB(0x6B4423));
+    ug.drawRoundRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, 4, uiRGB(0x6B4423));
+    return;
+  }
   const int code = UI_PS[uiKind - 1][uiSelStyle], br = stBright * 256 / 100;
   const float pr = stRadius * (float)r.w / SCR_W;   // the portal's size in the little picture
   const uint32_t cols[6] = { stCore, stRim, stSpace[0], stSpace[1], stSpace[2], stSpace[3] };
@@ -3811,7 +4533,8 @@ void uiPaintSetBand() {
   for (int k = 0; k < 4; k++) uiSlider(k);
   uiText("COLOURS", uiSetCol[0].x - 2, uiSetColLabY, uiRGB(0xC9B08A), &FreeSansBold9pt7b, false, false);
   const int kind = uiColKind();
-  if (kind) { for (int i = 0; i < 6; i++) uiSwatchAt(uiSetCol[i], uiSetSwR, i, kind, i == stSelCol); uiSwatchWheel(uiSetCol[6], uiSetSwR, kind, stSelCol < 0 || stSelCol == 6); }
+  if (kind == 3) { for (int i = 0; i < 5; i++) uiCfSwatch(uiSetCol[i], uiSetSwR, i, i == stCf[3]); }   // the cross fractals: their own colour sets
+  else if (kind) { for (int i = 0; i < 6; i++) uiSwatchAt(uiSetCol[i], uiSetSwR, i, kind, i == stSelCol); uiSwatchWheel(uiSetCol[6], uiSetSwR, kind, stSelCol < 0 || stSelCol == 6); }
   else uiText("This background has its own colours", uiSetCol[0].x, uiSetCol[0].y + uiSetSwR - 4, uiRGB(0x9A8A70), NULL, false, false);
   uiButton(uiSave, "SAVE", true, 3);
 }
@@ -4020,7 +4743,9 @@ void uiOpen() {
   uiLayout();
   if (uiKind) uiLayoutPS();
   uiSelStyle = 0;
-  if (uiKind) for (int i = 0; i < 4; i++) if (UI_PS[uiKind - 1][i] == STYLE) uiSelStyle = i;
+  if (uiKind == 3) uiSelStyle = STYLE == 21 ? 1 : 0;
+  else if (uiKind) for (int i = 0; i < 4; i++) if (UI_PS[uiKind - 1][i] == STYLE) uiSelStyle = i;
+  uiCf[0] = CF_BG; uiCf[1] = CF_GAP; uiCf[2] = CF_TGT; uiCf[3] = CF_PAL; uiCf[4] = CF_TWIST; uiCf[5] = CF_WOB; uiCf[6] = CF_FLOW;
   uiSparks = NUM_SPARKS; uiStars = STARS; uiArms = ARMS; uiTwist = TWIST;
   uiSelWood = CROSS_RIPPLE <= 10 ? CROSS_RIPPLE : 0;
   uiSelBack = 0;
@@ -4043,7 +4768,11 @@ void uiClose(bool use) {
     Saved s;
     fillSaved(s);
     if (uiKind == 0) { s.crossRipple = uiSelWood; s.crossFill = UI_BACKS[uiSelBack]; }
-    else {                                 // a portal or space style
+    else if (uiKind == 3) {                // the cross fractals: the pattern, and their own settings
+      s.style = 20 + uiSelStyle;
+      for (int j = 0; j < 7; j++) pendCf[j] = (uint8_t)uiCf[j];
+      pendCfOn = true;
+    } else {                                 // a portal or space style
       s.style = UI_PS[uiKind - 1][uiSelStyle];
       s.sparks = uiSparks; s.stars = uiStars; s.arms = uiArms; s.twist = uiTwist;
     }
@@ -4065,11 +4794,15 @@ void uiSetTouch(int x, int y);
 void uiToSettings() {                      // open the settings page with the choices as they are
   stBright = uiBright; stRadius = uiRadius; stBeam = uiBeam; stSpeed = uiSpeed; stFdLen = uiFdLen; stSparks = uiSparks; stStars = uiStars;
   stCore = uiCore; stRim = uiRim; for (int k = 0; k < 4; k++) stSpace[k] = uiSpace[k]; stSelCol = uiSelCol;
+  for (int j = 0; j < 7; j++) stCf[j] = uiCf[j];
   uiPage = 1; uiDirty = true;
 }
 void uiTouch(int x, int y) {
   if (uiPage >= 1) { uiSetTouch(x, y); return; }
-  if (uiKind) {                            // portal and space pages
+  if (uiKind == 3) {                       // the cross fractals: the pattern, then the colours
+    for (int i = 0; i < 2; i++) if (uiIn(uiTile[i], x, y)) { if (i != uiSelStyle) { uiSelStyle = i; uiCf[3] = i ? 2 : 0; uiDirty = true; } return; }
+    for (int i = 0; i < 5; i++) if (uiIn(uiCol[i], x, y)) { uiCf[3] = i; uiDirty = true; return; }
+  } else if (uiKind) {                     // portal and space pages
     for (int i = 0; i < 4; i++) if (uiIn(uiTile[i], x, y)) {
       if (i != uiSelStyle) {               // another style: its own shape and colours, as in the Studio
         const int code = UI_PS[uiKind - 1][i];
@@ -4115,6 +4848,7 @@ void uiSetTouch(int x, int y) {            // the settings page
   if (uiIn(uiRotBtn, x, y)) {               // Rotate: keep the settings, turn a quarter (as the Studio's Rotate 90), then come back here
     uiBright = stBright; uiRadius = stRadius; uiBeam = stBeam; uiSpeed = stSpeed; uiFdLen = stFdLen; uiSparks = stSparks; uiStars = stStars;
     uiCore = stCore; uiRim = stRim; for (int k = 0; k < 4; k++) uiSpace[k] = stSpace[k]; uiSelCol = stSelCol;
+    for (int j = 0; j < 7; j++) uiCf[j] = stCf[j];
     const bool p = !PORTRAIT, f = PORTRAIT ? FLIP : !FLIP;
     uiRotTo = (p ? 1 : 0) | (f ? 2 : 0);
     uiClose(true);
@@ -4124,9 +4858,18 @@ void uiSetTouch(int x, int y) {            // the settings page
   if (uiIn(uiSave, x, y)) {                 // SAVE: keep them, back to the home page
     uiBright = stBright; uiRadius = stRadius; uiBeam = stBeam; uiSpeed = stSpeed; uiFdLen = stFdLen; uiSparks = stSparks; uiStars = stStars;
     uiCore = stCore; uiRim = stRim; for (int k = 0; k < 4; k++) uiSpace[k] = stSpace[k]; uiSelCol = stSelCol;
+    for (int j = 0; j < 7; j++) uiCf[j] = stCf[j];
     uiSaved = true; uiPage = 0; uiDirty = true; return;
   }
   const int kind = uiColKind();
+  if (kind == 3) {                          // the cross fractals' colours: the preview shows them straight away
+    for (int i = 0; i < 5; i++) if (uiIn(uiSetCol[i], x, y)) {
+      stCf[3] = i;
+      const int a = uiPrev.y < uiSetCol[0].y ? uiPrev.y : uiSetCol[0].y, b = uiPrev.y + uiPrev.h > uiSetCol[0].y + uiSetCol[0].h ? uiPrev.y + uiPrev.h : uiSetCol[0].y + uiSetCol[0].h;
+      uiPaintRows(a - 6, b + 6);
+      return;
+    }
+  } else {
   if (kind && uiIn(uiSetCol[6], x, y)) { uiWheelOpen(); return; }   // the colour wheel
   if (kind) for (int i = 0; i < 6; i++) if (uiIn(uiSetCol[i], x, y)) {   // a colour: the preview shows it straight away
     stSelCol = i;
@@ -4134,6 +4877,7 @@ void uiSetTouch(int x, int y) {            // the settings page
     const int a = uiPrev.y < uiSetCol[0].y ? uiPrev.y : uiSetCol[0].y, b = uiPrev.y + uiPrev.h > uiSetCol[0].y + uiSetCol[0].h ? uiPrev.y + uiPrev.h : uiSetCol[0].y + uiSetCol[0].h;
     uiPaintRows(a - 6, b + 6);
     return;
+  }
   }
   for (int k = 0; k < 4; k++) {
     const UiRect &r = uiSl[k];
@@ -4201,6 +4945,9 @@ void homeCheck() {
 
 
 void loop() {
+#if SHOW_ON
+  showSerialTick(Serial.available() > 0);
+#endif
   readSerial();
 #if defined(ESP32)
   if (rebootAt && (int32_t)(millis() - rebootAt) >= 0) ESP.restart();   // Restart board button in the Studio
