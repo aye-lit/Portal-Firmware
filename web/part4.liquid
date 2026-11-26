@@ -1455,7 +1455,7 @@ function showDisplayPage(first) {
   const key = (location.hash || "").slice(1).toLowerCase(), pg = DISPLAY_PAGES[key];
   const picker = $("dpick");
   const pics = !!(pg && pg.pics);
-  for (const el of picker.parentElement.children) if (el.tagName !== "HEADER" && el !== picker) el.hidden = !pg || (pics ? el.id !== "picpage" : el.id === "picpage");
+  for (const el of picker.parentElement.children) if (el.tagName !== "HEADER" && el !== picker) el.hidden = !pg || (pics ? el !== $("picpage") : el === $("picpage"));
   picker.hidden = !!pg;
   $("backlink").hidden = !pg;
   $("studio-sub").hidden = !!pg;
@@ -2626,7 +2626,7 @@ var PDX = (() => {
     $("pd-edit").hidden = !it; $("pd-draghint").hidden = !it;
     if (it) {
       $("pd-edit-title").textContent = "Edit · " + it.name;
-      $("pd-edit").querySelectorAll("[data-for]").forEach(el => el.hidden = !el.dataset.for.split(" ").includes(it.type));
+      $("pd-edit").querySelectorAll("[data-pdkind]").forEach(el => el.hidden = !el.dataset.pdkind.split(" ").includes(it.type));
       $("pd-fit").value = it.fit; $("pd-zoom").value = it.zoom; $("pd-secs").value = it.secs; $("pd-plays").value = it.plays; $("pd-fps").value = it.fps; $("pd-sound").checked = it.sound;
       if (it.type === "video") { ["pd-start", "pd-end"].forEach(k => { $(k).max = it.dur.toFixed(1); }); $("pd-start").value = it.start; $("pd-end").value = it.end; }
       outs();

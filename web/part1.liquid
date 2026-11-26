@@ -394,12 +394,12 @@
           <div class="pd-grid">
             <label class="pd-ctl"><span>Fit</span><select id="vps-pd-fit"><option value="fill">Fill the screen (crops the edges)</option><option value="fit">Whole picture (bars at the sides)</option></select></label>
             <label class="pd-ctl"><span>Zoom <output id="vps-pd-o-zoom"></output></span><input id="vps-pd-zoom" type="range" min="1" max="3" step="0.05"></label>
-            <label class="pd-ctl" data-for="vps-photo"><span>Show for <output id="vps-pd-o-secs"></output></span><input id="vps-pd-secs" type="range" min="2" max="60" step="1"><small>How long this photo stays up</small></label>
-            <label class="pd-ctl" data-for="vps-gif"><span>Play it <output id="vps-pd-o-plays"></output></span><input id="vps-pd-plays" type="range" min="1" max="10" step="1"><small>How many times the GIF runs before the next picture</small></label>
-            <label class="pd-ctl" data-for="vps-video"><span>Start <output id="vps-pd-o-start"></output></span><input id="vps-pd-start" type="range" min="0" max="1" step="0.1"></label>
-            <label class="pd-ctl" data-for="vps-video"><span>End <output id="vps-pd-o-end"></output></span><input id="vps-pd-end" type="range" min="0" max="1" step="0.1"><small>Only this part of the video goes on the board</small></label>
-            <label class="pd-ctl" data-for="vps-video gif"><span>Smoothness <output id="vps-pd-o-fps"></output></span><input id="vps-pd-fps" type="range" min="4" max="12" step="1"><small>More frames a second look smoother but use more memory</small></label>
-            <label class="pd-chk" data-for="vps-video"><input type="checkbox" id="vps-pd-sound"> Play its sound</label>
+            <label class="pd-ctl" data-pdkind="photo"><span>Show for <output id="vps-pd-o-secs"></output></span><input id="vps-pd-secs" type="range" min="2" max="60" step="1"><small>How long this photo stays up</small></label>
+            <label class="pd-ctl" data-pdkind="gif"><span>Play it <output id="vps-pd-o-plays"></output></span><input id="vps-pd-plays" type="range" min="1" max="10" step="1"><small>How many times the GIF runs before the next picture</small></label>
+            <label class="pd-ctl" data-pdkind="video"><span>Start <output id="vps-pd-o-start"></output></span><input id="vps-pd-start" type="range" min="0" max="1" step="0.1"></label>
+            <label class="pd-ctl" data-pdkind="video"><span>End <output id="vps-pd-o-end"></output></span><input id="vps-pd-end" type="range" min="0" max="1" step="0.1"><small>Only this part of the video goes on the board</small></label>
+            <label class="pd-ctl" data-pdkind="video gif"><span>Smoothness <output id="vps-pd-o-fps"></output></span><input id="vps-pd-fps" type="range" min="4" max="12" step="1"><small>More frames a second look smoother but use more memory</small></label>
+            <label class="pd-chk" data-pdkind="video"><input type="checkbox" id="vps-pd-sound"> Play its sound</label>
           </div>
         </section>
 
