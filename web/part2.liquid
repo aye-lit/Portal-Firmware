@@ -1,254 +1,82 @@
-{% raw %}  mega: { name: "Arduino Mega 2560", family: "AVR", ram: 8, volt: 5, hz: 8, fixedSpi: true, fixedI2c: true,
-    spi: { sck: 52, mosi: 51, cs: 10, dc: 8, rst: 9 }, i2c: { sda: 20, scl: 21 },
-    ide: "Built in. Pick Tools → Board → Arduino AVR Boards → Arduino Mega or Mega 2560." },
-  custom: { name: "Other board (type your own pins)", family: "Custom", ram: 9999, volt: 3.3, hz: 20, custom: true,
-    spi: { sck: 18, mosi: 23, cs: 5, dc: 16, rst: 17 }, i2c: { sda: 21, scl: 22 },
-    ide: "Install your board's support package in Boards Manager and pick it under Tools → Board. The sketch adapts to ESP32, ESP8266, RP2040 (Earle Philhower core), Teensy and AVR boards." },
-};
-const TFT_MIN_RAM = 100;
-function boardOf() {
-  const base = BOARDS[S.board] || BOARDS.esp32s3;
-  const B = JSON.parse(JSON.stringify(base));
-  if (B.custom) {
-    const c = S.custom || {};
-    for (const k of ["sck", "mosi", "cs", "dc", "rst"]) if (Number.isInteger(c[k])) B.spi[k] = c[k];
-    for (const k of ["sda", "scl"]) if (Number.isInteger(c[k])) B.i2c[k] = c[k];
-    if (c.hz >= 1 && c.hz <= 80) B.hz = c.hz;
-  }
-  const lab = B.lab || {};
-  B.lab = {};
-  for (const k of ["sck", "mosi", "cs", "dc", "rst"]) B.lab[k] = lab[k] || (B.family === "AVR" || B.family === "Teensy" ? String(B.spi[k]) : "GPIO " + B.spi[k]);
-  for (const k of ["sda", "scl"]) B.lab[k] = lab[k] || (B.family === "AVR" || B.family === "Teensy" ? String(B.i2c[k]) : "GPIO " + B.i2c[k]);
-  return B;
+{% raw %}  showLoad();
 }
-const boardFits = (B, model) => (!B.screen || S.model === B.screen) && (model.kind !== "tft" || B.ram >= TFT_MIN_RAM);   // boards with a built-in screen only fit that screen
-function wiringRows(B) {
-  if (B.builtin) return [["Screen", "Built into the board"], ["Power and upload", "USB-C cable"]];
-  const v = B.volt === 5 ? "5V" : "3V3";
-  if (M.kind === "tft") return [["VCC", "3V3"], ["GND", "GND"], ["SCL", B.lab.sck], ["SDA", B.lab.mosi], ["DC", B.lab.dc], ["CS", B.lab.cs], ["RST", B.lab.rst], ["BLK (if present)", "3V3"]];
-  if (M.kind === "rgb") return [["VCC", v], ["GND", "GND"], ["SCL (CLK)", B.lab.sck], ["SDA (DIN)", B.lab.mosi], ["RES", B.lab.rst], ["DC", B.lab.dc], ["CS", B.lab.cs]];
-  return [["VCC", v], ["GND", "GND"], ["SCL", B.lab.scl], ["SDA", B.lab.sda]];
-}
-// C code that starts the right bus on whatever board the sketch is compiled for
-// Bluetooth tuning (ESP32 boards): the board advertises as "Vortex Portal" and accepts the same
-// text commands as USB on a Nordic-UART-style service. The Studio connects with Web Bluetooth.
-const BLE_SVC = "6e400001-b5a3-f393-e0a9-e50e24dcca9e", BLE_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e", BLE_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
-function bleBlock() { return `
-// ---------- Bluetooth tuning (ESP32 boards with Bluetooth) ----------
-// The board shows up as "Vortex Portal". In the Studio (Chrome on Android or a
-// computer), tap "Connect over Bluetooth". Same commands as USB.
-#if 0                                    // Bluetooth is switched off: it needed too much memory (USB only)
-  #define HAS_BLE 1
-#else
-  #define HAS_BLE 0
+uint8_t blNow = 255;
+void showBacklight(float level) {        // 0-1 (and the Brightness setting)
+#if SHOW_BL >= 0
+  int d = (int)(255 * level * level * BRIGHTNESS / 100.0f + 0.5f);
+  if (d < 0) d = 0; if (d > 255) d = 255;
+  if (d != blNow) { blNow = (uint8_t)d; ledcWrite(SHOW_BL, d); }
 #endif
+}
 
-#if HAS_BLE
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLE2902.h>
-
-#define BLE_SERVICE "${BLE_SVC}"
-#define BLE_RX_CHAR "${BLE_RX}"   // phone writes commands here
-#define BLE_TX_CHAR "${BLE_TX}"   // board replies here (notify)
-
-BLECharacteristic *bleTx = NULL;
-char bleBuf[384], bleLine[384];
-uint16_t bleLen = 0;
-volatile bool bleHave = false;
-
-class PortalRx : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic *c) {     // runs in the Bluetooth task: just collect the line
-    String v = c->getValue().c_str();
-    for (unsigned i = 0; i < v.length(); i++) {
-      char ch = v[i];
-      if (ch == '\\n' || ch == '\\r') {
-        if (bleLen && !bleHave) { bleBuf[bleLen] = 0; memcpy(bleLine, bleBuf, bleLen + 1); bleHave = true; }
-        bleLen = 0;
-      } else if (bleLen < sizeof(bleBuf) - 1) {
-        bleBuf[bleLen++] = ch;
-      }
+// ---- the commands ----
+const char *showCommand(char *line) {
+  if (strcasecmp(line, "SHOWINFO") == 0) {       // SHOWINFO -> SHOW room width height id (id 0: none)
+    static char r[64];
+    snprintf(r, sizeof(r), "SHOW %lu %u %u %lx", (unsigned long)showRoom(), SCR_W, SCR_H, (unsigned long)(showOk ? showH.id : 0));
+    return r;
+  }
+  if (strncasecmp(line, "SHOW ", 5) == 0) {      // SHOW bytes id: a show is coming
+    unsigned long len, id;
+    if (!picPart || sscanf(line + 5, "%lu %lx", &len, &id) != 2 || len < sizeof(ShowHead) || len > showRoom()) return "ERR";
+    audioStop();
+    showOk = false; showUp = true;
+    for (uint8_t i = 0; i < picSlots; i++) if ((uint32_t)i * slotSize < len) picId[i] = 0;   // pictures it covers are gone
+    esp_partition_erase_range(picPart, 0, 4096); showErased = 4096;
+    upLen = len; upPos = 0; upId = id;
+    uploading = true; upLast = millis();
+    return "READY";
+  }
+  if (line[0] == 'B' && line[1] == ' ' && showUp) {   // a piece of the show, in base64
+    uint8_t *data = showData;
+    int n = strlen(line + 2) <= 1064 ? unbase64(line + 2, data) : -1;
+    if (n < 0 || upPos + n > upLen) { showUp = false; uploading = false; return "ERR data"; }
+    while (showErased < upPos + n) {             // make room as it arrives: a big block at a time where it can
+      uint32_t left = upLen - showErased;
+      if ((showErased & 0xFFFF) == 0 && left >= 0x10000) { esp_partition_erase_range(picPart, showErased, 0x10000); showErased += 0x10000; }
+      else { esp_partition_erase_range(picPart, showErased, 4096); showErased += 4096; }
     }
+    esp_partition_write(picPart, upPos, data, n);
+    upPos += n; upLast = millis();
+    return "K";
   }
-};
-
-class PortalServer : public BLEServerCallbacks {
-  void onDisconnect(BLEServer *s) { BLEDevice::startAdvertising(); }   // let the phone reconnect
-};
-
-void beginBluetooth() {
-  BLEDevice::init("Vortex Portal");
-  BLEServer *srv = BLEDevice::createServer();
-  srv->setCallbacks(new PortalServer());
-  BLEService *svc = srv->createService(BLE_SERVICE);
-  bleTx = svc->createCharacteristic(BLE_TX_CHAR, BLECharacteristic::PROPERTY_NOTIFY);
-  bleTx->addDescriptor(new BLE2902());
-  BLECharacteristic *rx = svc->createCharacteristic(BLE_RX_CHAR, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
-  rx->setCallbacks(new PortalRx());
-  svc->start();
-  BLEAdvertising *adv = BLEDevice::getAdvertising();
-  adv->addServiceUUID(BLE_SERVICE);
-  adv->setScanResponse(true);
-  BLEDevice::startAdvertising();
-}
-
-void readBluetooth() {                    // handle a received line in the main loop
-  if (!bleHave) return;
-  const char *reply = handleCommand(bleLine);
-  bleHave = false;
-  if (reply && bleTx) {                   // sent in 20-byte pieces (the smallest Bluetooth packet), ending with a newline
-    char out[136];
-    int len = snprintf(out, sizeof(out), "%s\\n", reply);
-    for (int i = 0; i < len; i += 20) {
-      bleTx->setValue((uint8_t *)out + i, min(20, len - i));
-      bleTx->notify();
-      delay(3);
+  if (strcasecmp(line, "SHOWEND") == 0 && showUp) {   // all there: check it, then it's the show
+    showUp = false; uploading = false;
+    if (upPos != upLen) return "ERR incomplete";
+    ShowHead h; esp_partition_read(picPart, 0, &h, sizeof(h));
+    if (h.magic != SHOW_MAGIC || h.size != upLen || h.done != 0xFFFFFFFFUL) return "ERR head";
+    uint32_t f = 2166136261UL; uint8_t *buf = showData; const uint32_t bufSize = sizeof(showData);
+    for (uint32_t p = sizeof(ShowHead); p < upLen; ) {
+      uint32_t n = min(bufSize, upLen - p);
+      esp_partition_read(picPart, p, buf, n);
+      for (uint32_t i = 0; i < n; i++) f = (f ^ buf[i]) * 16777619UL;
+      p += n;
+      if ((p & 0x3FFFF) < n) delay(1);
     }
+    if (f != h.check) return "ERR check";
+    uint32_t ok = SHOW_DONE; esp_partition_write(picPart, offsetof(ShowHead, done), &ok, 4);
+    showLoad();
+    if (!showOk) return "ERR show";
+    return "OK";
   }
-}
-#endif`; }
-
-// Pictures for colour screens on ESP32 boards: stored in the flash "spiffs" partition
-function pictureBlock() { return `
-// ---------- pictures (ESP32 boards: kept in the flash "spiffs" partition) ----------
-// The Studio crops each picture to this screen, sends it as a small JPEG and the
-// board unpacks it into flash. Tools -> Partition Scheme -> "No OTA (2MB APP/2MB SPIFFS)"
-// gives the most room. Commands: INFO, IMG slot bytes id, D base64..., END.
-// (HAS_PICS and the JPEG decoder are set up with the other #includes at the top)
-bool    crossReady = false;               // cross outline ready to read (styles 8-13)
-extern uint32_t woodPlaneKey, galFlashKey;
-int8_t *edgeBuf = NULL;                   // one strip of the cross outline
-uint8_t crossRimT[128], crossHaloT[128];  // rim and outer glow, sized to the beam
-
-#if HAS_PICS
-struct PicHead { uint32_t magic; uint16_t w, h; uint32_t id, check; };
-const uint32_t PIC_MAGIC = 0x43495056UL;   // "VPIC"
-const uint32_t STAGE_SIZE = 0x30000;       // room for one arriving JPEG (192 KB, enough for high quality on big screens)
-const esp_partition_t *picPart = NULL;
-uint32_t slotSize = 0, stageOff = 0;      // stageOff: where an arriving JPEG waits (last 64 KB)
-uint32_t crossOff = 0, crossSize = 0, crossPlane = 0, woodOff = 0;   // the cross outline (distance to the edge for every pixel) and the wood in use
-uint8_t  picSlots = 0;
-#define MAX_PLANES 10                     // cross outlines and wood kept side by side, so scenes can switch crosses without rebuilding them
-uint8_t  nPlanes = 0;
-uint32_t planesOff = 0;                   // the first one (they sit just before the staging area)
-uint32_t planeMagic[MAX_PLANES], planeKeyOf[MAX_PLANES], planeUse[MAX_PLANES], planeTick = 0;
-int8_t   crossSlot = -1, woodSlot = -1;   // the ones in use now
-int8_t   nebHSlot = -1, nebVSlot = -1;   // the Nebula's colour and brightness planes
-volatile uint32_t picId[MAX_PICS];        // 0 = empty slot
-uint16_t picW[MAX_PICS];                  // the width each picture was made for (the screen may have been turned since)
-volatile bool uploading = false;
-uint32_t upLen = 0, upPos = 0, upId = 0, upLast = 0, jpgPos = 0;
-uint8_t  upSlot = 0;
-uint16_t *band = NULL;
-int      bandTop = 0;
-
-void mapPlanes();
-void beginPictures() {
-  picPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
-  if (!picPart) picPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, NULL);
-  if (!picPart || picPart->size < 0x80000) { picPart = NULL; return; }
-  slotSize = (sizeof(PicHead) + (uint32_t)SCR_W * SCR_H * 2 + 4095) & ~4095UL;
-  stageOff = (picPart->size - STAGE_SIZE) & ~4095UL;
-  crossPlane = (16 + (uint32_t)SCR_W * SCR_H + 4095) & ~4095UL;
-  crossSize = crossPlane;
-  {                                        // room for several cross outlines (and wood), keeping at least 5 pictures where possible
-    uint32_t room = stageOff, keepPics = min((uint32_t)5, room / slotSize);
-    uint32_t n = (room - keepPics * slotSize) / crossPlane;
-    if (n < 1) { n = 1; }
-    nPlanes = min((uint32_t)MAX_PLANES, n);
+  if (strcasecmp(line, "SHOWOFF") == 0) { audioStop(); showForget(); return "OK"; }
+  if (strncasecmp(line, "BAUD ", 5) == 0) {      // BAUD rate: a faster link (back to 115200 by itself after 10 quiet seconds)
+    long r = atol(line + 5);
+    if (r != 115200 && r != 230400 && r != 460800 && r != 921600) return "ERR";
+    Serial.println("OK"); Serial.flush(); delay(30);
+    Serial.updateBaudRate(r);
+    baudFastAt = r == 115200 ? 0 : millis();
+    return NULL;
   }
-  planesOff = stageOff - nPlanes * crossPlane;
-  crossOff = woodOff = planesOff;
-  picSlots = min((uint32_t)MAX_PICS, planesOff / slotSize);
-  for (uint8_t i = 0; i < nPlanes; i++) {   // what each one holds
-    uint32_t h[4]; esp_partition_read(picPart, planesOff + (uint32_t)i * crossPlane, h, 16);
-    planeMagic[i] = h[0]; planeKeyOf[i] = h[1]; planeUse[i] = 0;
-  }
-  for (uint8_t i = 0; i < picSlots; i++) {
-    PicHead h;
-    esp_partition_read(picPart, i * slotSize, &h, sizeof(h));
-    bool ok = h.magic == PIC_MAGIC && (uint32_t)h.w * h.h == (uint32_t)SCR_W * SCR_H && h.id && h.check == (h.id ^ 0xA5A5A5A5UL);
-    picId[i] = ok ? h.id : 0;
-    picW[i] = h.w;
-  }
-  mapPlanes();                             // the cross and wood strips are read through the flash cache
+  return NULL;
+}
+void showSerialTick(bool got) {           // from the serial reader: a fast link goes back to normal when it falls quiet
+  if (!baudFastAt) return;
+  if (got) { baudFastAt = millis(); return; }
+  if (millis() - baudFastAt > 10000) { Serial.flush(); Serial.updateBaudRate(115200); baudFastAt = 0; }
 }
 
-int  picturesAvailable() { return picSlots; }
-bool isPicture(uint8_t s) { return s < picSlots && picId[s] != 0 && picW[s] == SCR_W; }
-
-void readPicture(uint8_t s, int y0, int rows, uint16_t *dst) {
-  esp_partition_read(picPart, s * slotSize + sizeof(PicHead) + (uint32_t)y0 * SCR_W * 2, dst, (uint32_t)rows * SCR_W * 2);
-}
-
-bool pausedForUpload() {
-  if (uploading && millis() - upLast > 10000) uploading = false;   // the Studio went away mid-picture
-  if (uploading) delay(1);
-  return uploading;
-}
-
-int b64(char c) {
-  if (c >= 'A' && c <= 'Z') return c - 'A';
-  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-  if (c >= '0' && c <= '9') return c - '0' + 52;
-  if (c == '+') return 62;
-  if (c == '/') return 63;
-  return -1;
-}
-
-int unbase64(const char *in, uint8_t *out) {   // returns bytes written, -1 on bad data
-  int n = 0, bits = 0;
-  uint32_t acc = 0;
-  for (; *in && *in != '='; in++) {
-    int v = b64(*in);
-    if (v < 0) return -1;
-    acc = (acc << 6) | v; bits += 6;
-    if (bits >= 8) { bits -= 8; out[n++] = (acc >> bits) & 0xFF; }
-  }
-  return n;
-}
-
-UINT jpgIn(JDEC *jd, BYTE *buf, UINT n) {        // JPEG bytes come from the staging area
-  if (n > upLen - jpgPos) n = upLen - jpgPos;
-  if (buf) esp_partition_read(picPart, stageOff + jpgPos, buf, n);
-  jpgPos += n;
-  return n;
-}
-
-UINT jpgOut(JDEC *jd, void *bmp, JRECT *r) {     // one block of pixels: collect a band, then store it
-  BYTE *c = (BYTE *)bmp;
-  for (int y = r->top; y <= r->bottom; y++)
-    for (int x = r->left; x <= r->right; x++, c += 3)
-      band[(y - bandTop) * SCR_W + x] = to565(c[0], c[1], c[2]);
-  if (r->right == SCR_W - 1) {
-    esp_partition_write(picPart, upSlot * slotSize + sizeof(PicHead) + (uint32_t)bandTop * SCR_W * 2,
-                        band, (uint32_t)(r->bottom - bandTop + 1) * SCR_W * 2);
-    bandTop = r->bottom + 1;
-  }
-  return 1;
-}
-
-const char *finishPicture() {
-  uploading = false;
-  if (upPos != upLen) return "ERR incomplete";
-  static uint8_t pool[3100];               // the JPEG decoder's work area
-  JDEC jd;
-  jpgPos = 0;
-  if (jd_prepare(&jd, jpgIn, pool, sizeof(pool), NULL) != JDR_OK) return "ERR jpeg";
-  if (jd.width != SCR_W || jd.height != SCR_H) return "ERR size";
-  band = (uint16_t *)malloc(SCR_W * 16 * 2);
-  if (!band) return "ERR memory";
-  esp_partition_erase_range(picPart, upSlot * slotSize, slotSize);
-  bandTop = 0;
-  JRESULT r = jd_decomp(&jd, jpgOut, 0);
-  free(band); band = NULL;
-  if (r != JDR_OK) return "ERR jpeg";
-  PicHead h = { PIC_MAGIC, SCR_W, SCR_H, upId, upId ^ 0xA5A5A5A5UL };
-  esp_partition_write(picPart, upSlot * slotSize, &h, sizeof(h));
-  picId[upSlot] = upId;
-  picW[upSlot] = SCR_W;
-  return "OK";
-}
+#endif
 
 // ---------- cross shapes (styles 8-13), from the Cross Portal Tuner ----------
 // Each cross is a union of simple shapes around its junction (the screen centre). The board works out
@@ -411,6 +239,9 @@ extern uint8_t *woodBuf;
 const uint8_t *woodRows(int y0) { return planeMap ? planeMap + (woodOff - planesOff) + 16 + (uint32_t)y0 * SCR_W : woodBuf; }   // a strip of the wood (either core)
 
 const char *pictureCommand(char *line) {
+#if SHOW_ON
+  { const char *r = showCommand(line); if (r) return r; }
+#endif
   if (strcasecmp(line, "INFO") == 0) {           // PICS slots width height id1 id2 ...
     static char info[128];
     int n = snprintf(info, sizeof(info), "PICS %u %u %u", picSlots, SCR_W, SCR_H);
@@ -421,6 +252,9 @@ const char *pictureCommand(char *line) {
     unsigned slot; unsigned long len, id;
     if (!picPart || sscanf(line + 4, "%u %lu %lx", &slot, &len, &id) != 3 || slot >= picSlots || !len || len > STAGE_SIZE || !id) return "ERR";
     picId[slot] = 0;                             // stop showing the old picture
+#if SHOW_ON
+    if ((showOk && (uint32_t)slot * slotSize < showH.size) || showUp) showForget();   // pictures and the Picture Display share this room
+#endif
     upSlot = slot; upLen = len; upId = id; upPos = 0;
     esp_partition_erase_range(picPart, stageOff, (len + 4095) & ~4095UL);   // only what this picture needs
     uploading = true; upLast = millis();
@@ -607,7 +441,7 @@ const crossMax = (M, st = S.style) => M.rect ? Math.floor((M.h - 8) * 0.8) : Mat
 const radiusMax = M => (S.style >= 8 && S.style <= 13) || S.style === 17 ? crossMax(M) : rmax(M);
 
 // ---------------- settings ----------------
-const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 3, crossOut: 255, crossCol: "", crossRipple: 0, rimw: 100, ripGrad: 0, ripC1: "#ffd36b", ripC2: "#ff2d8a", ripC3: "#8a3dff", ripC4: "#3de0ff", woodGrain: 0, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
+const DEFAULTS = { board: "esp32s3", custom: {}, model: "gc9a01", radius: 92, oval: 1, arms: 4, twist: 2.4, speed: 0.12, sparks: 28, bright: 100, tone: 20, warm: 50, tapnext: true, fdLen: 8, fdStars: 60, fdClouds: 50, fdGlow: 100, style: 0, stars: 3, fade: false, fadeSets: [{ core: "#ff3d00", rim: "#ffd36b" }], fadeSel: 0, fadesec: 8, rimsmooth: 0, ripples: 2, rspeed: 0.09, glow: 0.55, drift: true, portrait: false, scenes: [], holdsec: 10, scenefade: 2, frame: 50, crossw: 46, beam: 14, bar: 32, crossFill: 3, crossOut: 255, crossCol: "", crossRipple: 0, rimw: 100, ripGrad: 0, ripC1: "#ffd36b", ripC2: "#ff2d8a", ripC3: "#8a3dff", ripC4: "#3de0ff", woodGrain: 0, cfBg: 0, cfGap: 80, cfTgt: 0, cfPal: 0, cfTwist: 6, cfWob: 30, cfFlow: 20, reverse: false, spaceCols: ["#4a2c1a", "#ff5c9a", "#6ea8ff", "#fff0cf"], addr: "0x3C", tint: "blue", c1: PRESETS.Rift[0], c2: PRESETS.Rift[1] };
 let S = { ...DEFAULTS };
 try { Object.assign(S, JSON.parse(localStorage.getItem("portal-studio") || "{}")); } catch (e) {}
 if (!MODELS[S.model]) S.model = DEFAULTS.model;
@@ -630,7 +464,7 @@ if (!(S.fdLen >= 2 && S.fdLen <= 30)) S.fdLen = 8;
 if (!(S.fdStars >= 0 && S.fdStars <= 100)) S.fdStars = 60;
 if (!(S.fdClouds >= 0 && S.fdClouds <= 100)) S.fdClouds = 50;
 if (!(S.fdGlow >= 20 && S.fdGlow <= 150)) S.fdGlow = 100;
-if (!(Number.isInteger(S.style) && S.style >= 0 && S.style <= 17)) S.style = 0;
+if (!(Number.isInteger(S.style) && S.style >= 0 && (S.style <= 17 || S.style === 20 || S.style === 21))) S.style = 0;
 if (!(S.crossw >= 25 && S.crossw <= 100)) S.crossw = 46;
 if (typeof S.crossCol !== "string" || !/^(#[0-9a-fA-F]{6})?$/.test(S.crossCol)) S.crossCol = "";   // "" = the cross uses the main colours
 if (!(S.beam >= 5 && S.beam <= 30)) S.beam = 14;
@@ -1688,8 +1522,175 @@ function tftFrame() {
   t += S.speed;
   if (t > TWO_PI * 100) t -= TWO_PI * 100;
 }
+// ---- Cross fractals (preview): 20 Cross of Crosses, 21 Cross Tunnel — the same drawing as the board's ----
+const CF = { z: 0, tm: 0, ph: 0, last: 0, pal: -1, bri: -1, R: new Uint8Array(256), G: new Uint8Array(256), B: new Uint8Array(256), jit: null,
+  lvR: new Int32Array(24), lvG: new Int32Array(24), lvB: new Int32Array(24), inR: new Int32Array(24), inG: new Int32Array(24), inB: new Int32Array(24),
+  edR: new Int32Array(24), edG: new Int32Array(24), edB: new Int32Array(24), lvT: new Float32Array(24), core: new Uint8Array(64), glow: new Uint8Array(64), halo: new Uint8Array(64) };
+const CF_PALS = [
+  [[0, 5, 26], [13, 89, 242], [140, 242, 255], [255, 255, 255], [51, 26, 179], [0, 5, 26]],
+  [[13, 0, 0], [153, 13, 0], [255, 115, 13], [255, 230, 102], [204, 51, 0], [13, 0, 0]],
+  null,
+  [[20, 10, 0], [140, 82, 13], [255, 217, 115], [255, 255, 217], [153, 89, 13], [20, 10, 0]],
+  [[5, 0, 20], [89, 13, 153], [242, 102, 242], [102, 179, 255], [38, 13, 115], [5, 0, 20]]];
+const CF_PAL_NAMES = ["Portal blue", "Fire", "Rainbow", "Gold", "Purple space"];
+const CF_BG_NAMES = ["Plain", "Stars", "Rays of light", "Ripples", "Plasma", "Stained glass", "Little crosses"];
+const cfHash32 = n => { n = (n ^ 61) ^ (n >>> 16); n = Math.imul(n, 9); n ^= n >>> 4; n = Math.imul(n, 0x27d4eb2d); n ^= n >>> 15; return n >>> 0; };
+const cfHash = (a, b) => cfHash32((Math.imul(a, 73856093) ^ Math.imul(b, 19349663)) >>> 0);
+const cfH01 = (a, b) => (cfHash(a, b) & 65535) / 65536;
+const cfFrac = x => x - Math.floor(x);
+const cfIdx = x => (cfFrac(x) * 256) & 255;
+const cfExp = x => { if (x < -15) return 0; let y = 1 + x * 0.0625; y *= y; y *= y; y *= y; y *= y; return y; };
+function cfBuildPal() {
+  const p = S.cfPal < 5 ? S.cfPal : 0, k = S.bright / 100;
+  for (let i = 0; i < 256; i++) {
+    const t = i / 256, c = [0, 0, 0];
+    if (p === 2) for (let j = 0; j < 3; j++) c[j] = 255 * (0.5 + 0.5 * Math.cos(6.2832 * (t + 0.33 * j)));
+    else { const s = t * 5, a = Math.floor(s), u = s - a, u2 = u * u * (3 - 2 * u), P = CF_PALS[p]; for (let j = 0; j < 3; j++) c[j] = P[a][j] + (P[a + 1][j] - P[a][j]) * u2; }
+    CF.R[i] = c[0] * k; CF.G[i] = c[1] * k; CF.B[i] = c[2] * k;
+  }
+  CF.pal = S.cfPal; CF.bri = S.bright;
+}
+function cfPrep(style, W, H) {
+  if (CF.pal !== S.cfPal || CF.bri !== S.bright) cfBuildPal();
+  if (!CF.jit) {
+    for (let i = 0; i < 64; i++) { CF.core[i] = 200 * Math.exp(-i / 1.1); CF.glow[i] = 230 * Math.exp(-i / 3.5); CF.halo[i] = 90 * Math.exp(-i * 4 / 10); }
+    CF.jit = new Uint8Array(256 * 3);
+    for (let k = 0; k < 256; k++) { CF.jit[k * 3] = cfH01(k >> 4, k & 15) * 255; CF.jit[k * 3 + 1] = cfH01((k & 15) + 5, (k >> 4) + 2) * 255; CF.jit[k * 3 + 2] = cfHash(k + 3, k * 7 + 11) & 255; }
+  }
+  const now = performance.now() / 1000, secs = CF.last ? Math.min(0.3, now - CF.last) : 0; CF.last = now;
+  CF.z += secs * S.speed; CF.tm += secs; CF.ph += secs * (S.cfFlow / 100 * 0.15 + (style === 21 ? 0.02 : 0));
+  const R = CF.R, G = CF.G, B = CF.B;
+  if (style === 20) {
+    const g = S.cfGap / 100; CF.SC = g / 4; CF.OX = (1 - 0.75 * g) / 2; CF.OY = (1 - g) / 2;
+    const z = cfFrac(CF.z), cj = S.cfTgt ? 2 : 1, CX = 1 + CF.OX, CY = cj + CF.OY, FU = CX / (1 - CF.SC), FV = CY / (1 - CF.SC);
+    const s = Math.exp(z * Math.log(1 / CF.SC)), view = 4.6 * (W > H ? 0.78 : 1);
+    let ppu = H / view * s, u = FU - (W / 2) / ppu, v = FV - (H / 2) / ppu, du = 1 / ppu;
+    for (let k = 0; k < 3; k++) { u = CX + u * CF.SC; v = CY + v * CF.SC; du *= CF.SC; ppu /= CF.SC; }
+    CF.U0 = u; CF.V0 = v; CF.DU = du; CF.PPU = ppu;
+    for (let d = 0; d < 24; d++) {
+      const t = (d - 3) - z; CF.lvT[d] = t;
+      const kk = (0.26 + 0.10 * Math.sin(t * 1.7)) * (S.cfBg ? 0.45 : 1);
+      let i = cfIdx(t * 0.22 + CF.ph); CF.lvR[d] = R[i] * kk; CF.lvG[d] = G[i] * kk; CF.lvB[d] = B[i] * kk;
+      i = cfIdx(t * 0.22 + CF.ph + 0.08); CF.edR[d] = R[i]; CF.edG[d] = G[i]; CF.edB[d] = B[i];
+      i = cfIdx(t * 0.22 + CF.ph + 0.04); CF.inR[d] = R[i] * 230 >> 8; CF.inG[d] = G[i] * 230 >> 8; CF.inB[d] = B[i] * 230 >> 8;
+    }
+  } else {
+    const z = cfFrac(CF.z * 1.6), tw = S.cfTwist * 0.0174533;
+    CF.TR = 0.55; CF.S = Math.exp(z * Math.log(1 / CF.TR));
+    const rot = -z * tw; CF.Rc = Math.cos(rot); CF.Rs = Math.sin(rot); CF.Ct = Math.cos(tw); CF.St = Math.sin(tw);
+    CF.U = Math.min(W, H) * 0.42; CF.Oy = H * 0.42;
+    CF.K4 = CF.TR ** 4; CF.C4 = Math.cos(4 * tw); CF.S4 = Math.sin(4 * tw); CF.Sc0 = 1 / (CF.S * CF.K4); CF.IS = 1 / CF.S;
+    for (let d = 0; d < 24; d++) {
+      const t = (d - 4) - z; CF.lvT[d] = t;
+      const band = 0.5 + 0.5 * Math.sin(t * 3.1416 + CF.tm * 2.5), k = 0.07 + 0.10 * band;
+      const i = cfIdx(t * 0.13 + CF.ph), i2 = cfIdx(t * 0.13 + CF.ph + 0.5);
+      CF.lvR[d] = R[i2] * k; CF.lvG[d] = G[i2] * k; CF.lvB[d] = B[i2] * k;
+      CF.edR[d] = R[i]; CF.edG[d] = G[i]; CF.edB[d] = B[i];
+    }
+  }
+}
+function cfBack(u, v, ppu, t, c) {          // what fills the space between the crosses (adds to c = [r, g, b])
+  const dx = u - 1.5, dy = v - 1.3333, R = CF.R, G = CF.G, B = CF.B, tm = CF.tm, ph = CF.ph;
+  switch (S.cfBg) {
+    case 1: {
+      const N = 7, gx = Math.floor(u * N), gy = Math.floor(v * N); let lum = 0;
+      if (ppu >= N * 7) {
+        const h = cfHash(gx, gy + Math.round(t) * 31);
+        if ((h & 255) < 140) {
+          const sx = (gx + 0.2 + 0.6 * cfH01(gy, gx)) / N, sy = (gy + 0.2 + 0.6 * cfH01(gx + 7, gy + 3)) / N;
+          const ex = (u - sx) * ppu, ey = (v - sy) * ppu, sz = 0.7 + 1.6 * ((h >>> 8) & 255) / 255, d2 = (ex * ex + ey * ey) / (sz * sz);
+          if (d2 < 4) lum = 255 * cfExp(-d2) * (0.55 + 0.45 * Math.sin(tm * (1.5 + 3 * (h & 255) / 255) + (h >>> 16)));
+        }
+      }
+      const neb = 0.12 * (0.5 + 0.5 * Math.sin(u * 2.1 + v * 1.3 + tm * 0.2)), i = cfIdx(t * 0.22 + ph + 0.3);
+      c[0] += lum + R[i] * neb; c[1] += lum + G[i] * neb; c[2] += lum + B[i] * neb; return;
+    }
+    case 2: {
+      const a = Math.atan2(dy, dx), rr = Math.hypot(dx, dy);
+      const c1 = 0.5 + 0.5 * Math.cos(a * 14 + tm * 0.6), c2 = 0.5 + 0.5 * Math.cos(a * 7 - tm * 0.35);
+      const w = (c1 ** 5 * 0.8 + c2 ** 8 * 0.5) * cfExp(-rr * 0.45), i = cfIdx(t * 0.22 + ph + 0.15);
+      c[0] += w * (153 + 0.4 * R[i]); c[1] += w * (140 + 0.4 * G[i]); c[2] += w * (102 + 0.4 * B[i]); return;
+    }
+    case 3: {
+      const rr = Math.hypot(dx, dy), s = 0.5 + 0.5 * Math.sin(rr * 16 - tm * 3), w = s * s * s * cfExp(-rr * 0.35) * 0.8, i = cfIdx(t * 0.22 + ph + rr * 0.08);
+      c[0] += R[i] * w; c[1] += G[i] * w; c[2] += B[i] * w; return;
+    }
+    case 4: {
+      const rr = Math.hypot(dx, dy), p = Math.sin(u * 3.1 + tm) + Math.sin(v * 2.3 - tm * 1.3) + Math.sin((u + v) * 2.2 + tm * 0.7) + Math.sin(rr * 4.5 - tm);
+      const i = cfIdx(p * 0.18 + t * 0.22 + ph); c[0] += R[i] * 140 >> 8; c[1] += G[i] * 140 >> 8; c[2] += B[i] * 140 >> 8; return;
+    }
+    case 5: {
+      const N = 3, gx = Math.floor(u * N), gy = Math.floor(v * N); let d1 = 99, d2 = 99, id = 0;
+      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+        const ix = gx + ox, iy = gy + oy, k = ((ix & 15) << 4) | (iy & 15);
+        const ex = u - (ix + 0.15 + CF.jit[k * 3] * 0.7 / 255) / N, ey = v - (iy + 0.15 + CF.jit[k * 3 + 1] * 0.7 / 255) / N, dd = ex * ex + ey * ey;
+        if (dd < d1) { d2 = d1; d1 = dd; id = k; } else if (dd < d2) d2 = dd;
+      }
+      const lead = Math.min(1, (Math.sqrt(d2) - Math.sqrt(d1)) * ppu / 2.5), f = CF.jit[id * 3 + 2] / 255, w = lead * (0.45 + 0.25 * Math.sin(tm * 0.8 + f * 20));
+      const i = cfIdx(f * 0.9 + t * 0.22 + ph); c[0] += R[i] * w; c[1] += G[i] * w; c[2] += B[i] * w; return;
+    }
+    case 6: {
+      const N = 8, fx = u * N - Math.floor(u * N) - 0.5, fy = v * N - Math.floor(v * N) - 0.5, ax = Math.abs(fx), ay = Math.abs(fy);
+      if ((ax < 0.09 && ay < 0.32) || (ay < 0.09 && ax < 0.24 && fy > -0.2 && fy < 0.02)) {
+        const w = 0.35 + 0.15 * Math.sin(tm * 2 + u * 3 + v * 2), i = cfIdx(t * 0.22 + ph + 0.5);
+        c[0] += R[i] * w; c[1] += G[i] * w; c[2] += B[i] * w;
+      }
+    }
+  }
+}
+function cfDist(u, v) {
+  const ax = u < 1 ? 1 - u : u > 2 ? u - 2 : 0, ay = v < 0 ? -v : v > 4 ? v - 4 : 0, bx = u < 0 ? -u : u > 3 ? u - 3 : 0, by = v < 1 ? 1 - v : v > 2 ? v - 2 : 0;
+  return Math.sqrt(Math.min(ax * ax + ay * ay, bx * bx + by * by));
+}
+const cfC = [0, 0, 0];
+function cfPixCC(u, v) {                     // -> 0xAABBGGRR
+  const SC = CF.SC, iSC = 1 / SC; let ppu = CF.PPU, d = 0;
+  for (;;) {
+    if (!((u >= 1 && u <= 2 && v >= 0 && v <= 4) || (u >= 0 && u <= 3 && v >= 1 && v <= 2))) {
+      const dd = cfDist(u, v); cfC[0] = CF.lvR[d]; cfC[1] = CF.lvG[d]; cfC[2] = CF.lvB[d];
+      if (S.cfBg) cfBack(u, v, ppu, CF.lvT[d], cfC);
+      const e = 1 - dd * ppu / 3.5;
+      if (e > 0) { cfC[0] += CF.edR[d] * e; cfC[1] += CF.edG[d] * e; cfC[2] += CF.edB[d] * e; }
+      break;
+    }
+    if (ppu < 2 || d >= 23) { cfC[0] = CF.inR[d]; cfC[1] = CF.inG[d]; cfC[2] = CF.inB[d]; break; }
+    const fi = Math.trunc(u), fj = Math.trunc(v);
+    u = (u - fi - CF.OX) * iSC; v = (v - fj - CF.OY) * iSC; ppu *= SC; d++;
+  }
+  return 0xFF000000 | (Math.min(255, cfC[2]) << 16) | (Math.min(255, cfC[1]) << 8) | Math.min(255, cfC[0]);
+}
+const cfInT = (x, y) => (Math.abs(x) <= 0.2 && y >= -1 && y <= 2.1) || (Math.abs(x) <= 0.78 && Math.abs(y) <= 0.2);
+const cfBox = (x, y, cy, hx, hy) => { const dx = Math.abs(x) - hx, dy = Math.abs(y - cy) - hy; return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0); };
+function cfPixTun(px, py) {
+  const wob = S.cfWob * 0.0006;
+  if (wob > 0) { const r = Math.hypot(px, py), qx = px + wob * Math.sin(py * 5 + CF.tm * 1.3 + r * 3), qy = py + wob * Math.sin(px * 5 - CF.tm * 1.1 + r * 3); px = qx; py = qy; }
+  let wx = (px * CF.Rc - py * CF.Rs) * CF.IS, wy = (px * CF.Rs + py * CF.Rc) * CF.IS;
+  { const ax = (wx * CF.C4 - wy * CF.S4) * CF.K4, ay = (wx * CF.S4 + wy * CF.C4) * CF.K4; wx = ax; wy = ay; }
+  let scale = CF.Sc0, d = 0; const iTR = 1 / CF.TR;
+  while (d < 23 && cfInT(wx, wy) && CF.U * scale >= 1.5) { const ax = (wx * CF.Ct + wy * CF.St) * iTR, ay = (-wx * CF.St + wy * CF.Ct) * iTR; wx = ax; wy = ay; scale *= CF.TR; d++; }
+  const sd = Math.min(cfBox(wx, wy, 0.55, 0.2, 1.55), cfBox(wx, wy, 0, 0.78, 0.2));
+  const pd = Math.min(63, Math.trunc(Math.abs(sd) * CF.U * scale)), core = CF.core[pd], k = CF.glow[pd] + CF.halo[pd >> 2];
+  const r = Math.min(255, CF.lvR[d] + (CF.edR[d] * k >> 8) + core), g = Math.min(255, CF.lvG[d] + (CF.edG[d] * k >> 8) + core), b = Math.min(255, CF.lvB[d] + (CF.edB[d] * k >> 8) + core);
+  return 0xFF000000 | (b << 16) | (g << 8) | r;
+}
+const cfAvg = (a, b) => (0xFF000000 | ((((a & 0xFEFEFE) >>> 1) + ((b & 0xFEFEFE) >>> 1)) & 0xFFFFFF)) >>> 0;
+function cfRenderJS(out, style, W, H) {        // one frame into out (W x H, 0xAABBGGRR), drawn like the board: big screens every other pixel and row, blended
+  cfPrep(style, W, H);
+  const halfX = W >= 400, halfY = W >= 400 || H >= 400, iU = style === 21 ? 1 / CF.U : 0, ox = W / 2;
+  const pix = style === 20 ? (x, y) => cfPixCC(CF.U0 + x * CF.DU, CF.V0 + y * CF.DU) : (x, y) => cfPixTun((x - ox) * iU, (y - CF.Oy) * iU);
+  const row = y => {
+    const o = y * W;
+    if (!halfX) { for (let x = 0; x < W; x++) out[o + x] = pix(x, y); return; }
+    let c0 = pix(0, y);
+    for (let x = 0; x < W; x += 2) { const c2 = x + 2 < W ? pix(x + 2, y) : c0; out[o + x] = c0; if (x + 1 < W) out[o + x + 1] = cfAvg(c0, c2); c0 = c2; }
+  };
+  if (!halfY) { for (let y = 0; y < H; y++) row(y); return; }
+  for (let y = 0; y < H; y += 2) row(y);
+  for (let y = 1; y < H; y += 2) { const a = (y - 1) * W, b = y + 1 < H ? (y + 1) * W : a, o = y * W; for (let x = 0; x < W; x++) out[o + x] = cfAvg(out[a + x], out[b + x]); }
+}
 let tftOut2 = null, tftOutSp = null;
 function tftRender(out, style) {                      // one frame of one style into out
+  if (style === 20 || style === 21) { cfRenderJS(out, style, TW, TH); return; }   // the cross fractals
   const R = S.radius, arms = S.arms;
   const isCross = (style >= 8 && style <= 13) || style === 17, wood = style === 17;
   let fill = isCross ? S.crossFill : style;               // crosses: the chosen style is drawn inside (the Wooden cross: behind)
@@ -1827,4 +1828,758 @@ function sizeCanvas() {
   cv.style.aspectRatio = `${W} / ${H}`;
   cv.style.imageRendering = M.px > 1 ? "pixelated" : "";   // big screens drawn at half size: show the doubled pixels
   $("module").style.maxWidth = M.kind === "tft" ? (M.rect ? (W > H ? "460px" : W === H ? "340px" : "290px") : "340px") : H > W * 0.75 ? "380px" : W < 128 ? "440px" : "560px";
+}
+function paint() {
+  g.fillStyle = "#020305"; g.fillRect(0, 0, cv.width, cv.height);
+  g.shadowBlur = K * 1.2;
+  if (M.kind === "rgb") {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (buf[y * W + x]) {
+      const c = pal[shadeIdx(x, y)]; g.fillStyle = c; g.shadowColor = c;
+      g.fillRect(x * K + .3, y * K + .3, K - .6, K - .6);
+    }
+  } else {
+    const [, top, rest] = TINTS[S.tint] || TINTS.white;
+    for (let y = 0; y < H; y++) {
+      const c = y < 16 ? top : rest;      // two-colour modules: top 16 rows are yellow
+      g.fillStyle = c; g.shadowColor = c;
+      for (let x = 0; x < W; x++) if (buf[y * W + x]) g.fillRect(x * K + .3, y * K + .3, K - .6, K - .6);
+    }
+  }
+  g.shadowBlur = 0;
+}
+let last = 0;
+function loop(now) {
+  if (now - last >= 1000 / 28) { last = now; if (M.kind === "tft") tftFrame(); else { step(); paint(); } }
+  requestAnimationFrame(loop);
+}
+
+// ---------------- sketch generator ----------------
+const f2 = v => Number(v).toFixed(2);
+const hex6 = h => h.slice(1).toUpperCase();
+function tftSketch() {
+const B = boardOf();
+const rot = M.rect && M.w !== M.h ? (M.w > M.h ? 1 : 0) : 0;
+const hz = M.driver === "st7735" ? Math.min(B.hz, 27) : M.driver === "ili9341" ? Math.min(B.hz, 40) : M.driver === "st7796" ? Math.min(B.hz, 80) : B.hz;
+const DISP = {
+  gc9a01:  { inc: "Adafruit_GC9A01A.h", decl: "Adafruit_GC9A01A tft(PIN_CS, PIN_DC, PIN_RST);", begin: "  tft.begin(SPI_HZ);" },
+  st7789:  { inc: "Adafruit_ST7789.h", decl: "Adafruit_ST7789 tft(PIN_CS, PIN_DC, PIN_RST);",
+             begin: `  tft.init(${M.nw}, ${M.nh});              // the panel's own size (some modules without a CS pin need: tft.init(${M.nw}, ${M.nh}, SPI_MODE3))\n  tft.setSPISpeed(SPI_HZ);\n  tft.setRotation(${rot});                // ${rot ? "landscape" : M.w === M.h ? "square" : "portrait"}` },
+  st7735:  { inc: "Adafruit_ST7735.h", decl: "Adafruit_ST7735 tft(PIN_CS, PIN_DC, PIN_RST);",
+             begin: `  tft.initR(INITR_BLACKTAB);             // if the colours or edges look wrong, try INITR_GREENTAB or INITR_REDTAB\n  tft.setSPISpeed(SPI_HZ);\n  tft.setRotation(${rot});                // ${rot ? "landscape" : "portrait"}` },
+  st7796:  { inc: "Adafruit_ST7796S.h", decl: "Adafruit_ST7796S tft(PIN_CS, PIN_DC, PIN_RST);   // needs the Adafruit ST7735 and ST7789 Library 1.11 or newer",
+             begin: `  tft.init(${M.nw}, ${M.nh}, 0, 0, ST7796S_BGR);   // if red and blue look swapped, change ST7796S_BGR to ST7796S_RGB\n  tft.invertDisplay(true);               // if the colours look like a photo negative, change true to false\n  tft.setSPISpeed(SPI_HZ);\n  tft.setRotation(${rot});                // ${rot ? "landscape" : "portrait"}` },
+  ili9341: { inc: "Adafruit_ILI9341.h", decl: "Adafruit_ILI9341 tft(PIN_CS, PIN_DC, PIN_RST);",
+             begin: `  tft.begin(SPI_HZ);\n  tft.setRotation(${rot});                // ${rot ? "landscape" : "portrait"}` },
+}[M.driver];
+return `// Vortex Portal for the ${M.spec.split(" · ")[0]} ${M.chip} colour display (${M.w}x${M.h}${M.rect && M.w !== M.h ? (rot ? ", landscape" : ", portrait") : ""})
+// Generated by Display Studio for: ${B.name}
+// Works on ESP32 (all types), Raspberry Pi Pico (RP2040/RP2350) and Teensy 4.
+// To use another board, change the pin numbers in the "Board" section below.
+// Libraries (Library Manager): "${M.lib}" and "Adafruit GFX Library".
+// The portal is drawn in the centre of the screen.
+//
+${B.builtin ? "// Wiring:  none, the screen is built into the board. Tools -> Board -> ESP32 Dev Module." : `// Wiring:  VCC->3V3  GND->GND  SCL->${B.lab.sck}  SDA->${B.lab.mosi}  DC->${B.lab.dc}  CS->${B.lab.cs}  RST->${B.lab.rst}  BLK->3V3 (if present)`}
+//
+// Live tuning: plug in over USB, open Display Studio in Chrome or Edge and click
+// "Connect over USB". The board saves the settings.
+
+#if defined(__AVR__) || defined(ESP8266)
+  #error "This screen needs a board with more memory: an ESP32, Raspberry Pi Pico or Teensy 4."
+#endif
+
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <${DISP.inc}>
+#include <EEPROM.h>
+#include <math.h>
+#if defined(ESP32)
+  #include <freertos/FreeRTOS.h>
+  #include <freertos/semphr.h>
+#endif
+#if defined(ESP32) && __has_include("rom/tjpgd.h")
+  #define HAS_PICS 1                      // pictures: stored in flash, unpacked by the chip's built-in JPEG decoder
+  #include <esp_partition.h>
+  #include "rom/tjpgd.h"
+#else
+  #define HAS_PICS 0
+#endif
+
+${pinBlock(B, "spi")}
+${B.dma && M.kind === "tft" ? "#define LCD_DMA   1               // the screen is fed by DMA on the chip's own SPI pins (0 = the slower Arduino way)\n" : ""}#define SPI_HZ    ${hz}000000UL   // ${hz >= 80 ? "turbo: if the picture glitches or stays dark, change to 40000000UL" : "screen speed; lower it if the picture glitches"}
+
+${B.tap && M.kind === "tft" ? `#define TAP_PIN    ${B.tap.irq}              // touch screen: tap it to show the next style (or scene)
+#define TAP_CS     ${B.tap.cs}
+#define HOME_PAGE  ${B.home && turns(M) && M.rect ? 1 : 0}              // Wooden cross: a home button, and a page to choose the wood, background and colours on the screen
+#define HOME_DUMP  0                     // 1: the HOMEDUMP command prints the page over USB (for testing)
+` : "#define TAP_PIN    -1\n#define HOME_PAGE  0\n"}${B.show && M.kind === "tft" ? "#define SHOW_BOARD 1                    // the Picture Display: your own photos, GIFs and videos (sound from the speaker socket)\n#define SHOW_BL    " + B.show.bl + "                    // backlight (dimmed for fades)\n#define SHOW_DAC   " + B.show.dac + "                    // sound out\n#define SHOW_AMP   " + B.show.amp + "                     // the amplifier: on while low\n" : "#define SHOW_BOARD 0\n"}#define PX         ${M.px || 1}            // ${(M.px || 1) > 1 ? "each drawn pixel fills 2 x 2 screen pixels, so this big screen moves smoothly" : "one drawn pixel per screen pixel"}
+${turns(M) ? `#define TURNS      1                     // the screen can be turned (portrait / landscape) live from the Studio
+#define SCR_WMAX   ${Math.max(M.w, M.h)}          // the long side
+#define SCR_SHORT  ${Math.min(M.w, M.h)}
+int      SCR_W = ${M.w}, SCR_H = ${M.h};   // drawing width and height (swapped when the screen is turned)
+int      QX = ${M.w >> 1}, QY = ${M.h >> 1};   // centre of the screen
+bool     PORTRAIT = ${M.h > M.w}, wantPortrait = ${M.h > M.w};
+bool     FLIP = ${!!S.flip}, wantFlip = ${!!S.flip};   // turned the other way round (180°)
+volatile bool turnPending = false;       // the screen itself still has to be told
+const uint8_t MADCTL_ROT[4] = { 0x48, 0x28, 0x88, 0xE8 };   // (DMA screens: the panel's own codes for the four directions)
+inline uint8_t rotNow() { return PORTRAIT ? (FLIP ? 2 : 0) : (FLIP ? 3 : 1); }   // the screen's rotation: landscape 1, then a quarter turn at a time` : `#define TURNS      0
+#define SCR_W      ${M.w}          // drawing width and height (the screen is PX times bigger)
+#define SCR_H      ${M.h}
+#define SCR_WMAX   SCR_W
+#define QX         ${M.w >> 1}          // centre of the screen
+#define QY         ${M.h >> 1}
+const bool PORTRAIT = false, wantPortrait = false, wantFlip = false;`}
+#define TQX        (SCR_W - QX)
+#define TQY        (SCR_H - QY)
+int      STRIP = 9600 / SCR_WMAX;          // rows drawn per chunk (fewer if memory is tight)
+#define MAX_SPARKS 30
+#define MAX_PICS   8                     // picture slots
+#define PORTAL     255                   // scene number for the portal itself
+#define RADIUS_MAX ${Math.max(...(turns(M) ? [M, { ...M, w: M.h, h: M.w }] : [M]).flatMap(m => [rmax(m), ...[8, 9, 10, 11, 12, 13].map(st => crossMax(m, st))]))}
+#define SP_EXT     ${spaceExt(M)}          // space styles: distance from the centre to the edge of the picture area
+
+// ---------- Settings baked in from the Studio ----------
+float    RADIUS     = ${f2(S.radius)};   // portal size in pixels
+float    OVAL       = ${f2(S.oval)};    // 1.0 = round, higher = wide oval
+uint8_t  ARMS       = ${S.arms};       // spiral arms
+float    TWIST      = ${f2(S.twist)};    // how tightly the arms coil
+float    SPEED      = ${f2(S.speed)};    // spin per frame
+uint8_t  NUM_SPARKS = ${S.sparks};      // particles being sucked in
+bool     DRIFT      = ${S.reverse};    // Wormhole: true = Reverse, the rings fly out toward you (LCDs don't need burn-in drift)
+uint32_t COLOR_CORE = 0x${hex6(S.c1)};  // inner colour
+uint32_t COLOR_RIM  = 0x${hex6(S.c2)};  // outer colour
+uint32_t RIP_C[4]   = { 0x${hex6(S.ripC1)}, 0x${hex6(S.ripC2)}, 0x${hex6(S.ripC3)}, 0x${hex6(S.ripC4)} };   // crosses, Gradient ripple: each ring changes through these four colours
+uint8_t  BRIGHTNESS = ${S.bright};     // 10-100 %: dims the portal's colours
+uint8_t  STYLE      = ${S.style};       // 0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy (Hubble-style spiral), 5 Black hole, 6 Cartoon Swirl, 7 Cartoon Sticker,
+                                // crosses: 8 Latin, 9 Celtic, 10 Budded, 11 Patriarchal, 12 Orthodox, 13 Pattee (ESP32 boards)
+                                // more space: 14 Nebula, 15 Wormhole, 16 Meteor Shower
+                                // cross fractals: 20 Cross of Crosses, 21 Cross Tunnel
+uint8_t  CF_BG = ${S.cfBg}, CF_GAP = ${S.cfGap}, CF_TGT = ${S.cfTgt}, CF_PAL = ${S.cfPal}, CF_TWIST = ${S.cfTwist}, CF_WOB = ${S.cfWob}, CF_FLOW = ${S.cfFlow};
+uint8_t  CROSS_RIPPLE = ${ripCode(S.style, S)};      // crosses: Ripple, rings echoing the outline inside the cross (0 off, 1 outward, 2 inward; +3 Gradient colours); the Wooden cross: its wood (0 classic, 1 pine, 2 rustic oak, 3 walnut, 4 cherry, 5 mahogany, 6 cedar, 7 driftwood, 8 ebony, 9 maple, 10 olive wood)
+uint8_t  CROSS_FILL = ${S.crossFill};       // crosses: what's drawn inside (0 Vortex, 1 Toon Spiral, 2 Starburst, 3 Hyperspace, 4 Galaxy, 5 Black hole, 6 Cartoon Swirl, 14 Nebula, 15 Wormhole, 16 Meteor Shower, 11 Solid colour; the Wooden cross: what's behind it, 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light)
+uint32_t SPACE_COLS[4] = { ${S.spaceCols.map(c => "0x" + hex6(c)).join(", ")} };   // Galaxy, Nebula, Wormhole, Meteor Shower: four colours blended together
+uint8_t  CROSS_W    = ${S.crossw};      // crosses: how far the crossbar reaches, % of the lower arm (25-100)
+uint8_t  BEAM       = ${S.beam};      // crosses: beam thickness, % of the portal size (5-30)
+uint8_t  BAR        = ${S.bar};      // crosses: crossbar height (20-50, 50 = all arms the same length)
+uint8_t  STARS      = ${S.stars};       // space styles: star density (1-6)
+bool     FADE_ON    = ${S.fade};    // fade through the colour sets
+uint8_t  FADE_COUNT = ${S.fadeSets.length};       // extra colour sets after the main colours (1-3)
+uint32_t FADE_COLS[6] = { ${[0,1,2].map(i => S.fadeSets[i] ? `0x${hex6(S.fadeSets[i].core)}, 0x${hex6(S.fadeSets[i].rim)}` : "0x000000, 0x000000").join(", ")} };   // core, rim pairs
+uint8_t  RIM_SMOOTH = ${S.rimsmooth};       // 0 = wobbly energy edge, 100 = perfectly smooth ring
+uint32_t CROSS_COL  = 0x${colCode(S.crossCol).toString(16).toUpperCase()};   // glowing crosses: the outline colour (0x1000000: the main colours)
+uint8_t  CROSS_OUT  = ${bgOut(S)};       // glowing crosses: what's drawn outside (255 black, or a portal or space style)
+uint8_t  RIM_W      = ${S.rimw};      // Rim thickness, % (25-200): the glowing edge, or the Cartoon Sticker's outline
+float    FADE_SECS  = ${S.fadesec};       // seconds for each fade (${Math.floor(S.fadesec / 60)} min ${S.fadesec % 60} sec)
+uint8_t  RIPPLES    = ${S.ripples};       // Starburst: rings expanding at once (0-6)
+float    RIP_SPEED  = ${f2(S.rspeed)};    // Starburst: ripple speed (0.03-0.30)
+float    GLOW_SIZE  = ${f2(S.glow)};    // Starburst: centre glow size (0.30-0.90)
+uint8_t  SCENE_COUNT = ${sceneList().length};      // scenes shown in turn (0 = just the portal)
+uint8_t  SCENES[8]  = { ${[...sceneList(), ...Array(8).fill(255)].slice(0, 8).join(", ")} };   // 255 = the portal, 0-7 = pictures, 128-135 = portal around a picture
+float    HOLD_SECS  = ${S.holdsec};       // seconds each scene stays on screen
+float    SCENE_FADE = ${S.scenefade};       // seconds to fade into the next scene (0 = instant)
+uint8_t  FRAME_PCT  = ${S.frame};      // "portal around a picture" scenes (128 + picture): how much of the picture the portal covers, 10-95 %
+// --------------------------------------------------------
+
+// Changes every time you copy a new sketch, so freshly uploaded settings
+// win over ones saved earlier by live tuning.
+const uint32_t BUILD_ID = 0x${BUILD_ID}UL;
+
+${DISP.decl}
+${M.driver === "st7796" ? `
+// The ST7796's colour curve and voltages, as the panel maker sets them (the library leaves the factory defaults, which look washed out)
+void st7796Colours() {
+  const uint8_t unlock1[] = { 0xC3 }, unlock2[] = { 0x96 }, lock1[] = { 0x3C }, lock2[] = { 0x69 };
+  const uint8_t doca[] = { 0x40, 0x8A, 0x00, 0x00, 0x29, 0x19, 0xA5, 0x33 };
+  const uint8_t pw2[] = { 0x06 }, pw3[] = { 0xA7 }, vcom[] = { 0x18 };
+  const uint8_t gammaP[] = { 0xF0, 0x09, 0x0B, 0x06, 0x04, 0x15, 0x2F, 0x54, 0x42, 0x3C, 0x17, 0x14, 0x18, 0x1B };
+  const uint8_t gammaN[] = { 0xE0, 0x09, 0x0B, 0x06, 0x04, 0x03, 0x2B, 0x43, 0x42, 0x3B, 0x16, 0x14, 0x17, 0x1B };
+  tft.sendCommand(0xF0, unlock1, 1); tft.sendCommand(0xF0, unlock2, 1);
+  tft.sendCommand(0xE8, doca, 8);
+  tft.sendCommand(0xC1, pw2, 1); tft.sendCommand(0xC2, pw3, 1); tft.sendCommand(0xC5, vcom, 1);
+  tft.sendCommand(0xE0, gammaP, 14); tft.sendCommand(0xE1, gammaN, 14);
+  tft.sendCommand(0xF0, lock1, 1); tft.sendCommand(0xF0, lock2, 1);
+}
+` : ""}
+// Lookup tables: distance and angle for one quarter of the screen (mirrored for the rest)
+uint8_t  *rT, *aT;                     // TQX x TQY each, allocated in setup()
+uint8_t  colMap[SCR_WMAX];
+int8_t   sinT[256];
+int16_t  twistT[256], twist2T[256], edgeT[256];
+uint8_t  depthT[256], coreT[256], haloT[256], rimT[64], centerT[256];
+uint8_t  sbGlowT[256], sbRingT[256], sbOuterT[256], ripCrestT[256], ripTroughT[256];
+uint8_t  spCoreT[256], bhRingT[256], bhDiskT[256], bhStarT[256];
+uint16_t galFadeT[256];
+uint8_t  warpOn[768];                   // Hyperspace stars (kept, small: a big memory request could fail once memory is broken up, and Hyperspace fell back to the Vortex)
+int16_t  warpLo[768], warpHi[768];      // each streak this frame: the distances it covers (empty when off)...
+int32_t  warpA[768]; int16_t warpB[768];   // ...and its brightness along it, (A + B * distance) / 256
+int      bhHole = 20, twinkle = 0;
+int16_t  linT[256];
+uint16_t pal[256];
+uint32_t palRGB[256];                   // the same colours before rounding (smooth glows)
+uint16_t *stripBuf[2];                 // two strips: one is drawn while the other is sent (allocated in setup)
+uint16_t *picBuf = NULL;               // a third strip, for fading between scenes
+uint16_t *picBuf2 = NULL;              // core 1's own, so both cores can draw during a fade
+#if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
+  #define CORE_ID() (xPortGetCoreID() & 1)
+#else
+  #define CORE_ID() 0
+#endif
+struct SceneLook { uint8_t look; bool cross, wood; int spCY; float spU, spExt; };
+SceneLook lk[2];                        // what each core is drawing right now (both cores can draw different styles at once)
+int      crossYC = QY;                 // crosses: row of the crossing (the cross is centred, so this sits above the middle)
+bool     crossOn = false;               // a cross is being drawn (its outline is ready)
+int      spCY = QY;                     // centre row for the space styles (the crossing when inside a cross)
+
+// Dual-core chips (ESP32, ESP32-S3) draw on core 0 while core 1 feeds the screen.
+#if defined(ESP32) && !CONFIG_FREERTOS_UNICORE
+  #define DUAL_CORE 1
+#else
+  #define DUAL_CORE 0
+#endif
+#if SHOW_BOARD && HAS_PICS && DUAL_CORE
+  #define SHOW_ON 1                     // the Picture Display (style 22)
+  #if defined(CONFIG_IDF_TARGET_ESP32) && __has_include("driver/dac_continuous.h")
+    #define SHOW_AUDIO 1
+  #else
+    #define SHOW_AUDIO 0
+  #endif
+#else
+  #define SHOW_ON 0
+#endif
+#if defined(LCD_DMA) && LCD_DMA && DUAL_CORE && PX == 1 && defined(CONFIG_IDF_TARGET_ESP32)
+  #define USE_DMA 1                     // pixels go out by DMA while both cores draw
+  #include "driver/spi_master.h"
+  #include "esp_timer.h"
+  #include "esp_heap_caps.h"
+#else
+  #define USE_DMA 0
+#endif
+#if HOME_PAGE && !(DUAL_CORE && TURNS)
+  #undef HOME_PAGE
+  #define HOME_PAGE 0
+#endif
+
+// New settings from live tuning are applied between frames
+volatile bool havePending = false;
+
+struct Spark { float a, r; };
+Spark sparks[MAX_SPARKS];
+int16_t sparkX[MAX_SPARKS], sparkY[MAX_SPARKS];
+float t = 0;
+
+struct Saved { uint32_t id; float radius, oval, twist, speed; uint8_t arms, sparks, drift; uint32_t core, rim; uint8_t bright, style, ripples; float ripSpeed, glow; uint8_t stars, fadeOn, fadeCount; uint32_t fadeCols[6]; float fadeSecs; uint8_t rimSmooth; uint8_t sceneCount, scenes[8]; float holdSecs, sceneFade; uint8_t framePct, crossW, beam, bar; uint32_t spaceCols[4]; uint8_t crossFill, crossRipple, portrait, tone, warm, tapOff, fdLen, fdStars, fdClouds, fdGlow; };
+static_assert(sizeof(Saved) <= 128, "settings must fit the 128 bytes of EEPROM");
+
+// Scenes with their own settings: each "another style" scene can keep its own size, colours, speed...
+struct Look { float radius, oval, twist, speed, ripSpeed, glow; uint32_t core, rim, spaceCols[4]; uint8_t arms, sparks, drift, bright, ripples, stars, rimSmooth, fadeOn, style, crossFill, crossRipple, beam, crossW, bar; uint32_t ripC[4]; uint8_t rimW, crossOut; uint32_t crossCol; };
+struct Extra { uint32_t id; uint32_t ripC[4]; uint8_t rimW, crossOut; uint32_t crossCol; uint8_t cf[7]; };   // settings that don't fit the first 128 bytes
+struct SceneSaved { uint32_t id; uint8_t has[8]; Look look[8]; };
+#define EE_SIZE (128 + sizeof(SceneSaved) + sizeof(Extra))   // main settings, the scenes' own settings, then the extras
+#define EXTRA_AT (128 + sizeof(SceneSaved))
+uint32_t pendRipC[4]; bool pendRip = false;
+uint8_t  pendRimW = 100; bool pendRim = false;
+uint8_t  pendOut = 255; bool pendXout = false;
+uint32_t pendCol = 0x1000000; bool pendXcol = false;
+uint8_t  pendCf[7]; bool pendCfOn = false;   // the cross fractals' settings (CFR)
+void cfSet(const uint8_t *c) {            // the cross fractals' settings, checked
+  CF_BG = c[0] <= 6 ? c[0] : 0; CF_GAP = c[1] < 55 ? 55 : c[1] > 100 ? 100 : c[1]; CF_TGT = c[2] ? 1 : 0; CF_PAL = c[3] <= 4 ? c[3] : 0;
+  CF_TWIST = c[4] > 30 ? 30 : c[4]; CF_WOB = c[5] > 100 ? 100 : c[5]; CF_FLOW = c[6] > 100 ? 100 : c[6];
+}
+${sceneLooksBlock()}
+Look mainLook;                           // your main settings (the scenes without their own use these)
+Look pendLook[8]; uint8_t pendHas[8];    // scene settings from live tuning, applied between frames
+volatile bool scenePending = false;
+int8_t curLook = -1;                     // whose settings are loaded now (-1 = main)
+int8_t idxA = -1, idxB = -1;             // scene positions showing (-1 = not from the scene list)
+int    dipK = 256;                       // scenes with different settings fade through black: 256 = full brightness
+
+// ---------- tables ----------
+// Cartoon styles: smooth looping noise tables
+uint8_t nzA[32], nzB[64], nzC[256];
+uint32_t nzSeed = 12345;
+uint8_t nzRnd() { nzSeed = (nzSeed * 1103515245UL + 12345UL) & 0x7fffffffUL; return (nzSeed >> 16) & 255; }
+
+void nzTable(uint8_t *t, int len, int passes) {
+  int tmp[256], n[256];
+  for (int i = 0; i < len; i++) n[i] = nzRnd();
+  for (int p = 0; p < passes; p++) {
+    for (int i = 0; i < len; i++) tmp[i] = (n[(i + len - 1) % len] + 2 * n[i] + n[(i + 1) % len]) >> 2;
+    for (int i = 0; i < len; i++) n[i] = tmp[i];
+  }
+  int lo = 255, hi = 0;
+  for (int i = 0; i < len; i++) { if (n[i] < lo) lo = n[i]; if (n[i] > hi) hi = n[i]; }
+  for (int i = 0; i < len; i++) t[i] = (uint8_t)lroundf((n[i] - lo) * 255.0f / (hi - lo));
+}
+
+static inline __attribute__((always_inline)) int nz(const uint8_t *t, int mask, int x) {
+  int i = x >> 4, f = x & 15;
+  return (t[i & mask] * (16 - f) + t[(i + 1) & mask] * f) >> 4;
+}
+
+void buildGeometry() {
+  nzTable(nzA, 32, 1);
+  nzTable(nzB, 64, 1);
+  nzTable(nzC, 256, 2);
+  for (int qy = 0; qy < TQY; qy++) {
+    for (int qx = 0; qx < TQX; qx++) {
+      float fx = qx + 0.5f, fy = qy + 0.5f;
+      rT[qy * TQX + qx] = (uint8_t)min(255L, lroundf(sqrtf(fx * fx + fy * fy)));
+      aT[qy * TQX + qx] = (uint8_t)lroundf(atan2f(fy, fx) / (PI / 2) * 64);
+    }
+  }
+  for (int i = 0; i < 256; i++) sinT[i] = (int8_t)lroundf(127 * sinf(i * TWO_PI / 256));
+}
+
+void buildParams() {
+  float R = RADIUS;
+  for (int r = 0; r < 256; r++) {
+    float rn = max((float)r, 0.5f) / R, lr = logf(rn), x = min(rn, 1.0f);
+    twistT[r]  = (int16_t)(TWIST * 3.0f * lr * 40.74f);
+    twist2T[r] = (int16_t)(TWIST * 1.6f * lr * 40.74f);
+    depthT[r]  = (uint8_t)(255 * x * x * (3 - 2 * x));
+    coreT[r]   = (uint8_t)(210 * expf(-rn * rn * 18));
+    haloT[r]   = (uint8_t)(115 * expf(-r / R * ${M.rect ? "9.0f" : "3.2f"}));   // outer glow${M.rect ? ": short on this rectangle screen" : ""}
+    linT[r]    = (int16_t)(r * TWIST * 1.2f * 256 / R);
+    centerT[r] = (uint8_t)(55 * expf(-powf(rn * 2.2f, 2)));
+    // Starburst: glowing centre, soft rings near the centre, rays toward the rim
+    float sr = r / R, f1 = min(1.0f, sr / GLOW_SIZE), f2 = min(1.0f, max(0.0f, (sr - 0.15f) / 0.55f));
+    int inner = (int)(256 * (1 - f1 * f1 * (3 - 2 * f1)));
+    sbOuterT[r] = (uint8_t)min(255, (int)(256 * f2 * f2 * (3 - 2 * f2)));
+    sbRingT[r]  = (uint8_t)min(255, (inner * inner * inner) >> 16);
+    sbGlowT[r]  = (uint8_t)(105 * expf(-powf(sr / GLOW_SIZE * 1.4f, 2)));
+    // Space: bright core, galaxy arm fade, black hole ring and disk
+    spCoreT[r]  = (uint8_t)(230 * expf(-powf(rn / 0.16f, 2)));
+    galFadeT[r] = (uint16_t)max(0, (int)(256 * (1 - sr * 0.7f)));
+    float hr = 0.22f * R, dn = (sr - 0.22f) / 0.45f;
+    bhRingT[r]  = (uint8_t)(255 * expf(-powf((r - hr - 1.5f) / 1.8f, 2)));
+    bhDiskT[r]  = (dn >= 0 && dn < 1) ? (uint8_t)(235 - dn * 200) : 0;
+    bhStarT[r]  = dn > 0.85f ? 1 : 0;
+  }
+  for (int d = 0; d < 64; d++) rimT[d] = (uint8_t)(255 * expf(-powf(d * 9.0f / (R * RIM_W / 100.0f), 2)));   // Rim thickness
+  for (int x = 0; x < SCR_W; x++) {
+    int dx = x < QX ? QX - 1 - x : x - QX;
+    colMap[x] = (uint8_t)min((long)(TQX - 1), lroundf(dx / OVAL));
+  }
+}
+
+uint8_t  TONE = ${turns(M) ? S.tone : 0};             // Colour depth: darker mid-tones for screens that look washed out (0 = as drawn)
+uint8_t  FD_LEN = ${S.fdLen}, FD_STARCNT = ${S.fdStars}, FD_CLOUDS = ${S.fdClouds}, FD_GLOW = ${S.fdGlow};   // Full day: day length (minutes), star count, cloud amount, sun and moon brightness (%)
+uint8_t  TAP_OFF = ${S.tapnext === false ? 1 : 0};             // 1: tapping the screen does nothing
+uint8_t  WARM = ${turns(M) ? S.warm : 0};             // Warmth: less blue (and a little less green) for screens that lean blue
+uint16_t toneS[256];                    // how much to scale a colour by, from its brightest channel (keeps the hue)
+uint16_t warmG = 256, warmB = 256;
+void buildTone() {
+  float g = 1 + TONE / 100.0f;           // 0 -> straight line, 100 -> gamma 2 (on the colour's brightness, so pinks stay pink)
+  toneS[0] = 256;
+  for (int i = 1; i < 256; i++) toneS[i] = (uint16_t)lroundf(256 * powf(i / 255.0f, g) * 255 / i);
+  warmB = (uint16_t)(256 - WARM * 0.65f * 2.56f); warmG = (uint16_t)(256 - WARM * 0.18f * 2.56f);   // 100%: blue x0.35, green x0.82
+}
+uint32_t toneRGB(uint8_t r, uint8_t g, uint8_t b) {   // the colour curve, before rounding to the screen's colours
+  uint8_t m = r > g ? (r > b ? r : b) : (g > b ? g : b);
+  uint32_t k = toneS[m];
+  r = (r * k) >> 8; g = (g * k * warmG) >> 16; b = (b * k * warmB) >> 16;
+  return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+}
+uint16_t to565(uint8_t r, uint8_t g, uint8_t b) {
+  uint32_t c = toneRGB(r, g, b);
+  return ((c >> 8) & 0xF800) | ((c >> 5) & 0x07E0) | ((c & 0xFF) >> 3);
+}
+static inline __attribute__((always_inline)) uint32_t toneRGBi(int r, int g, int b) {   // the same, inlined for the per-pixel loops
+  const int m = r > g ? (r > b ? r : b) : (g > b ? g : b);
+  const uint32_t k = toneS[m];
+  return (((uint32_t)r * k >> 8) << 16) | (((uint32_t)g * k * warmG >> 16) << 8) | ((uint32_t)b * k * warmB >> 16);
+}
+static inline __attribute__((always_inline)) uint16_t to565i(int r, int g, int b) {
+  const uint32_t c = toneRGBi(r, g, b);
+  return ((c >> 8) & 0xF800) | ((c >> 5) & 0x07E0) | ((c & 0xFF) >> 3);
+}
+uint16_t to565raw(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }   // without the colour curve (the wood: dark browns would lose their grain)
+
+uint32_t mixColor(uint32_t x, uint32_t y, float f) {   // blend two 0xRRGGBB colours
+  uint32_t out = 0;
+  for (int i = 0; i < 3; i++) {
+    int cx = (x >> (16 - 8 * i)) & 0xFF, cy = (y >> (16 - 8 * i)) & 0xFF;
+    out |= (uint32_t)(int)(cx + (cy - cx) * f) << (16 - 8 * i);
+  }
+  return out;
+}
+
+void buildPaletteFrom(uint32_t core, uint32_t rim) {   // black -> core -> rim -> near-white
+  uint8_t a[3], b[3];
+  for (int i = 0; i < 3; i++) { a[i] = (core >> (16 - 8 * i)) & 0xFF; b[i] = (rim >> (16 - 8 * i)) & 0xFF; }
+  for (int i = 0; i < 256; i++) {
+    uint8_t c[3];
+    for (int k = 0; k < 3; k++) {
+      float v;
+      if (i < 110)      v = a[k] * (i / 110.0f);
+      else if (i < 200) v = a[k] + (b[k] - a[k]) * ((i - 110) / 90.0f);
+      else              v = b[k] + (255 - b[k]) * ((i - 200) / 55.0f * 0.6f);
+      c[k] = (uint8_t)(v * BRIGHTNESS / 100.0f);
+    }
+    pal[i] = to565(c[0], c[1], c[2]);
+    palRGB[i] = toneRGB(c[0], c[1], c[2]);
+  }
+}
+
+// Space colour table: 64 hues blended around the four space colours x 64 brightness levels
+uint16_t *spaceLUT = NULL;             // allocated the first time a space style is shown
+void buildSpaceLUT() {
+  if (!spaceLUT) return;
+  for (int h = 0; h < 64; h++) {
+    float p = h / 16.0f; int i = (int)p; float f = p - i; f = f * f * (3 - 2 * f);
+    uint32_t A = SPACE_COLS[i & 3], B = SPACE_COLS[(i + 1) & 3];
+    float base[3];
+    for (int k = 0; k < 3; k++) { int ca = (A >> (16 - 8 * k)) & 0xFF, cb = (B >> (16 - 8 * k)) & 0xFF; base[k] = ca + (cb - ca) * f; }
+    for (int b = 0; b < 64; b++) {
+      float v = b / 63.0f; uint8_t c[3];
+      for (int k = 0; k < 3; k++) {
+        float x = base[k] * min(1.0f, v / 0.75f);
+        if (v > 0.75f) x += (255 - x) * (v - 0.75f) / 0.25f * 0.8f;   // the brightest parts glow toward white
+        if (x > 255) x = 255;
+        c[k] = (uint8_t)(x * BRIGHTNESS / 100.0f);
+      }
+      spaceLUT[h * 64 + b] = to565(c[0], c[1], c[2]);
+    }
+  }
+}
+
+uint16_t xPalOwn[256];                    // the cross outline in its own colour
+uint16_t *xpal = pal;                     // what the cross outline is drawn with
+bool xOwn = false;
+void buildCrossPal() {                    // black -> the cross colour -> a lighter one -> near-white
+  xOwn = CROSS_COL <= 0xFFFFFF; xpal = xOwn ? xPalOwn : pal;
+  if (!xOwn) return;
+  uint8_t a[3], b[3];
+  for (int i = 0; i < 3; i++) { a[i] = (CROSS_COL >> (16 - 8 * i)) & 0xFF; b[i] = a[i] + (255 - a[i]) * 35 / 100; }
+  for (int i = 0; i < 256; i++) {
+    uint8_t c[3];
+    for (int k = 0; k < 3; k++) {
+      float v;
+      if (i < 110)      v = a[k] * (i / 110.0f);
+      else if (i < 200) v = a[k] + (b[k] - a[k]) * ((i - 110) / 90.0f);
+      else              v = b[k] + (255 - b[k]) * ((i - 200) / 55.0f * 0.6f);
+      c[k] = (uint8_t)(v * BRIGHTNESS / 100.0f);
+    }
+    xPalOwn[i] = to565(c[0], c[1], c[2]);
+  }
+}
+void buildPalette() { buildPaletteFrom(COLOR_CORE, COLOR_RIM); buildCrossPal(); buildSpaceLUT(); }
+
+void updateColourFade() {             // fade through the colour sets in order, FADE_SECS per fade
+  if (!FADE_ON || FADE_COUNT < 1) return;
+  int n = 1 + FADE_COUNT;              // main colours + extra sets
+  float pos = fmodf(millis() / 1000.0f / FADE_SECS, (float)n);
+  int i = (int)pos, j = (i + 1) % n;
+  float f = pos - i;
+  f = f * f * (3 - 2 * f);
+  uint32_t coreA = i == 0 ? COLOR_CORE : FADE_COLS[(i - 1) * 2], rimA = i == 0 ? COLOR_RIM : FADE_COLS[(i - 1) * 2 + 1];
+  uint32_t coreB = j == 0 ? COLOR_CORE : FADE_COLS[(j - 1) * 2], rimB = j == 0 ? COLOR_RIM : FADE_COLS[(j - 1) * 2 + 1];
+  buildPaletteFrom(mixColor(coreA, coreB, f), mixColor(rimA, rimB, f));
+}
+
+// ---------- space helpers ----------
+#if defined(ESP32)
+  #define HOT IRAM_ATTR                  // the drawing loops run from the chip's own fast memory, not through the flash cache
+#else
+  #define HOT
+#endif
+static inline __attribute__((always_inline)) uint32_t hash32(uint32_t n) {   // (inline: it runs for every pixel of the space styles)
+  n = (n ^ 61) ^ (n >> 16);
+  n *= 9;
+  n ^= n >> 4;
+  n *= 0x27d4eb2dUL;
+  n ^= n >> 15;
+  return n;
+}
+
+int starAt(int a, int r) {             // one twinkling star per small patch of sky
+  uint32_t h = hash32((uint32_t)((a >> 1) * 977 + (r >> 2) * 131));
+  if ((int)(h & 63) >= STARS * 2) return 0;
+  if ((a & 1) != (int)((h >> 8) & 1) || (r & 3) != (int)((h >> 10) & 3)) return 0;
+  return 120 + ((sinT[((h >> 12) + (uint32_t)twinkle) & 255] + 127) >> 1);
+}
+
+// ---------- sparks ----------
+void respawn(Spark &s) {
+  s.a = random(0, 628) / 100.0;
+  s.r = RADIUS * 1.05 + random(0, (int)(RADIUS / 5) + 1);
+}
+
+void resetSparks() {
+  for (uint8_t i = 0; i < NUM_SPARKS; i++) {
+    respawn(sparks[i]);
+    sparks[i].r = random(4, (int)RADIUS + 10);
+  }
+}
+
+float frameK = 1;                                        // how many Studio frames (1/28 s) the last frame took
+void updateSparks() {
+  float fall = powf(0.95f, frameK);
+  for (uint8_t i = 0; i < NUM_SPARKS; i++) {
+    Spark &s = sparks[i];
+    s.r *= fall;                                         // fall inward
+    s.a += SPEED * 2.0 * (RADIUS / (s.r + RADIUS * 0.22)) * frameK;  // faster near the centre
+    if (s.r < 3) respawn(s);
+    sparkX[i] = (int16_t)floorf(QX + cosf(s.a) * s.r * OVAL);
+    sparkY[i] = (int16_t)floorf((crossOn ? crossYC : QY) + sinf(s.a) * s.r);
+  }
+}
+
+// ---------- saved settings (EEPROM) ----------
+bool validOut(uint8_t f) { return f == 255 || f <= 4 || f == 6 || f == 11 || (f >= 14 && f <= 16); }   // what can go outside a glowing cross
+bool validFill(uint8_t f) { return f <= 11 || (f >= 14 && f <= 16) || f == 18; }   // styles that can go inside a cross (Wooden cross only: 7 warm glow, 8 blue sky, 9 sunset, 10 heavenly light, 18 full day)
+
+inline bool isStyleScene(uint8_t c) { return c >= 200 && c <= 217; }   // 200 + style: another style to fade into (crosses too)
+inline bool isCrossSt(uint8_t st) { return (st >= 8 && st <= 13) || st == 17; }
+inline bool validScene(uint8_t c) { return c == PORTAL || c < MAX_PICS || (c >= 128 && c < 128 + MAX_PICS) || isStyleScene(c); }
+
+bool validScenes(const Saved &s) {
+  if (s.sceneCount > 8 || !(s.holdSecs >= 1 && s.holdSecs <= 3600) || !(s.sceneFade >= 0 && s.sceneFade <= 600)) return false;
+  if (s.framePct < 10 || s.framePct > 95) return false;
+  if (s.crossW < 25 || s.crossW > 100 || s.beam < 5 || s.beam > 30 || s.bar < 20 || s.bar > 50) return false;
+  for (int k = 0; k < 4; k++) if (s.spaceCols[k] > 0xFFFFFF) return false;
+  if (!validFill(s.crossFill)) return false;
+  if (s.crossRipple > 10) return false;   // (crosses: ripple 0-2; the Wooden cross: wood style 0-10)
+  for (uint8_t i = 0; i < s.sceneCount; i++) {
+    if (!validScene(s.scenes[i])) return false;
+  }
+  return true;
+}
+
+// ---------- tapping the screen ----------
+volatile uint8_t tapCount = 0;           // taps seen (core 1 counts them, the frame code acts on them)
+bool    tapMode = false;                 // showing a style picked by tapping
+int8_t  tapIdx = -1;                     // which one (-1 = your own style or scene)
+uint8_t tapFrom = 255, tapTo = 255;      // fading from / to
+uint32_t tapAt = 0, sceneShiftMs = 0;    // when the tap fade began; how far taps have moved the scene clock
+#if TAP_PIN >= 0
+uint8_t  tapCur = 0, tapNext = 0;        // tap for next scene: the scene showing, and the one it's fading into
+uint32_t tapSceneAt = 0;                 // when the last tap started that fade
+#endif
+#if HOME_PAGE
+volatile uint8_t uiMode = 0;             // 0 the cross, 1 the home page
+volatile bool pressPending = false;      // a press while the Wooden cross shows: home button or tap? (decided between frames)
+volatile bool tapIgnore = false, simTap = false, dumpReq = false, uiDirty = false;
+volatile int simX = 0, simY = 0;
+bool pressHave = false, pressOk = false; int pressX = 0, pressY = 0;   // where that press was (read straight away, mid-frame)
+bool uiHeld = false;                     // a finger is still down from before (it has to lift first)
+float tcal[6] = { 0.091822f, 0, -23.31f, 0, -0.131399f, 513.11f };   // raw touch -> upright screen: the panel maker's calibration for this board (TCAL over USB can change it)
+bool tcalOk = false;
+inline int homeKind() { return STYLE == 17 ? 0 : (STYLE <= 2 || STYLE == 6) ? 1 : (STYLE == 3 || STYLE == 4 || STYLE == 14 || STYLE == 16) ? 2 : (STYLE == 20 || STYLE == 21) ? 3 : -1; }   // 0 the Wooden cross, 1 a portal, 2 space, 3 the cross fractals
+inline bool homeActive() { return homeKind() >= 0; }   // the home button: the Wooden cross, the portals and the space styles
+#if USE_DMA
+spi_device_handle_t touchDev;
+bool touchDevOk = false;
+#endif
+void tcalSave(); void tcalLoad(); void uiLoop(); void homeCheck(); void homeIcon(uint16_t *buf, int y0, int rows);
+#endif
+#if TAP_PIN >= 0
+void pollTap() {                         // the touch chip pulls its pin low while the screen is pressed
+  static uint32_t lowSince = 0, highSince = 0;
+  static bool down = false;
+#if HOME_PAGE
+  const bool home = homeActive();
+  if (tapIgnore) { tapIgnore = false; down = true; }   // a finger still down from the home page
+  if (TAP_OFF && !home) return;          // turned off in the Studio (the home button still works)
+#else
+  if (TAP_OFF) return;                   // turned off in the Studio
+#endif
+  uint32_t now = millis() | 1;
+  if (digitalRead(TAP_PIN) == LOW) {
+    highSince = 0;
+    if (!lowSince) lowSince = now;
+    if (!down && now - lowSince >= 15) {  // held a moment: a real press, not a blip
+      down = true;
+#if HOME_PAGE
+      if (home) pressPending = true; else
+#endif
+      tapCount++;
+    }
+  } else {
+    lowSince = 0;
+    if (!highSince) highSince = now;
+    if (down && now - highSince >= 150) down = false;                   // let go
+  }
+}
+void beginTap() {                        // put the touch chip in its waiting mode, where its pin shows presses
+  pinMode(TAP_CS, OUTPUT); digitalWrite(TAP_CS, HIGH);
+  pinMode(PIN_CS, OUTPUT); digitalWrite(PIN_CS, HIGH);
+  SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(TAP_CS, LOW); SPI.transfer(0x80); SPI.transfer(0); SPI.transfer(0); digitalWrite(TAP_CS, HIGH);
+  SPI.endTransaction();
+  pinMode(TAP_PIN, INPUT);
+}
+#else
+inline void pollTap() {}
+inline void beginTap() {}
+#endif
+
+bool valid(const Saved &s) {
+  return s.radius >= 6 && s.radius <= RADIUS_MAX && s.oval >= 1 && s.oval <= 2 &&
+         s.arms >= 1 && s.arms <= 8 && s.twist >= 0 && s.twist <= 6 &&
+         s.speed >= 0 && s.speed <= 0.4f && s.sparks <= MAX_SPARKS &&
+         s.core <= 0xFFFFFF && s.rim <= 0xFFFFFF && s.bright >= 10 && s.bright <= 100 && (s.style <= 17 || s.style == 20 || s.style == 21 || (SHOW_ON && s.style == 22)) && s.stars >= 1 && s.stars <= 6 && s.fadeCount >= 1 && s.fadeCount <= 3 && s.fadeSecs >= 1 && s.fadeSecs <= 3600 && s.rimSmooth <= 100 &&
+         s.ripples <= 6 && s.ripSpeed >= 0.03f && s.ripSpeed <= 0.3f && s.glow >= 0.3f && s.glow <= 0.9f &&
+         validScenes(s);
+}
+
+void apply(const Saved &s) {
+  tapMode = false; tapIdx = -1;          // new settings: show them (not a style picked by tapping)
+#if TAP_PIN >= 0
+  tapCur = tapNext = 0;                  // tap for next scene: start again from the first scene
+#endif
+  RADIUS = s.radius; OVAL = s.oval; TWIST = s.twist; SPEED = s.speed;
+  ARMS = s.arms; NUM_SPARKS = s.sparks; DRIFT = s.drift;
+  COLOR_CORE = s.core; COLOR_RIM = s.rim; BRIGHTNESS = s.bright; STYLE = s.style;
+  RIPPLES = s.ripples; RIP_SPEED = s.ripSpeed; GLOW_SIZE = s.glow; STARS = s.stars;
+  FADE_ON = s.fadeOn; FADE_COUNT = s.fadeCount; FADE_SECS = s.fadeSecs; RIM_SMOOTH = s.rimSmooth;
+  for (int k = 0; k < 6; k++) FADE_COLS[k] = s.fadeCols[k] & 0xFFFFFF;
+  SCENE_COUNT = s.sceneCount; HOLD_SECS = s.holdSecs; SCENE_FADE = s.sceneFade; FRAME_PCT = s.framePct;
+  CROSS_W = s.crossW; BEAM = s.beam; BAR = s.bar;
+  for (int k = 0; k < 8; k++) SCENES[k] = s.scenes[k];
+  for (int k = 0; k < 4; k++) SPACE_COLS[k] = s.spaceCols[k];
+  CROSS_FILL = s.crossFill;
+  CROSS_RIPPLE = s.crossRipple;
+#if TURNS
+  wantPortrait = (s.portrait & 1) != 0;  // turned at the start of the next frame
+  wantFlip = (s.portrait & 2) != 0;       // (and the other way round)
+#endif
+  TONE = s.tone <= 100 ? s.tone : 0;
+  WARM = s.warm <= 100 ? s.warm : 0;
+  TAP_OFF = s.tapOff == 1;               // (older saved settings: tapping stays on)
+  if (s.fdLen >= 2 && s.fdLen <= 30 && s.fdStars <= 100 && s.fdClouds <= 100 && s.fdGlow >= 20 && s.fdGlow <= 150) {   // (older saved settings: Full day keeps its defaults)
+    FD_LEN = s.fdLen; FD_STARCNT = s.fdStars; FD_CLOUDS = s.fdClouds; FD_GLOW = s.fdGlow;
+  }
+}
+
+void loadSettings() {
+${EEPROM_BEGIN_GUARD}
+  EEPROM.begin(EE_SIZE);
+#endif
+  Saved s;
+  EEPROM.get(0, s);
+  if (s.id == BUILD_ID && valid(s)) apply(s);
+}
+
+void fillSaved(Saved &s) {               // the settings in use now
+  s = Saved{ BUILD_ID, RADIUS, OVAL, TWIST, SPEED, ARMS, NUM_SPARKS, (uint8_t)DRIFT, COLOR_CORE, COLOR_RIM, BRIGHTNESS, STYLE, RIPPLES, RIP_SPEED, GLOW_SIZE, STARS, (uint8_t)FADE_ON, FADE_COUNT };
+  for (int k = 0; k < 6; k++) s.fadeCols[k] = FADE_COLS[k];
+  s.fadeSecs = FADE_SECS;
+  s.rimSmooth = RIM_SMOOTH;
+  s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE; s.framePct = FRAME_PCT;
+  s.crossW = CROSS_W; s.beam = BEAM; s.bar = BAR;
+  for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
+  for (int k = 0; k < 4; k++) s.spaceCols[k] = SPACE_COLS[k];
+  s.crossFill = CROSS_FILL;
+  s.crossRipple = CROSS_RIPPLE;
+  s.portrait = (wantPortrait ? 1 : 0) | (wantFlip ? 2 : 0);
+  s.tone = TONE;
+  s.warm = WARM;
+  s.tapOff = TAP_OFF;
+  s.fdLen = FD_LEN; s.fdStars = FD_STARCNT; s.fdClouds = FD_CLOUDS; s.fdGlow = FD_GLOW;
+}
+
+void saveSettings() {
+  Saved s;
+  fillSaved(s);
+  EEPROM.put(0, s);
+${EEPROM_BEGIN_GUARD}
+  EEPROM.commit();
+#endif
+}
+
+Saved pendingSettings;
+
+float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
+uint8_t clampb(uint8_t v, uint8_t lo, uint8_t hi) { return v < lo ? lo : v > hi ? hi : v; }
+void clampSettings(Saved &s) {
+  s.radius = clampf(s.radius, 6, RADIUS_MAX); s.oval = clampf(s.oval, 1, 2); s.arms = clampb(s.arms, 1, 8);
+  s.twist = clampf(s.twist, 0, 6); s.speed = clampf(s.speed, 0, 0.4f); if (s.sparks > MAX_SPARKS) s.sparks = MAX_SPARKS;
+  s.core &= 0xFFFFFF; s.rim &= 0xFFFFFF; s.bright = clampb(s.bright, 10, 100); if (s.style > 17 && s.style != 20 && s.style != 21 && !(SHOW_ON && s.style == 22)) s.style = 0;
+  s.stars = clampb(s.stars, 1, 6); s.fadeCount = clampb(s.fadeCount, 1, 3); s.fadeSecs = clampf(s.fadeSecs, 1, 3600);
+  if (s.rimSmooth > 100) s.rimSmooth = 100; if (s.ripples > 6) s.ripples = 6;
+  s.ripSpeed = clampf(s.ripSpeed, 0.03f, 0.3f); s.glow = clampf(s.glow, 0.3f, 0.9f);
+  for (int k = 0; k < 6; k++) s.fadeCols[k] &= 0xFFFFFF;
+  for (int k = 0; k < 4; k++) s.spaceCols[k] &= 0xFFFFFF;
+  if (s.sceneCount > 8) s.sceneCount = 8;
+  s.holdSecs = clampf(s.holdSecs, 1, 3600); s.sceneFade = clampf(s.sceneFade, 0, 600); s.framePct = clampb(s.framePct, 10, 95);
+  s.crossW = clampb(s.crossW, 25, 100); s.beam = clampb(s.beam, 5, 30); s.bar = clampb(s.bar, 20, 50);
+  for (int k = 0; k < 8; k++) if (!validScene(s.scenes[k])) s.scenes[k] = PORTAL;
+  if (!validFill(s.crossFill)) s.crossFill = 0;
+  if (s.crossRipple > 10) s.crossRipple = 0;
+  if (s.portrait > 3) s.portrait = 0;
+  if (s.tone > 100) s.tone = 100;
+  if (s.warm > 100) s.warm = 0;
+}
+${pictureBlock()}
+// ---------- live tuning over USB serial (and Bluetooth below) ----------
+// Command: SET radius oval arms twist speed sparks drift core rim brightness style ripples ripspeed glow stars fade count core2 rim2 core3 rim3 core4 rim4 fadesecs rimsmooth
+//              [scenecount scene1..scene8 holdsecs scenefade [framepct [crossw beam bar [space1..space4 [crossfill [ripple [portrait [tone [warm]]]]]]]]]   (reply: OK or ERR)
+//          scenes: 255 the portal, 0-7 pictures, 128-135 portal around a picture, 200-216 another style (200 + style number)
+// Pictures: INFO, then IMG slot bytes id / D base64... / END   (see "pictures" above)
+char cmd[SHOW_ON ? 1100 : 384];
+uint16_t cmdLen = 0;
+
+uint32_t rebootAt = 0;                   // set by the REBOOT command
+
+const char* handleCommand(char *line) {   // returns the reply to send back
+  if (strcasecmp(line, "TAP") == 0) { tapCount++; return "OK"; }   // same as tapping the screen: the next style (or scene)
+#if HOME_PAGE
+  if (strcasecmp(line, "HOME") == 0) { if (!homeActive()) return "ERR"; uiMode = 1; return "OK"; }   // open the home page (Wooden cross)
+  if (strncasecmp(line, "UITAP ", 6) == 0) { char *q; simX = strtol(line + 6, &q, 10); simY = strtol(q, NULL, 10); simTap = true; return "OK"; }   // a touch on the home page at x y
+  if (strncasecmp(line, "TCAL ", 5) == 0) {                                                        // the touch map, six numbers
+    char *q = line + 5;
+    for (int i = 0; i < 6; i++) tcal[i] = strtod(q, &q);
+    tcalSave();
+    return "OK";
+  }
+#if HOME_DUMP
+  if (strcasecmp(line, "HOMEDUMP") == 0) { dumpReq = true; uiDirty = true; return "OK"; }
+#endif
+#endif
+  if (strncasecmp(line, "SET ", 4) == 0) {
+    float v[58];
+    uint8_t n = 0;
+    char *p = strtok(line + 4, " ");
+    while (p && n < 58) { v[n++] = atof(p); p = strtok(NULL, " "); }
+    if (n == 25 || n == 36 || n == 37 || n == 40 || n == 44 || n == 45 || n == 46 || n == 47 || n == 48 || n == 49 || n == 50 || n == 54 || n == 58) {
+      Saved s = { BUILD_ID, v[0], v[1], v[3], v[4], (uint8_t)v[2], (uint8_t)v[5], (uint8_t)v[6], (uint32_t)v[7], (uint32_t)v[8], (uint8_t)v[9], (uint8_t)v[10], (uint8_t)v[11], v[12], v[13], (uint8_t)v[14], (uint8_t)v[15], (uint8_t)v[16] };
+      for (int k = 0; k < 6; k++) s.fadeCols[k] = (uint32_t)v[17 + k];
+      s.fadeSecs = v[23];
+      s.rimSmooth = (uint8_t)v[24];
+      s.sceneCount = SCENE_COUNT; s.holdSecs = HOLD_SECS; s.sceneFade = SCENE_FADE; s.framePct = FRAME_PCT;
+      s.crossW = CROSS_W; s.beam = BEAM; s.bar = BAR;
+      for (int k = 0; k < 8; k++) s.scenes[k] = SCENES[k];
+      for (int k = 0; k < 4; k++) s.spaceCols[k] = n >= 44 ? (uint32_t)v[40 + k] : SPACE_COLS[k];
+      s.crossFill = n >= 45 ? (uint8_t)v[44] : CROSS_FILL;
+      s.crossRipple = n >= 46 ? (uint8_t)v[45] : CROSS_RIPPLE;
+      s.portrait = n >= 47 ? (uint8_t)v[46] : (uint8_t)((wantPortrait ? 1 : 0) | (wantFlip ? 2 : 0));   // portrait / landscape (screens that can turn)
+      s.tone = n >= 48 ? (uint8_t)v[47] : TONE;                          // colour depth
+      s.warm = n >= 49 ? (uint8_t)v[48] : WARM;                          // warmth
+      s.tapOff = n >= 50 ? (v[49] ? 0 : 1) : TAP_OFF;                    // tap for next scene (touchscreens)
+      s.fdLen = n >= 54 ? (uint8_t)v[50] : FD_LEN; s.fdStars = n >= 54 ? (uint8_t)v[51] : FD_STARCNT;   // Full day settings
+      s.fdClouds = n >= 54 ? (uint8_t)v[52] : FD_CLOUDS; s.fdGlow = n >= 54 ? (uint8_t)v[53] : FD_GLOW;
+      if (n >= 36) {
+        s.sceneCount = (uint8_t)v[25];
+        for (int k = 0; k < 8; k++) s.scenes[k] = (uint8_t)v[26 + k];
+        s.holdSecs = v[34]; s.sceneFade = v[35];
+      }
+      if (n >= 37) s.framePct = (uint8_t)v[36];
+      if (n >= 40) { s.crossW = (uint8_t)v[37]; s.beam = (uint8_t)v[38]; s.bar = (uint8_t)v[39]; }
+      clampSettings(s);                  // anything out of range is brought back inside instead of refusing the update
+      if (valid(s)) {
+        if (n == 58) { for (int j = 0; j < 4; j++) pendRipC[j] = (uint32_t)v[54 + j] & 0xFFFFFF; pendRip = true; }   // Gradient ripple colours
+        pendingSettings = s;
+        havePending = true;              // the drawing loop picks it up before the next frame
+        return "OK";
+      }
+    }
+    return "ERR";
+  }
+  if (strncasecmp(line, "SCN ", 4) == 0) {   // SCN k radius oval arms twist speed sparks drift core rim bright ripples ripspeed glow stars rimsmooth space1..4 style crossfill ripple beam crossw bar  (or SCN k OFF)
+    float v[34];                         // no reply: older boards ignore it the same way
+    uint8_t n = 0; bool off = false;
+    char *p = strtok(line + 4, " ");
+    while (p && n < 34) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
+    int k = n ? (int)v[0] : -1;
+    if (k < 0 || k > 7) return NULL;
 {% endraw %}

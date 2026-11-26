@@ -1,4 +1,933 @@
-{% raw %}
+{% raw %}    uint32_t own[6] = { cols[0], cols[1], cols[2], cols[3], cols[4], cols[5] };
+    if (i != uiSelStyle) {                // the others in their own colours (the chosen one in yours)
+      if (code == 1 || code == 6) { own[0] = 0x0B6B1A; own[1] = 0x8DFF4F; }
+      else if (code == 2) { own[0] = 0xA400FF; own[1] = 0xFF4FD8; }
+      else if (code == 3) { own[0] = 0x1B2A8A; own[1] = 0x9FE8FF; }
+      else if (code == 0) { own[0] = 0x3B1CFF; own[1] = 0x38F0FF; }
+    }
+    uiBackCols = own;
+    uiPicture(r, 2, code);
+    uiBackCols = NULL;
+    uiText(UI_PS_NAMES[uiKind - 1][i], r.x + r.w / 2, r.y + r.h - 11, 0xFFFF, NULL, true, true);
+    uiFrame(r, i == uiSelStyle);
+  }
+  const int kind = uiColKind();
+  for (int i = 0; i < 6; i++) uiSwatch(i, kind);
+  uiButton(uiShow, "SHOW", true, 1);
+  uiButton(uiSetBtn, "Settings", false, 2);
+}
+
+void uiCfPicture(const UiRect &r, int look, const int *cf, int bright, bool rounded) {   // a cross fractal, still, in a box (the drawing is paused while the page shows)
+  int y0 = r.y > uiY0 ? r.y : uiY0, y1 = r.y + r.h < uiY0 + uiRows ? r.y + r.h : uiY0 + uiRows;
+  if (y0 >= y1) return;
+  const uint8_t keep[8] = { CF_BG, CF_GAP, CF_TGT, CF_PAL, CF_TWIST, CF_WOB, CF_FLOW, BRIGHTNESS };
+  CF_BG = cf[0]; CF_GAP = cf[1]; CF_TGT = cf[2]; CF_PAL = cf[3]; CF_TWIST = cf[4]; CF_WOB = cf[5]; CF_FLOW = cf[6]; BRIGHTNESS = bright;
+  cfPrepWH(look, r.w, r.h);
+  const int rad = 7;
+  for (int y = y0; y < y1; y++) {
+    const int ly = y - r.y;
+    uint16_t *p = uiBuf + (y - uiY0) * SCR_W;
+    for (int lx = 0; lx < r.w; lx++) {
+      if (rounded) { int cx = lx < rad ? rad - lx : lx >= r.w - rad ? lx - (r.w - rad - 1) : 0, cy = ly < rad ? rad - ly : ly >= r.h - rad ? ly - (r.h - rad - 1) : 0; if (cx && cy && cx * cx + cy * cy > rad * rad) continue; }
+      p[r.x + lx] = look == 20 ? cfPixCC(cfU0 + lx * cfDU, cfV0 + ly * cfDU) : cfPixTun((lx - r.w / 2.0f) / cfU, (ly - cfOy) / cfU);
+    }
+  }
+  CF_BG = keep[0]; CF_GAP = keep[1]; CF_TGT = keep[2]; CF_PAL = keep[3]; CF_TWIST = keep[4]; CF_WOB = keep[5]; CF_FLOW = keep[6]; BRIGHTNESS = keep[7];
+}
+void uiCfSwatch(const UiRect &r, int R, int i, bool sel) {   // one of the cross fractals' colour sets: the colours round a ring
+  const int cx = r.x + R, cy = r.y + R;
+  if (!uiRowsHit(cy - R - 5, 2 * R + 10)) return;
+  if (sel) { ug.fillCircle(cx, cy, R + 4, uiRGB(0xFFFFFF)); ug.fillCircle(cx, cy, R + 1, uiRGB(0x0B0B10)); }
+  for (int y = cy - R; y <= cy + R; y++) {
+    if (y < uiY0 || y >= uiY0 + uiRows) continue;
+    for (int x = cx - R; x <= cx + R; x++) {
+      const float dx = x - cx, dy = y - cy, d = sqrtf(dx * dx + dy * dy) / R;
+      if (d > 1) continue;
+      uint32_t c = cfPalColor(i, (atan2f(dy, dx) + 3.1416f) / 6.2832f * (i == 2 ? 1 : 0.8f) + (i == 2 ? 0 : 0.1f));
+      if (d > 0.9f) c = uiMix(c, 0x000000, (d - 0.9f) * 6);
+      ug.drawPixel(x, y, uiRGB(c));
+    }
+  }
+}
+
+// ---- the settings page ----
+int uiCrossMax() { return (int)((SCR_H - 8) * 0.8f); }   // the biggest cross for the way the screen is turned (as in the Studio)
+bool uiFullDay() { return uiKind == 0 && UI_BACKS[uiSelBack] == 18; }
+int uiPortalMax() { return min(SCR_W, SCR_H) / 2 - 1; }   // the biggest portal
+float uiSlFrac(int k) {                   // where each slider's knob sits, 0-1
+  if (uiKind == 3 && k > 0) {             // the cross fractals: zoom speed, then background or twist, then spacing or wobble
+    if (k == 1) return (stSpeed - 0.02f) / 0.28f;
+    if (k == 2) return uiSelStyle ? stCf[4] / 30.0f : stCf[0] / 6.0f;
+    return uiSelStyle ? stCf[5] / 100.0f : (stCf[1] - 55) / 45.0f;
+  }
+  switch (k) {
+    case 0: return (stBright - 10) / 90.0f;
+    case 1: if (uiKind) return (stRadius * 100.0f / uiPortalMax() - 30) / 70.0f; else { float pct = stRadius * 100.0f / uiCrossMax(); return (pct - 40) / 60.0f; }
+    case 2: return uiKind ? (stSpeed - 0.02f) / 0.28f : (stBeam - 5) / 25.0f;
+    default: return uiKind == 1 ? stSparks / 30.0f : uiKind == 2 ? (stStars - 1) / 5.0f : uiFullDay() ? (stFdLen - 2) / 28.0f : (stSpeed - 0.02f) / 0.28f;
+  }
+}
+void uiSlSet(int k, float f) {
+  f = f < 0 ? 0 : f > 1 ? 1 : f;
+  if (uiKind == 3 && k > 0) {
+    if (k == 1) stSpeed = 0.02f + f * 0.28f;
+    else if (k == 2) { if (uiSelStyle) stCf[4] = (int)lroundf(f * 30); else stCf[0] = (int)lroundf(f * 6); }
+    else { if (uiSelStyle) stCf[5] = (int)lroundf(f * 20) * 5; else stCf[1] = 55 + (int)lroundf(f * 45); }
+    return;
+  }
+  switch (k) {
+    case 0: stBright = 10 + (int)lroundf(f * 90); break;
+    case 1: stRadius = uiKind ? (int)lroundf((30 + f * 70) * uiPortalMax() / 100.0f) : (int)lroundf((40 + f * 60) * uiCrossMax() / 100.0f); break;
+    case 2: if (uiKind) stSpeed = 0.02f + f * 0.28f; else stBeam = 5 + (int)lroundf(f * 25); break;
+    default:
+      if (uiKind == 1) stSparks = (int)lroundf(f * 30);
+      else if (uiKind == 2) stStars = 1 + (int)lroundf(f * 5);
+      else if (uiFullDay()) stFdLen = 2 + (int)lroundf(f * 28); else stSpeed = 0.02f + f * 0.28f;
+      break;
+  }
+}
+const char *uiSlName(int k) {
+  if (k == 0) return "BRIGHTNESS";
+  if (uiKind == 3) return k == 1 ? "ZOOM SPEED" : k == 2 ? (uiSelStyle ? "TWIST" : "BETWEEN") : (uiSelStyle ? "WOBBLE" : "SPACING");
+  if (uiKind) { if (k == 1) return uiKind == 1 ? "PORTAL SIZE" : "SIZE"; if (k == 2) return uiKind == 1 ? "SPIN SPEED" : "SPEED"; return uiKind == 1 ? "SPARKS" : "STAR DENSITY"; }
+  if (k == 1) return "CROSS SIZE";
+  if (k == 2) return "BEAM THICKNESS";
+  const uint8_t f = UI_BACKS[uiSelBack];
+  return f == 18 ? "DAY LENGTH" : f == 7 ? "GLOW SPEED" : (f >= 8 && f <= 10) ? "CLOUD SPEED" : "SPEED";
+}
+void uiSlValue(int k, char *out) {
+  const char *spd = stSpeed < 0.09f ? "Slow" : stSpeed < 0.18f ? "Medium" : stSpeed < 0.25f ? "Fast" : "Very fast";
+  if (k == 0) snprintf(out, 16, "%d%%", stBright);
+  else if (uiKind == 3) {
+    if (k == 1) snprintf(out, 16, "%s", spd);
+    else if (k == 2) { if (uiSelStyle) snprintf(out, 16, "%d deg", stCf[4]); else snprintf(out, 16, "%s", UI_CF_BG[stCf[0] <= 6 ? stCf[0] : 0]); }
+    else snprintf(out, 16, "%d%%", uiSelStyle ? stCf[5] : stCf[1]);
+  }
+  else if (uiKind) {
+    if (k == 1) snprintf(out, 16, "%d%%", (int)lroundf(stRadius * 100.0f / uiPortalMax()));
+    else if (k == 2) snprintf(out, 16, "%s", spd);
+    else if (uiKind == 1) snprintf(out, 16, "%d", stSparks);
+    else snprintf(out, 16, "%d of 6", stStars);
+  }
+  else if (k == 1) snprintf(out, 16, "%d%%", (int)lroundf(stRadius * 100.0f / uiCrossMax()));
+  else if (k == 2) snprintf(out, 16, "%d%%", stBeam);
+  else if (uiFullDay()) snprintf(out, 16, "%d min", stFdLen);
+  else snprintf(out, 16, "%s", stSpeed < 0.09f ? "Slow" : stSpeed < 0.18f ? "Medium" : stSpeed < 0.25f ? "Fast" : "Very fast");
+}
+void uiSlider(int k) {
+  const UiRect &r = uiSl[k];
+  if (!uiRowsHit(r.y - 4, r.h + 8)) return;
+  char v[16]; uiSlValue(k, v);
+  uiText(uiSlName(k), r.x, r.y + 13, uiRGB(0xC9B08A), &FreeSansBold9pt7b, false, false);
+  int16_t bx, by; uint16_t bw, bh;
+  ug.setFont(&FreeSansBold9pt7b); ug.getTextBounds(v, 0, 0, &bx, &by, &bw, &bh);
+  uiText(v, r.x + r.w - bw - bx, r.y + 13, uiRGB(0xFFD99A), &FreeSansBold9pt7b, false, false);
+  const int ty = r.y + 24, kx = r.x + (int)(uiSlFrac(k) * r.w + 0.5f);
+  ug.fillRoundRect(r.x, ty, r.w, 8, 4, uiRGB(0x2A2118));
+  if (kx > r.x + 4) ug.fillRoundRect(r.x, ty, kx - r.x, 8, 4, uiRGB(k == uiDrag ? 0xF0A040 : 0xD07A22));
+  ug.fillCircle(kx, ty + 4, 12, uiRGB(0x7A4210));
+  ug.fillCircle(kx, ty + 4, 9, uiRGB(0xFFD99A));
+}
+void uiPreviewPS() {                      // portal or space: a still picture with these settings
+  const UiRect &r = uiPrev;
+  if (uiKind == 3) {                      // the cross fractals
+    uiCfPicture(r, 20 + uiSelStyle, stCf, stBright, false);
+    ug.drawRoundRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4, 5, uiRGB(0x6B4423));
+    ug.drawRoundRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, 4, uiRGB(0x6B4423));
+    return;
+  }
+  const int code = UI_PS[uiKind - 1][uiSelStyle], br = stBright * 256 / 100;
+  const float pr = stRadius * (float)r.w / SCR_W;   // the portal's size in the little picture
+  const uint32_t cols[6] = { stCore, stRim, stSpace[0], stSpace[1], stSpace[2], stSpace[3] };
+  uiBackCols = cols;
+  uiStarCut = 1 - 0.005f * stStars;
+  for (int y = r.y; y < r.y + r.h; y++) {
+    if (y < uiY0 || y >= uiY0 + uiRows) continue;
+    const int ly = y - r.y;
+    for (int lx = 0; lx < r.w; lx++) {
+      uint32_t c = uiKind == 1 ? uiPortalPx(code, (lx + 0.5f - r.w * 0.5f) / pr, (ly + 0.5f - r.h * 0.5f) / pr) : uiBackPxCode(code, lx, ly, r.w, r.h);
+      if (uiKind == 1 && stSparks) {      // the sparks being drawn in (a few dots)
+        const int cell = (int)(uiHash(lx >> 3, ly >> 3) * 1000);
+        if (cell < stSparks * 6 && ((lx & 7) == 3) && ((ly & 7) == 4)) c = uiMix(stRim, 0xFFFFFF, 0.6f);
+      }
+      const int rr = ((c >> 16) & 255) * br >> 8, gg = ((c >> 8) & 255) * br >> 8, bb = (c & 255) * br >> 8;
+      ug.drawPixel(r.x + lx, y, to565raw(rr, gg, bb));
+    }
+  }
+  uiBackCols = NULL;
+  uiStarCut = 0.985f;
+  ug.drawRoundRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4, 5, uiRGB(0x6B4423));
+  ug.drawRoundRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, 4, uiRGB(0x6B4423));
+}
+void uiPreview() {                        // a small still picture of the cross with these settings
+  const UiRect &r = uiPrev;
+  if (!uiRowsHit(r.y - 3, r.h + 6) || r.x + r.w + 3 <= uiColA || r.x - 3 >= uiColB) return;
+  if (uiKind) { uiPreviewPS(); return; }
+  const float R = fminf(stRadius, (SCR_H - 8) * (100.0f - BAR) / 100), top = R * BAR / (100.0f - BAR);   // the cross, as the board works it out
+  const float aw = fmaxf(2, R * stBeam / 100.0f), hhl = fmaxf(aw + 1, fminf(R * CROSS_W / 100.0f, SCR_W / 2.0f - 2));
+  const float cyc = (SCR_H - (top + R)) / 2 + top, cxc = SCR_W / 2.0f, sx = (float)SCR_W / r.w, sy = (float)SCR_H / r.h;
+  const int back = UI_BACKS[uiSelBack], br = stBright * 256 / 100;
+  for (int y = r.y; y < r.y + r.h; y++) {
+    if (y < uiY0 || y >= uiY0 + uiRows) continue;
+    const int ly = y - r.y;
+    const float Y = (ly + 0.5f) * sy;
+    for (int lx = 0; lx < r.w; lx++) {
+      const float X = (lx + 0.5f) * sx, ax = fabsf(X - cxc);
+      const float mu = fminf(aw - ax, fminf(Y - (cyc - top), cyc + R - Y)), mb = fminf(hhl - ax, aw - fabsf(Y - cyc)), m = fmaxf(mu, mb);   // inside the wood when >= 0
+      uint32_t c;
+      if (m >= 0) {
+        c = mb > mu ? uiWoodPx(uiSelWood, ly * 3, lx) : uiWoodPx(uiSelWood, lx * 3, ly);   // the grain runs along each beam
+        if (m < sx * 1.2f) c = uiMix(c, 0x000000, 0.45f);                                  // its edge
+      } else {
+        if (back == 7) {                  // the warm glow, in the chosen colours
+          const float dx = (X - cxc) / SCR_H, dy = (Y - cyc) / SCR_H, d = sqrtf(dx * dx + dy * dy) / 0.75f;
+          c = d < 0.2f ? uiMix(0xFFF0D0, stRim, d / 0.2f) : d < 0.55f ? uiMix(stRim, stCore, (d - 0.2f) / 0.35f) : uiMix(stCore, 0x000000, (d - 0.55f) / 0.45f);
+        } else { const uint32_t cols[6] = { stCore, stRim, stSpace[0], stSpace[1], stSpace[2], stSpace[3] }; uiBackCols = cols; c = uiBackPx(uiSelBack, lx, ly, r.w, r.h); uiBackCols = NULL; }
+        if (m > -sx * 3) c = uiMix(c, 0x000000, 0.3f * (1 + m / (sx * 3)));                  // a soft shadow round the wood
+      }
+      const int rr = ((c >> 16) & 255) * br >> 8, gg = ((c >> 8) & 255) * br >> 8, bb = (c & 255) * br >> 8;
+      ug.drawPixel(r.x + lx, y, to565raw(rr, gg, bb));
+    }
+  }
+  ug.drawRoundRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4, 5, uiRGB(0x6B4423));
+  ug.drawRoundRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, 4, uiRGB(0x6B4423));
+}
+// ---- the colour wheel: any colour, picked by dragging round a wheel (from the settings page's last swatch) ----
+void uiPaintRows(int ya, int yb, int xa = 0, int xb = SCR_W);
+uint32_t uiHsv(float h, float s, float v) {   // hue 0-1 round the wheel, strength, brightness -> 0xRRGGBB
+  h -= floorf(h); h *= 6;
+  const int i = (int)h; const float f = h - i, p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+  float r, g, b;
+  switch (i) { case 0: r = v; g = t; b = p; break; case 1: r = q; g = v; b = p; break; case 2: r = p; g = v; b = t; break;
+               case 3: r = p; g = q; b = v; break; case 4: r = t; g = p; b = v; break; default: r = v; g = p; b = q; }
+  return ((uint32_t)(r * 255 + 0.5f) << 16) | ((uint32_t)(g * 255 + 0.5f) << 8) | (uint32_t)(b * 255 + 0.5f);
+}
+void uiToHsv(uint32_t c, float &h, float &s, float &v) {
+  const float r = ((c >> 16) & 255) / 255.0f, g = ((c >> 8) & 255) / 255.0f, b = (c & 255) / 255.0f;
+  const float mx = fmaxf(r, fmaxf(g, b)), mn = fminf(r, fminf(g, b)), d = mx - mn;
+  v = mx; s = mx > 0 ? d / mx : 0;
+  if (d <= 0) return;                     // a grey: keep the hue it had
+  h = mx == r ? (g - b) / d : mx == g ? 2 + (b - r) / d : 4 + (r - g) / d;
+  h /= 6; if (h < 0) h += 1;
+}
+uint32_t *uiWCol(int t) { return uiColKind() == 1 ? (t == 0 ? &stCore : &stRim) : &stSpace[t & 3]; }   // the colour being changed
+int uiWCount() { return uiColKind() == 1 ? 2 : 4; }
+void uiWLoad() { uiToHsv(*uiWCol(uiWT), uiWH, uiWS, uiWV); if (uiWV < 0.1f) uiWV = 0.1f; }
+void uiWheelLayout() {
+  const int W = SCR_W, H = SCR_H, n = uiWCount();
+  uiWDone = { (int16_t)(W - 82), (int16_t)(H > W ? 6 : 5), 74, 28 };
+  if (H > W) {                            // portrait: preview and the colours up top, the wheel, then the shade
+    uiWPrev = { 10, 48, 120, 96 };
+    for (int i = 0; i < 4; i++) uiWChip[i] = n == 2 ? UiRect{ (int16_t)(140 + i * 88), 52, 82, 44 } : UiRect{ (int16_t)(140 + i * 44), 52, 38, 44 };
+    uiWHintY = 112;
+    uiWCX = W / 2; uiWCY = 272; uiWR = 104;
+    uiWSl = { 16, 400, (int16_t)(W - 32), 36 };
+  } else {                                // landscape: the wheel on the left, the rest on the right
+    uiWCX = 126; uiWCY = 180; uiWR = 116;
+    uiWPrev = { 262, 46, 206, 104 };
+    for (int i = 0; i < 4; i++) uiWChip[i] = n == 2 ? UiRect{ (int16_t)(262 + i * 106), 162, 100, 40 } : UiRect{ (int16_t)(262 + i * 53), 162, 47, 40 };
+    uiWHintY = 214;
+    uiWSl = { 262, 238, 206, 36 };
+  }
+}
+void uiWheelOpen() {
+  uiWBak[0] = stCore; uiWBak[1] = stRim; for (int k = 0; k < 4; k++) uiWBak[2 + k] = stSpace[k]; uiWBakSel = stSelCol;
+  uiWheelLayout();
+  uiPrevSet = uiPrev; uiPrev = uiWPrev;   // the preview moves for this page
+  uiWT = 0; uiWLoad();
+  uiPage = 2; uiDirty = true;
+}
+void uiWheelClose(bool keep) {
+  if (keep) stSelCol = 6;                 // the wheel's swatch is the one chosen now
+  else { stCore = uiWBak[0]; stRim = uiWBak[1]; for (int k = 0; k < 4; k++) stSpace[k] = uiWBak[2 + k]; stSelCol = uiWBakSel; }
+  uiPrev = uiPrevSet;
+  uiPage = 1; uiDirty = true;
+}
+void uiWMarker(int &mx, int &my) {        // where the picked colour sits on the wheel
+  const float a = uiWH * 6.2832f;
+  mx = uiWCX + (int)lroundf(cosf(a) * uiWS * uiWR); my = uiWCY - (int)lroundf(sinf(a) * uiWS * uiWR);
+}
+void uiSwatchWheel(const UiRect &r, int R, int kind, bool sel) {   // the settings page's last swatch: a rainbow ring round the colours picked
+  const int cx = r.x + R, cy = r.y + R;
+  if (!uiRowsHit(cy - R - 5, 2 * R + 10)) return;
+  if (sel) { ug.fillCircle(cx, cy, R + 4, uiRGB(0xFFFFFF)); ug.fillCircle(cx, cy, R + 1, uiRGB(0x0B0B10)); }
+  for (int y = cy - R; y <= cy + R; y++) {
+    if (y < uiY0 || y >= uiY0 + uiRows) continue;
+    for (int x = cx - R; x <= cx + R; x++) {
+      const float dx = x - cx, dy = y - cy, d = sqrtf(dx * dx + dy * dy) / R;
+      if (d > 1) continue;
+      uint32_t c;
+      if (d > 0.6f) c = uiHsv(atan2f(-dy, dx) / 6.2832f, 1, 1);
+      else if (d > 0.52f) c = 0x0B0B10;
+      else if (kind == 1) c = uiMix(stRim, stCore, d / 0.52f);
+      else { float a = (atan2f(dy, dx) + 3.1416f) / 6.2832f * 4; int j = (int)a & 3; c = uiMix(stSpace[j], stSpace[(j + 1) & 3], a - (int)a); }
+      if (d > 0.9f) c = uiMix(c, 0x000000, (d - 0.9f) * 6);
+      ug.drawPixel(x, y, uiRGB(c));
+    }
+  }
+}
+void uiWChipDraw(int i) {                 // one of the colours being picked (core / rim, or the four space colours)
+  const UiRect &r = uiWChip[i];
+  if (!uiRowsHit(r.y - 4, r.h + 8) || r.x + r.w + 4 <= uiColA || r.x - 4 >= uiColB) return;
+  const uint32_t c = *uiWCol(i);
+  if (i == uiWT) for (int k = 0; k < 3; k++) ug.drawRoundRect(r.x - 1 - k, r.y - 1 - k, r.w + 2 + 2 * k, r.h + 2 + 2 * k, 8 + k, uiRGB(0xFFFFFF));
+  else ug.drawRoundRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, 8, uiRGB(0x3A2A1C));
+  ug.fillRoundRect(r.x, r.y, r.w, r.h, 7, uiRGB(c));
+  const int lum = ((c >> 16) & 255) * 3 + ((c >> 8) & 255) * 6 + (c & 255);
+  const char *lab[4] = { "1", "2", "3", "4" };
+  const char *s = uiWCount() == 2 ? (i == 0 ? "Core" : "Rim") : lab[i];
+  uiText(s, r.x + r.w / 2, r.y + r.h / 2 + 6, lum > 1400 ? 0x0000 : 0xFFFF, &FreeSansBold9pt7b, true, false);
+}
+void uiWSlider() {                        // the shade: dark to full
+  const UiRect &r = uiWSl;
+  if (!uiRowsHit(r.y - 4, r.h + 8)) return;
+  char v[8]; snprintf(v, 8, "%d%%", (int)lroundf(uiWV * 100));
+  uiText("SHADE", r.x, r.y + 13, uiRGB(0xC9B08A), &FreeSansBold9pt7b, false, false);
+  int16_t bx, by; uint16_t bw, bh;
+  ug.setFont(&FreeSansBold9pt7b); ug.getTextBounds(v, 0, 0, &bx, &by, &bw, &bh);
+  uiText(v, r.x + r.w - bw - bx, r.y + 13, uiRGB(0xFFD99A), &FreeSansBold9pt7b, false, false);
+  const int ty = r.y + 22, kx = r.x + (int)((uiWV - 0.1f) / 0.9f * r.w + 0.5f);
+  const uint32_t full = uiHsv(uiWH, uiWS, 1);
+  for (int x = r.x; x < r.x + r.w; x++) ug.drawFastVLine(x, ty + ((x - r.x < 4 || r.x + r.w - x <= 4) ? 2 : 0), (x - r.x < 4 || r.x + r.w - x <= 4) ? 8 : 12, uiRGB(uiMix(0x000000, full, (x - r.x) / (float)r.w)));
+  ug.drawRoundRect(r.x - 1, ty - 1, r.w + 2, 14, 5, uiRGB(0x6B4423));
+  ug.fillCircle(kx, ty + 6, 12, uiRGB(0x7A4210));
+  ug.fillCircle(kx, ty + 6, 9, uiRGB(*uiWCol(uiWT)));
+}
+void uiWheelDraw() {
+  const int R = uiWR;
+  const int ya = uiY0 > uiWCY - R - 1 ? uiY0 : uiWCY - R - 1, yb = uiY0 + uiRows < uiWCY + R + 2 ? uiY0 + uiRows : uiWCY + R + 2;
+  const int xa = uiColA > uiWCX - R - 1 ? uiColA : uiWCX - R - 1, xb = uiColB < uiWCX + R + 2 ? uiColB : uiWCX + R + 2;
+  const float inv = 1.0f / R;
+  for (int y = ya; y < yb; y++) {
+    uint16_t *p = uiBuf + (y - uiY0) * SCR_W;
+    const float dy = y - uiWCY;
+    for (int x = xa; x < xb; x++) {
+      const float dx = x - uiWCX, d = sqrtf(dx * dx + dy * dy);
+      if (d > R + 0.5f) continue;
+      uint32_t c = uiHsv(atan2f(-dy, dx) * 0.159155f, fminf(1, d * inv), uiWV);
+      if (d > R - 0.5f) c = uiMix(c, 0x0B0B10, d - (R - 0.5f));   // a smooth edge
+      p[x] = uiRGB(c);
+    }
+  }
+  int mx, my; uiWMarker(mx, my);           // the ring on the colour picked
+  ug.drawCircle(mx, my, 11, uiRGB(0x000000)); ug.drawCircle(mx, my, 10, uiRGB(0xFFFFFF)); ug.drawCircle(mx, my, 9, uiRGB(0xFFFFFF));
+  ug.drawCircle(mx, my, 8, uiRGB(0x000000)); ug.fillCircle(mx, my, 7, uiRGB(*uiWCol(uiWT)));
+}
+void uiPaintWheelBand() {
+  for (int i = 0; i < SCR_W * uiRows; i++) uiBuf[i] = uiRGB(0x0B0B10);
+  for (int y = uiY0; y < uiY0 + uiRows && y < uiHeadR.h; y++)
+    ug.drawFastHLine(0, y, SCR_W, uiRGB(y >= uiHeadR.h - 2 ? 0x6B4423 : uiMix(0x2A1A0E, 0x160D06, (float)y / uiHeadR.h)));
+  uiText("COLOUR", SCR_W / 2, uiHeadR.h / 2 + 8, uiRGB(0xFFD99A), &FreeSansBold12pt7b, true, false);
+  uiButton(uiBackBtn, "< Back", false, 0);
+  uiButton(uiWDone, "Done", true, 3);
+  uiPreview();
+  for (int i = 0; i < uiWCount(); i++) uiWChipDraw(i);
+  uiText("Tap one, then the wheel", SCR_W > SCR_H ? uiWChip[0].x : uiWChip[0].x, uiWHintY, uiRGB(0x9A8A70), NULL, false, false);
+  uiWheelDraw();
+  uiWSlider();
+}
+void uiWBox(int x0, int y0, int x1, int y1) { uiPaintRows(y0, y1, x0, x1); }
+void uiWheelAt(int x, int y) {            // a finger on the wheel: that colour
+  int ox, oy; uiWMarker(ox, oy);
+  const float dx = x - uiWCX, dy = y - uiWCY, d = sqrtf(dx * dx + dy * dy);
+  uiWS = fminf(1, d / uiWR);
+  if (d > 2) { uiWH = atan2f(-dy, dx) * 0.159155f; if (uiWH < 0) uiWH += 1; }
+  *uiWCol(uiWT) = uiHsv(uiWH, uiWS, uiWV);
+  int nx, ny; uiWMarker(nx, ny);
+  uiWBox((ox < nx ? ox : nx) - 13, (oy < ny ? oy : ny) - 13, (ox > nx ? ox : nx) + 14, (oy > ny ? oy : ny) + 14);   // just round the ring
+  const UiRect &c = uiWChip[uiWT];
+  uiWBox(c.x - 4, c.y - 4, c.x + c.w + 4, c.y + c.h + 4);
+  uiWBox(uiWSl.x - 14, uiWSl.y - 2, uiWSl.x + uiWSl.w + 14, uiWSl.y + uiWSl.h + 4);
+}
+void uiWSlideTo(int x) {                  // the shade slider
+  float f = (x - uiWSl.x) / (float)uiWSl.w; f = f < 0 ? 0 : f > 1 ? 1 : f;
+  uiWV = 0.1f + 0.9f * f;
+  *uiWCol(uiWT) = uiHsv(uiWH, uiWS, uiWV);
+  const UiRect &c = uiWChip[uiWT];
+  uiWBox(c.x - 4, c.y - 4, c.x + c.w + 4, c.y + c.h + 4);
+  uiWBox(uiWSl.x - 14, uiWSl.y - 2, uiWSl.x + uiWSl.w + 14, uiWSl.y + uiWSl.h + 4);
+}
+void uiWheelDragEnd(int k) {              // let go: the preview (and, after the shade, the wheel) catches up
+  uiWBox(uiPrev.x - 3, uiPrev.y - 3, uiPrev.x + uiPrev.w + 3, uiPrev.y + uiPrev.h + 3);
+  if (k == 11) uiWBox(uiWCX - uiWR - 12, uiWCY - uiWR - 12, uiWCX + uiWR + 13, uiWCY + uiWR + 13);
+}
+void uiWheelTouch(int x, int y) {
+  if (uiIn(uiBackBtn, x, y)) { uiWheelClose(false); return; }   // back: the colours as they were
+  if (uiIn(uiWDone, x, y)) { uiWheelClose(true); return; }
+  for (int i = 0; i < uiWCount(); i++) if (uiIn(uiWChip[i], x, y)) {
+    if (i != uiWT) { uiWT = i; uiWLoad(); uiDirty = true; }
+    return;
+  }
+  const float dx = x - uiWCX, dy = y - uiWCY;
+  if (dx * dx + dy * dy <= (uiWR + 14.0f) * (uiWR + 14)) { uiDrag = 10; uiWheelAt(x, y); return; }
+  const UiRect &r = uiWSl;
+  if (y >= r.y - 8 && y < r.y + r.h + 10 && x >= r.x - 14 && x < r.x + r.w + 14) { uiDrag = 11; uiWSlideTo(x); }
+}
+void uiPaintSetBand() {
+  for (int i = 0; i < SCR_W * uiRows; i++) uiBuf[i] = uiRGB(0x0B0B10);
+  for (int y = uiY0; y < uiY0 + uiRows && y < uiHeadR.h; y++)
+    ug.drawFastHLine(0, y, SCR_W, uiRGB(y >= uiHeadR.h - 2 ? 0x6B4423 : uiMix(0x2A1A0E, 0x160D06, (float)y / uiHeadR.h)));
+  uiText("SETTINGS", SCR_W / 2, uiHeadR.h / 2 + 8, uiRGB(0xFFD99A), &FreeSansBold12pt7b, true, false);
+  uiButton(uiBackBtn, "< Back", false, 0);
+  uiButton(uiRotBtn, "Rotate", false, 4);
+  uiPreview();
+  if (uiNoteY > 0) {
+    uiText("Drag a slider: the preview", uiPrev.x + uiPrev.w / 2, uiNoteY, uiRGB(0x9A8A70), NULL, true, false);
+    uiText("changes when you let go.", uiPrev.x + uiPrev.w / 2, uiNoteY + 12, uiRGB(0x9A8A70), NULL, true, false);
+  }
+  for (int k = 0; k < 4; k++) uiSlider(k);
+  uiText("COLOURS", uiSetCol[0].x - 2, uiSetColLabY, uiRGB(0xC9B08A), &FreeSansBold9pt7b, false, false);
+  const int kind = uiColKind();
+  if (kind == 3) { for (int i = 0; i < 5; i++) uiCfSwatch(uiSetCol[i], uiSetSwR, i, i == stCf[3]); }   // the cross fractals: their own colour sets
+  else if (kind) { for (int i = 0; i < 6; i++) uiSwatchAt(uiSetCol[i], uiSetSwR, i, kind, i == stSelCol); uiSwatchWheel(uiSetCol[6], uiSetSwR, kind, stSelCol < 0 || stSelCol == 6); }
+  else uiText("This background has its own colours", uiSetCol[0].x, uiSetCol[0].y + uiSetSwR - 4, uiRGB(0x9A8A70), NULL, false, false);
+  uiButton(uiSave, "SAVE", true, 3);
+}
+
+// ---- touch: the XPT2046 shares the screen's SPI pins ----
+uint16_t xptCmd(uint8_t c) {
+#if USE_DMA
+  if (lcdDma) {
+    if (!touchDevOk) return 0;
+    spi_transaction_t t;
+    memset(&t, 0, sizeof(t));
+    t.length = 24; t.rxlength = 24; t.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA;
+    t.tx_data[0] = c;
+    if (spi_device_polling_transmit(touchDev, &t) != ESP_OK) return 0;
+    return ((t.rx_data[1] << 8) | t.rx_data[2]) >> 3;
+  }
+#endif
+  SPI.transfer(c);
+  uint16_t h = SPI.transfer(0), l = SPI.transfer(0);
+  return ((h << 8) | l) >> 3;
+}
+bool touchRaw(int &rx, int &ry) {        // only between frames: the screen isn't being sent anything
+  if (digitalRead(TAP_PIN) != LOW) return false;
+#if USE_DMA
+  const bool dma = lcdDma;
+#else
+  const bool dma = false;
+#endif
+  digitalWrite(PIN_CS, HIGH);            // the screen stops listening
+  if (!dma) SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(TAP_CS, LOW);
+  uint16_t xs[7], ys[7];
+  xptCmd(0xD0);                          // (the first reading settles)
+  for (int i = 0; i < 7; i++) { xs[i] = xptCmd(0xD0); ys[i] = xptCmd(0x90); }
+  xptCmd(0x90);
+  digitalWrite(TAP_CS, HIGH);
+  if (!dma) SPI.endTransaction();
+  if (dma) digitalWrite(PIN_CS, LOW);    // the screen listens again
+  for (int i = 1; i < 7; i++) for (int j = i; j > 0 && xs[j] < xs[j - 1]; j--) { uint16_t t = xs[j]; xs[j] = xs[j - 1]; xs[j - 1] = t; }
+  for (int i = 1; i < 7; i++) for (int j = i; j > 0 && ys[j] < ys[j - 1]; j--) { uint16_t t = ys[j]; ys[j] = ys[j - 1]; ys[j - 1] = t; }
+  rx = xs[3]; ry = ys[3];
+  if (xs[5] - xs[1] > 150 || ys[5] - ys[1] > 150) return false;   // still moving, or a light touch
+  return digitalRead(TAP_PIN) == LOW && rx > 60 && rx < 4040 && ry > 60 && ry < 4040;
+}
+// raw touch -> the upright (portrait) screen, then to the way the screen is turned now
+void panelToScreen(float px, float py, int &x, int &y) {
+  int P = (int)px, Q = (int)py;
+  switch (rotNow()) {
+    case 0: x = P; y = Q; break;
+    case 1: x = Q; y = SCR_SHORT - 1 - P; break;
+    case 2: x = SCR_SHORT - 1 - P; y = SCR_WMAX - 1 - Q; break;
+    default: x = SCR_WMAX - 1 - Q; y = P; break;
+  }
+}
+void screenToPanel(int x, int y, float &px, float &py) {
+  switch (rotNow()) {
+    case 0: px = x; py = y; break;
+    case 1: px = SCR_SHORT - 1 - y; py = x; break;
+    case 2: px = SCR_SHORT - 1 - x; py = SCR_WMAX - 1 - y; break;
+    default: px = y; py = SCR_WMAX - 1 - x; break;
+  }
+}
+bool touchXY(int &x, int &y) {
+  int rx, ry;
+  if (!touchRaw(rx, ry)) return false;
+  panelToScreen(tcal[0] * rx + tcal[1] * ry + tcal[2], tcal[3] * rx + tcal[4] * ry + tcal[5], x, y);
+  return true;
+}
+void tcalLoad() {
+  Preferences pr;
+  if (pr.begin("touch", true)) {
+    float m[6];
+    if (pr.getBytes("cal", m, sizeof(m)) == sizeof(m) && pr.getUInt("ok", 0) == 0x5A17u) { for (int i = 0; i < 6; i++) tcal[i] = m[i]; tcalOk = true; }
+    pr.end();
+  }
+}
+void tcalSave() {
+  Preferences pr;
+  if (pr.begin("touch", false)) { pr.putBytes("cal", tcal, sizeof(float) * 6); pr.putUInt("ok", 0x5A17u); pr.end(); }
+  tcalOk = true;
+}
+// ---- the home button, drawn over the picture ----
+#define HB 44
+float hbSeg(float x, float y, float ax, float ay, float bx, float by) {
+  float vx = bx - ax, vy = by - ay, t = ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy);
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  float dx = x - ax - vx * t, dy = y - ay - vy * t;
+  return sqrtf(dx * dx + dy * dy);
+}
+const float HB_SEGS[8][4] = { { 10, 22, 22, 10.5f }, { 22, 10.5f, 34, 22 }, { 14, 19.5f, 14, 33 }, { 30, 19.5f, 30, 33 }, { 14, 33, 30, 33 }, { 19.5f, 33, 19.5f, 26 }, { 19.5f, 26, 24.5f, 26 }, { 24.5f, 26, 24.5f, 33 } };
+void homeIcon(uint16_t *buf, int y0, int rows) {   // a strip that's ready to send: draw the button where it overlaps (worked out each time: no memory kept)
+  const int bx = SCR_W - HB - 8, by = SCR_H - HB - 8;
+  if (y0 + rows <= by || y0 >= by + HB) return;
+#if USE_DMA
+  const bool sw = lcdDma;
+#else
+  const bool sw = false;
+#endif
+  for (int y = (y0 > by ? y0 : by); y < y0 + rows && y < by + HB; y++) {
+    uint16_t *p = buf + (y - y0) * SCR_W + bx;
+    const float fy = y - by + 0.5f, cy = fy < 11 ? 11 - fy : fy > HB - 11 ? fy - (HB - 11) : 0;
+    for (int x = 0; x < HB; x++) {
+      const float fx = x + 0.5f, cx = fx < 11 ? 11 - fx : fx > HB - 11 ? fx - (HB - 11) : 0;
+      const float e = 11 - sqrtf(cx * cx + cy * cy);       // inside the rounded square (pixels from its edge)
+      if (e <= 0) continue;
+      const int a = e >= 1 ? 255 : (int)(e * 255);
+      int l = e < 3 ? (int)(150 * fminf(1, e) * fminf(1, 3 - e)) : 0;   // the gold edge
+      if (fx > 8 && fx < 36 && fy > 8 && fy < 36) {        // the house
+        float d = 99;
+        for (int k = 0; k < 8; k++) d = fminf(d, hbSeg(fx, fy, HB_SEGS[k][0], HB_SEGS[k][1], HB_SEGS[k][2], HB_SEGS[k][3]));
+        if (d < 1.6f) { int ic = d < 0.6f ? 255 : (int)((1.6f - d) * 255); if (ic > l) l = ic; }
+      }
+      uint16_t v = p[x];
+      if (sw) v = (v >> 8) | (v << 8);
+      int r = (v >> 11) << 3, g = ((v >> 5) & 63) << 2, b = (v & 31) << 3;
+      int k = 256 - (a * 150 >> 8);                  // darker behind the button
+      r = r * k >> 8; g = g * k >> 8; b = b * k >> 8;
+      r += (0xFF - r) * l >> 8; g += (0xD9 - g) * l >> 8; b += (0x9A - b) * l >> 8;
+      v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+      if (sw) v = (v >> 8) | (v << 8);
+      p[x] = v;
+    }
+  }
+}
+
+// ---- sending the page to the screen ----
+void uiSend(int rows, int w = SCR_W) {
+  swapBytes565(uiBuf, w * rows);
+#if USE_DMA
+  if (lcdDma) {
+    spi_transaction_t t, *r;
+    memset(&t, 0, sizeof(t));
+    t.length = w * rows * 16; t.tx_buffer = uiBuf; t.user = (void *)2;
+    if (spi_device_queue_trans(lcdDev, &t, pdMS_TO_TICKS(1000)) == ESP_OK) spi_device_get_trans_result(lcdDev, &r, pdMS_TO_TICKS(1000));
+    return;
+  }
+#endif
+  sendStrip(uiBuf, rows);
+}
+void uiPaintSetBand();
+void uiPaintRows(int ya, int yb, int xa, int xb) {   // redraw rows ya to yb (the whole page, or just what changed; columns xa to xb)
+  const int start = ya < 0 ? 0 : (ya / uiMaxRows) * uiMaxRows;
+  xa = xa < 0 ? 0 : xa; xb = xb > SCR_W ? SCR_W : xb;
+#if USE_DMA
+  if (!lcdDma || xb - xa < 8) { xa = 0; xb = SCR_W; }
+#else
+  xa = 0; xb = SCR_W;
+#endif
+  const int w = xb - xa;
+  uiColA = xa; uiColB = xb;
+#if USE_DMA
+  if (lcdDma) lcdWindowFrom(start, 1000, xa, xb - 1); else
+#endif
+  { tft.startWrite(); tft.setAddrWindow(0, start, SCR_W, SCR_H - start); }
+  for (uiY0 = start; uiY0 < SCR_H && uiY0 < yb; uiY0 += uiMaxRows) {
+    uiRows = SCR_H - uiY0 < uiMaxRows ? SCR_H - uiY0 : uiMaxRows;
+    if (uiPage == 2) uiPaintWheelBand(); else if (uiPage == 1) uiPaintSetBand(); else if (uiKind) uiPaintPSBand(); else uiPaintHomeBand();
+#if HOME_DUMP
+    if (dumpReq) for (int r = 0; r < uiRows; r++) {
+      Serial.print(F("ROW ")); Serial.print(uiY0 + r); Serial.print(' ');
+      for (int x = 0; x < SCR_W; x++) { uint16_t v = uiBuf[r * SCR_W + x]; const char *hx = "0123456789abcdef"; char o[5] = { hx[v >> 12], hx[(v >> 8) & 15], hx[(v >> 4) & 15], hx[v & 15], 0 }; Serial.print(o); }
+      Serial.println();
+    }
+#endif
+    if (w < SCR_W) for (int r = 0; r < uiRows; r++) memmove(uiBuf + r * w, uiBuf + r * SCR_W + xa, w * 2);   // just these columns
+    uiSend(uiRows, w);
+  }
+  uiColA = 0; uiColB = SCR_W;
+#if USE_DMA
+  if (!lcdDma)
+#endif
+  tft.endWrite();
+#if HOME_DUMP
+  if (dumpReq) { dumpReq = false; Serial.println(F("DUMP END")); }
+#endif
+}
+void uiPaint() { uiPaintRows(0, SCR_H); }
+
+// ---- opening and closing the page ----
+void uiOpen() {
+  uiOwnBuf = false;
+  if (picBuf2) {                           // core 1's fade strip is free while the page shows
+    uiBuf = picBuf2;
+    uiMaxRows = STRIP * SCR_WMAX / SCR_W;
+    if (uiMaxRows > 24) uiMaxRows = 24;
+  } else {
+    for (uiMaxRows = 8; uiMaxRows >= 2 && !uiBuf; uiMaxRows /= 2) {
+#if USE_DMA
+      uiBuf = (uint16_t *)heap_caps_malloc(SCR_W * uiMaxRows * 2, MALLOC_CAP_DMA);
+#else
+      uiBuf = (uint16_t *)malloc(SCR_W * uiMaxRows * 2);
+#endif
+      if (uiBuf) break;
+    }
+    uiOwnBuf = true;
+    if (!uiBuf && picBuf) {                // memory is tight (the sky's clouds): borrow the fade strip once the other core has paused
+      delay(200);
+      uiBuf = picBuf; uiOwnBuf = false;
+      uiMaxRows = STRIP * SCR_WMAX / SCR_W;
+      if (uiMaxRows > 24) uiMaxRows = 24;
+    }
+  }
+  if (!uiBuf) { Serial.println(F("[portal] no memory for the home page")); uiMode = 0; return; }
+  ug.setTextWrap(false);
+  uiKind = homeKind() < 0 ? 0 : homeKind();
+  uiLayout();
+  if (uiKind) uiLayoutPS();
+  uiSelStyle = 0;
+  if (uiKind == 3) uiSelStyle = STYLE == 21 ? 1 : 0;
+  else if (uiKind) for (int i = 0; i < 4; i++) if (UI_PS[uiKind - 1][i] == STYLE) uiSelStyle = i;
+  uiCf[0] = CF_BG; uiCf[1] = CF_GAP; uiCf[2] = CF_TGT; uiCf[3] = CF_PAL; uiCf[4] = CF_TWIST; uiCf[5] = CF_WOB; uiCf[6] = CF_FLOW;
+  uiSparks = NUM_SPARKS; uiStars = STARS; uiArms = ARMS; uiTwist = TWIST;
+  uiSelWood = CROSS_RIPPLE <= 10 ? CROSS_RIPPLE : 0;
+  uiSelBack = 0;
+  for (int i = 0; i < 9; i++) if (UI_BACKS[i] == CROSS_FILL) uiSelBack = i;
+  uiCore = COLOR_CORE; uiRim = COLOR_RIM;
+  for (int k = 0; k < 4; k++) uiSpace[k] = SPACE_COLS[k];
+  uiSelCol = uiColMatch();
+  uiBright = BRIGHTNESS; uiRadius = (int)RADIUS; uiBeam = BEAM; uiSpeed = SPEED; uiFdLen = FD_LEN;
+  uiSaved = false; uiPage = 0; uiDrag = -1;
+  uiRotLayout();
+  if (uiReopen) { uiReopen = false; uiToSettings(); }   // back from a quarter turn: straight to the settings
+  uiHeld = true;                           // the touch that opened this has to lift first
+  uiDirty = true;
+  uiLastTouch = millis();
+}
+void uiClose(bool use) {
+  if (uiOwnBuf) free(uiBuf);               // give the page's memory back first
+  uiBuf = NULL;
+  if (use) {                               // the choices become the board's settings (and are saved)
+    Saved s;
+    fillSaved(s);
+    if (uiKind == 0) { s.crossRipple = uiSelWood; s.crossFill = UI_BACKS[uiSelBack]; }
+    else if (uiKind == 3) {                // the cross fractals: the pattern, and their own settings
+      s.style = 20 + uiSelStyle;
+      for (int j = 0; j < 7; j++) pendCf[j] = (uint8_t)uiCf[j];
+      pendCfOn = true;
+    } else {                                 // a portal or space style
+      s.style = UI_PS[uiKind - 1][uiSelStyle];
+      s.sparks = uiSparks; s.stars = uiStars; s.arms = uiArms; s.twist = uiTwist;
+    }
+    s.core = uiCore; s.rim = uiRim;
+    for (int k = 0; k < 4; k++) s.spaceCols[k] = uiSpace[k];
+    s.fadeOn = 0;                          // the colours picked here stay put
+    if (uiRotTo != 255) { s.portrait = uiRotTo; uiRotTo = 255; }   // Rotate: turned at the start of the next frame
+    s.bright = uiBright; s.radius = uiRadius; s.beam = uiBeam; s.speed = uiSpeed; s.fdLen = uiFdLen;   // and the settings page's
+    const uint8_t f = s.crossFill;
+    if (uiKind == 0 && ((f >= 8 && f <= 10) || f == 18)) cloudMemory();   // a sky: make room for its clouds now, while the other core is paused
+    pendingSettings = s;
+    havePending = true;
+  }
+  uiMode = 0;
+  tapIgnore = true;                        // the touch that closed it isn't a tap on the cross
+  Serial.println(use ? F("[portal] home page: new choices saved") : F("[portal] home page closed"));
+}
+void uiSetTouch(int x, int y);
+void uiToSettings() {                      // open the settings page with the choices as they are
+  stBright = uiBright; stRadius = uiRadius; stBeam = uiBeam; stSpeed = uiSpeed; stFdLen = uiFdLen; stSparks = uiSparks; stStars = uiStars;
+  stCore = uiCore; stRim = uiRim; for (int k = 0; k < 4; k++) stSpace[k] = uiSpace[k]; stSelCol = uiSelCol;
+  for (int j = 0; j < 7; j++) stCf[j] = uiCf[j];
+  uiPage = 1; uiDirty = true;
+}
+void uiTouch(int x, int y) {
+  if (uiPage >= 1) { uiSetTouch(x, y); return; }
+  if (uiKind == 3) {                       // the cross fractals: the pattern, then the colours
+    for (int i = 0; i < 2; i++) if (uiIn(uiTile[i], x, y)) { if (i != uiSelStyle) { uiSelStyle = i; uiCf[3] = i ? 2 : 0; uiDirty = true; } return; }
+    for (int i = 0; i < 5; i++) if (uiIn(uiCol[i], x, y)) { uiCf[3] = i; uiDirty = true; return; }
+  } else if (uiKind) {                     // portal and space pages
+    for (int i = 0; i < 4; i++) if (uiIn(uiTile[i], x, y)) {
+      if (i != uiSelStyle) {               // another style: its own shape and colours, as in the Studio
+        const int code = UI_PS[uiKind - 1][i];
+        uiSelStyle = i;
+        if (code == 0) { uiArms = 4; uiTwist = 2.4f; }
+        if (code == 1) { uiArms = 2; uiTwist = 2.2f; uiCore = 0x0B6B1A; uiRim = 0x8DFF4F; }
+        if (code == 6) { uiArms = 2; uiTwist = 1.8f; uiCore = 0x0B6B1A; uiRim = 0x8DFF4F; }
+        if (code == 2) { uiCore = 0xA400FF; uiRim = 0xFF4FD8; }
+        if (code == 3) { uiCore = 0x1B2A8A; uiRim = 0x9FE8FF; }
+        if (code == 16) uiSparks = 14;
+        uiSelCol = uiColMatch();
+        uiDirty = true;
+      }
+      return;
+    }
+    const int kind = uiColKind();
+    for (int i = 0; i < 6; i++) if (uiIn(uiCol[i], x, y)) {
+      uiSelCol = i;
+      if (kind == 1) { uiCore = UI_GLOW[i][0]; uiRim = UI_GLOW[i][1]; } else for (int k = 0; k < 4; k++) uiSpace[k] = UI_SPACE[i][k];
+      uiDirty = true; return;
+    }
+  } else {                                 // the cross page
+    for (int i = 0; i < 11; i++) if (uiIn(uiWood[i], x, y)) { uiSelWood = i; uiDirty = true; return; }
+    for (int i = 0; i < 9; i++) if (uiIn(uiBack[i], x, y)) { uiSelBack = i; uiSelCol = uiColMatch(); uiDirty = true; return; }
+    int kind = uiColKind();
+    if (kind) for (int i = 0; i < 6; i++) if (uiIn(uiCol[i], x, y)) {
+      uiSelCol = i;
+      if (kind == 1) { uiCore = UI_GLOW[i][0]; uiRim = UI_GLOW[i][1]; } else for (int k = 0; k < 4; k++) uiSpace[k] = UI_SPACE[i][k];
+      uiDirty = true; return;
+    }
+  }
+  if (uiIn(uiSetBtn, x, y)) { uiToSettings(); return; }
+  if (uiIn(uiShow, x, y)) uiClose(true);
+}
+void uiSlideTo(int k, int x) {             // a slider moved: redraw just that slider
+  const UiRect &r = uiSl[k];
+  uiSlSet(k, (x - r.x) / (float)r.w);
+  uiPaintRows(r.y - 4, r.y + r.h + 4);
+}
+void uiSetTouch(int x, int y) {            // the settings page
+  if (uiPage == 2) { uiWheelTouch(x, y); return; }
+  if (uiIn(uiBackBtn, x, y)) { uiPage = 0; uiDirty = true; return; }   // back: forget the changes
+  if (uiIn(uiRotBtn, x, y)) {               // Rotate: keep the settings, turn a quarter (as the Studio's Rotate 90), then come back here
+    uiBright = stBright; uiRadius = stRadius; uiBeam = stBeam; uiSpeed = stSpeed; uiFdLen = stFdLen; uiSparks = stSparks; uiStars = stStars;
+    uiCore = stCore; uiRim = stRim; for (int k = 0; k < 4; k++) uiSpace[k] = stSpace[k]; uiSelCol = stSelCol;
+    for (int j = 0; j < 7; j++) uiCf[j] = stCf[j];
+    const bool p = !PORTRAIT, f = PORTRAIT ? FLIP : !FLIP;
+    uiRotTo = (p ? 1 : 0) | (f ? 2 : 0);
+    uiClose(true);
+    uiReopen = true;
+    return;
+  }
+  if (uiIn(uiSave, x, y)) {                 // SAVE: keep them, back to the home page
+    uiBright = stBright; uiRadius = stRadius; uiBeam = stBeam; uiSpeed = stSpeed; uiFdLen = stFdLen; uiSparks = stSparks; uiStars = stStars;
+    uiCore = stCore; uiRim = stRim; for (int k = 0; k < 4; k++) uiSpace[k] = stSpace[k]; uiSelCol = stSelCol;
+    for (int j = 0; j < 7; j++) uiCf[j] = stCf[j];
+    uiSaved = true; uiPage = 0; uiDirty = true; return;
+  }
+  const int kind = uiColKind();
+  if (kind == 3) {                          // the cross fractals' colours: the preview shows them straight away
+    for (int i = 0; i < 5; i++) if (uiIn(uiSetCol[i], x, y)) {
+      stCf[3] = i;
+      const int a = uiPrev.y < uiSetCol[0].y ? uiPrev.y : uiSetCol[0].y, b = uiPrev.y + uiPrev.h > uiSetCol[0].y + uiSetCol[0].h ? uiPrev.y + uiPrev.h : uiSetCol[0].y + uiSetCol[0].h;
+      uiPaintRows(a - 6, b + 6);
+      return;
+    }
+  } else {
+  if (kind && uiIn(uiSetCol[6], x, y)) { uiWheelOpen(); return; }   // the colour wheel
+  if (kind) for (int i = 0; i < 6; i++) if (uiIn(uiSetCol[i], x, y)) {   // a colour: the preview shows it straight away
+    stSelCol = i;
+    if (kind == 1) { stCore = UI_GLOW[i][0]; stRim = UI_GLOW[i][1]; } else for (int k = 0; k < 4; k++) stSpace[k] = UI_SPACE[i][k];
+    const int a = uiPrev.y < uiSetCol[0].y ? uiPrev.y : uiSetCol[0].y, b = uiPrev.y + uiPrev.h > uiSetCol[0].y + uiSetCol[0].h ? uiPrev.y + uiPrev.h : uiSetCol[0].y + uiSetCol[0].h;
+    uiPaintRows(a - 6, b + 6);
+    return;
+  }
+  }
+  for (int k = 0; k < 4; k++) {
+    const UiRect &r = uiSl[k];
+    if (y >= r.y - 8 && y < r.y + r.h + 10 && x >= r.x - 14 && x < r.x + r.w + 14) { uiDrag = k; uiSlideTo(k, x); return; }
+  }
+}
+void uiDragEnd() {                         // let go of a slider: the preview catches up
+  if (uiDrag < 0) return;
+  const int k = uiDrag;
+  uiDrag = -1;
+  if (k >= 10) { uiWheelDragEnd(k); return; }
+  uiPaintRows(uiPrev.y - 4, uiPrev.y + uiPrev.h + 4);
+  uiPaintRows(uiSl[k].y - 4, uiSl[k].y + uiSl[k].h + 4);
+}
+void uiLoop() {                            // runs instead of the drawing while the page shows
+  static uint32_t upSince = 0;
+  if (!uiBuf) { uiOpen(); if (!uiBuf) return; }
+  if (havePending && uiMode == 1) { uiClose(false); return; }   // new settings from the Studio: show them
+  if (uiDirty) { uiDirty = false; uiPaint(); }
+  if (simTap) {                            // UITAP x y over USB (for testing)
+    simTap = false; uiLastTouch = millis();
+    if (uiMode == 1) { uiTouch(simX, simY); uiDragEnd(); }   // (a tap: pressed and let go)
+    return;
+  }
+  if (digitalRead(TAP_PIN) == LOW) {
+    upSince = 0;
+    if (!uiHeld) {
+      uiHeld = true;
+      uiLastTouch = millis();
+      delay(25);                           // let the touch settle
+      int x, y;
+      if (touchXY(x, y)) uiTouch(x, y);
+    } else if (uiDrag >= 0) {              // dragging a slider: follow the finger
+      static uint32_t lastDrag = 0;
+      if (millis() - lastDrag > 30) {
+        lastDrag = millis(); uiLastTouch = lastDrag;
+        int x, y;
+        if (touchXY(x, y)) { if (uiDrag == 10) uiWheelAt(x, y); else if (uiDrag == 11) uiWSlideTo(x); else uiSlideTo(uiDrag, x); }
+      }
+    }
+  } else {
+    if (!upSince) upSince = millis() | 1;
+    if (uiHeld && millis() - upSince > 80) { uiHeld = false; uiDragEnd(); }
+  }
+  if (uiMode && millis() - uiLastTouch > 90000UL) uiClose(uiSaved);   // left alone: back to the cross (saved settings are kept)
+  delay(4);
+}
+// between frames: was the home button pressed?
+void homeCheck() {
+  if (!homeActive()) {
+    if (pressPending) { pressPending = false; if (!TAP_OFF) tapCount++; }
+    pressHave = false;
+    return;
+  }
+  if (!pressPending) return;
+  pressPending = false;
+  const bool had = pressHave;
+  pressHave = false;
+  int x = pressX, y = pressY;
+  bool ok = had ? pressOk : touchXY(x, y);
+  if (ok && x >= SCR_W - 74 && y >= SCR_H - 74) { uiMode = 1; return; }
+  if (!TAP_OFF) tapCount++;
+}
+#endif
+
+
+void loop() {
+#if SHOW_ON
+  showSerialTick(Serial.available() > 0);
+#endif
+  readSerial();
+#if defined(ESP32)
+  if (rebootAt && (int32_t)(millis() - rebootAt) >= 0) ESP.restart();   // Restart board button in the Studio
+#endif
+#if HAS_BLE
+  readBluetooth();
+#endif
+  if (pausedForUpload()) return;         // the screen holds still while a picture arrives
+#if HOME_PAGE
+  if (uiReopen && !uiMode && !havePending && wantPortrait == PORTRAIT && wantFlip == FLIP && !turnPending) {   // turned: the settings page again
+    static uint8_t frames = 0;
+    if (++frames > 2) { frames = 0; uiMode = 1; }
+  }
+  if (uiMode) { uiLoop(); return; }      // the home page is showing
+#endif
+#if DUAL_CORE
+  static uint8_t b = 0;
+  uint32_t frameT0 = micros();
+  int pending = -1;
+  for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
+    xSemaphoreTake(goSem[b], portMAX_DELAY);
+    int rows = stripRows[b], help = stripHelp[b];
+    if (y0 == 0) {                       // a new frame: its size is settled now
+#if TURNS
+      if (turnPending) {                 // the screen was turned: tell the panel
+#if USE_DMA
+        if (lcdDma) { uint8_t c = 0x36, m = MADCTL_ROT[rotNow()]; lcdSend(&c, 1, false, 1000); lcdSend(&m, 1, true, 1000); } else
+#endif
+        tft.setRotation(rotNow());
+        turnPending = false;
+      }
+#endif
+#if USE_DMA
+      if (lcdDma) lcdWindow(1000); else
+#endif
+      { tft.startWrite(); tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX); }
+    }
+    if (help) {                          // core 1's share of the drawing: the bottom rows
+      uint16_t *dst = stripBuf[b] + (rows - help) * SCR_W;
+      composeStrip(stripY0[b] + rows - help, help, dst);
+      swapBytes565(dst, SCR_W * help);
+    }
+    if (y0 + STRIP >= SCR_H) xSemaphoreGive(helperIdle);   // core 0 can start the next frame
+    uint32_t t0 = micros();
+    xSemaphoreTake(readySem[b], portMAX_DELAY);
+    wait1Us += micros() - t0;
+#if HOME_PAGE
+    if (homeActive()) homeIcon(stripBuf[b], stripY0[b], rows);   // the home button in the corner
+#endif
+#if USE_DMA
+    if (lcdDma) {                        // send this strip in the background, then free the one before
+      lcdQueue(b, rows, 1000);
+      if (pending >= 0) { lcdFinish(pending, 1000); xSemaphoreGive(freeSem[pending]); }
+      pending = b;
+    } else
+#endif
+    {
+      t0 = micros();
+      sendStrip(stripBuf[b], rows);
+      sendUs += micros() - t0;
+      xSemaphoreGive(freeSem[b]);
+    }
+#if HOME_PAGE
+    if (pressPending && !pressHave) {    // a press on the Wooden cross: read where it is now, before the finger lifts
+      const int ny = y0 + rows;          // (the screen pauses between two strips, then carries on from the next row)
+#if USE_DMA
+      if (lcdDma) { if (pending >= 0) { lcdFinish(pending, 1000); xSemaphoreGive(freeSem[pending]); pending = -1; } } else
+#endif
+      tft.endWrite();
+      pressOk = touchXY(pressX, pressY);
+      pressHave = true;
+#if USE_DMA
+      if (lcdDma) { if (ny < SCR_H) lcdWindowFrom(ny, 1000); } else
+#endif
+      { tft.startWrite(); if (ny < SCR_H) tft.setAddrWindow(0, ny, SCR_W, SCR_H - ny); }
+    }
+#endif
+    b ^= 1;
+    readSerialQuick();                   // new settings get an answer even while a slow frame is drawn
+    pollTap();
+  }
+#if USE_DMA
+  if (pending >= 0) { lcdFinish(pending, 1000); xSemaphoreGive(freeSem[pending]); }
+  if (!lcdDma)
+#endif
+  tft.endWrite();
+#if HOME_PAGE
+  homeCheck();                           // the screen is quiet now: was that press on the home button?
+#endif
+  countFrame();
+  balanceCores(micros() - frameT0);
+  return;
+#else
+  frameStart();
+#if TURNS
+  if (turnPending) { tft.setRotation(rotNow()); turnPending = false; }
+#endif
+  tft.startWrite();
+  tft.setAddrWindow(0, 0, SCR_W * PX, SCR_H * PX);
+  for (int y0 = 0; y0 < SCR_H; y0 += STRIP) {
+    int rows = min(STRIP, SCR_H - y0);
+    uint32_t t0 = micros();
+    composeStrip(y0, rows, stripBuf[0]);
+    uint32_t t1 = micros();
+    sendStrip(stripBuf[0], rows);
+    drawUs += t1 - t0; sendUs += micros() - t1;
+    readSerialQuick();
+    pollTap();
+  }
+  frameEnd();
+  tft.endWrite();
+  countFrame();
+#endif
+}
+`;
+}
+
+function sketch() {
+  if (M.kind === "tft") return tftSketch();
+  const rgb = M.kind === "rgb", d = M.driver, B = boardOf();
+  const wiringLines = "// Wiring:  " + wiringRows(B).map(w => `${w[0].split(" ")[0]}->${w[1]}`).join("  ");
+  const includes = {
+    ssd1306: "#include <Wire.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1306.h>",
+    sh1106:  "#include <Wire.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SH110X.h>",
+    ssd1331: "#include <SPI.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1331.h>",
+    ssd1351: "#include <SPI.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1351.h>",
+  }[d];
+  const displayDecl = {
+    ssd1306: `#define OLED_ADDR  ${S.addr}      // if the screen stays blank, try ${S.addr === "0x3C" ? "0x3D" : "0x3C"}
+
+// 400 kHz I2C during and after begin() for a smoother frame rate
+Adafruit_SSD1306 oled(SCREEN_W, SCREEN_H, &Wire, -1, 400000UL, 400000UL);
+Adafruit_GFX &gfx = oled;`,
+    sh1106: `#define OLED_ADDR  ${S.addr}      // if the screen stays blank, try ${S.addr === "0x3C" ? "0x3D" : "0x3C"}
+
 Adafruit_SH1106G oled(SCREEN_W, SCREEN_H, &Wire, -1, 400000UL, 400000UL);
 Adafruit_GFX &gfx = oled;`,
     ssd1331: "", ssd1351: "",
@@ -307,7 +1236,7 @@ ${frame}
 // ---------------- UI ----------------
 
 const codeEl = $("code");
-const fmt = { crossw: v => v + "%", beam: v => v + "%", bar: v => v + "%", radius: v => v + " px", oval: v => f2(v), arms: v => v, twist: v => (+v).toFixed(1), speed: v => f2(v), sparks: v => v, bright: v => v + "%", tone: v => v + "%", warm: v => v + "%", ripples: v => v, rspeed: v => f2(v), glow: v => f2(v), stars: v => v, rimsmooth: v => v + "%", rimw: v => v + "%", fdLen: v => v + " min", fdStars: v => v + "%", fdClouds: v => v + "%", fdGlow: v => v + "%" };
+const fmt = { crossw: v => v + "%", beam: v => v + "%", bar: v => v + "%", radius: v => v + " px", oval: v => f2(v), arms: v => v, twist: v => (+v).toFixed(1), speed: v => f2(v), sparks: v => v, bright: v => v + "%", tone: v => v + "%", warm: v => v + "%", ripples: v => v, rspeed: v => f2(v), glow: v => f2(v), stars: v => v, rimsmooth: v => v + "%", rimw: v => v + "%", fdLen: v => v + " min", fdStars: v => v + "%", fdClouds: v => v + "%", fdGlow: v => v + "%", cfGap: v => v + "%", cfTwist: v => v + "°", cfWob: v => v + "%", cfFlow: v => v + "%" };
 let codeTimer;
 const refreshCode = () => { clearTimeout(codeTimer); codeTimer = setTimeout(() => codeEl.textContent = withMain(sketch), 120); };
 
@@ -376,7 +1305,11 @@ const STYLES = [
   { name: "Wormhole", removed: true },   // (no longer offered)
   { name: "Meteor Shower", sparks: 14 },
   { name: "Wooden", cross: CROSS_SHAPE[0], c: ["#d26a00", "#ffd27a"], wood: true },
+  { name: "(18)", removed: true }, { name: "(19)", removed: true },   // (18: kept for Full day, a Wooden cross background)
+  { name: "Cross of Crosses", frac: true, pal: 0 },
+  { name: "Cross Tunnel", frac: true, pal: 2 },
 ];
+const isFracStyle = i => i === 20 || i === 21;   // the cross fractals: on the Cross page, but not a cross with a fill
 const isCrossStyle = i => (i >= 8 && i <= 13) || i === 17, isSpaceStyle = i => (i >= 3 && i <= 5) || (i >= 14 && i <= 16), hasSpaceCols = i => i === 4 || (i >= 14 && i <= 16);
 function markStyle() {
   $("style").querySelectorAll("button").forEach(b => { b.setAttribute("aria-pressed", +b.dataset.i === S.style); b.disabled = false; });
@@ -419,6 +1352,7 @@ function markStyle() {
   // Which settings actually change what's drawn: the chosen style plus any styles in the scene list
   const use = new Set();
   const addUses = st => {
+    if (isFracStyle(st)) return;                              // the cross fractals have their own settings
     const isC = isCrossStyle(st), wood = st === 17;
     let f = isC ? S.crossFill : st;
     if (isC && !wood && ((f >= 7 && f <= 10) || f === 18)) f = 3;   // skies and warm glow are only behind the Wooden cross
@@ -460,6 +1394,12 @@ function markStyle() {
   $("speed").closest("label").querySelector("span").firstChild.nodeValue = sky ? "Cloud speed " : tft && eff === 14 ? "Colour speed " : "Spin speed ";   // the Nebula stays still; its colours move
   $("speed-hint").hidden = !sky;
   ["fdLen", "fdStars", "fdClouds", "fdGlow"].forEach(k => { $(k).closest("label").hidden = !use.has("fd"); });   // Full day's own settings
+  const frac = tft && isFracStyle(S.style);                   // the cross fractals: their own settings, no size
+  root.querySelectorAll("[data-cfrac]").forEach(el => { el.hidden = !frac; });
+  root.querySelectorAll("[data-cfcc]").forEach(el => { el.hidden = !(frac && S.style === 20); });
+  root.querySelectorAll("[data-cftun]").forEach(el => { el.hidden = !(frac && S.style === 21); });
+  $("radius").closest("label").hidden = frac;
+  if (frac) $("speed").closest("label").querySelector("span").firstChild.nodeValue = "Zoom speed ";
   const sl = $("sparks").closest("label");                   // Meteor Shower: the Sparks setting is the number of meteors
   if (sl) { sl.querySelector("span").firstChild.nodeValue = met ? "Meteors " : "Sparks "; $("sparks-hint").hidden = !met; }
 }
@@ -474,6 +1414,7 @@ $("woodgrain").addEventListener("change", e => { S.woodGrain = +e.target.value; 
 $("crosscol-on").addEventListener("change", e => { S.crossCol = e.target.checked ? $("crosscol").value : ""; markStyle(); buildTftPalette(); changed(); });
 $("crosscol").addEventListener("input", e => { if (S.crossCol) { S.crossCol = e.target.value; buildTftPalette(); changed(); } });
 $("crossbg").addEventListener("change", e => { S.crossOut = e.target.checked ? S.crossFill : 255; markStyle(); changed(true); });
+["cfPal", "cfBg", "cfTgt"].forEach(k => $(k).addEventListener("change", e => { S[k] = +e.target.value; changed(); }));
 $("crossfill").addEventListener("change", e => {
   S.crossFill = +e.target.value;
   if (S.crossOut !== 255) S.crossOut = S.crossFill;          // the background follows the style inside
@@ -488,35 +1429,40 @@ STYLES.forEach((st, i) => {
     const wasCross = isCrossStyle(S.style);
     if (!wasCross && st.cross) S.portalR = S.radius;          // remember the portal size while showing a cross
     if (wasCross && !st.cross) S.radius = Math.min(S.portalR || M.r, rmax(M));   // and put it back afterwards
+    const wasStyle = S.style;
     S.style = i;
     if (st.c) { S.c1 = st.c[0]; S.c2 = st.c[1]; }
     if (st.arms) S.arms = st.arms;
     if (st.twist) S.twist = st.twist;
     if (st.sparks) S.sparks = st.sparks;
+    if (st.pal != null && wasStyle !== i) S.cfPal = st.pal;   // the cross fractals: Portal blue, the tunnel in Rainbow
     if (st.cross) { S.beam = st.cross.beam; S.bar = st.cross.bar; S.crossw = DEFAULTS.crossw; S.radius = crossMax(M); }
     if (editIdx >= 0) { S.scenes[editIdx] = 200 + i; renderScenes(); }   // editing a scene: this is its style now
     if (st.wood) { if (!((S.crossFill >= 7 && S.crossFill <= 10) || S.crossFill === 18)) S.crossFill = 7; }   // Wooden cross: starts with the warm glow behind it
     else if ((S.crossFill >= 7 && S.crossFill <= 10) || S.crossFill === 18) S.crossFill = 3;   // (Solid colour, 11, is kept for the other crosses)   // crosses fill the screen, each with its own proportions
     bindAll(); markStyle(); changed(true);
   });
-  $(isCrossStyle(i) ? "style-cross" : isSpaceStyle(i) ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole, Nebula, Wormhole, Meteor Shower are space styles
+  $(isCrossStyle(i) || isFracStyle(i) ? "style-cross" : isSpaceStyle(i) ? "style-space" : "style-portal").appendChild(b);   // Hyperspace, Galaxy, Black hole, Nebula, Wormhole, Meteor Shower are space styles
 });
 // Display pages: #cross, #portal, #space (no hash = the page that picks one)
 const DISPLAY_PAGES = {
-  cross:  { title: "Cross Display",  row: "cross-row",  fits: isCrossStyle, start: 17 },
-  portal: { title: "Portal Display", row: "portal-row", fits: i => !isCrossStyle(i) && !isSpaceStyle(i), start: 0 },
+  cross:  { title: "Cross Display",  row: "cross-row",  fits: i => isCrossStyle(i) || isFracStyle(i), start: 17 },
+  portal: { title: "Portal Display", row: "portal-row", fits: i => !isCrossStyle(i) && !isSpaceStyle(i) && !isFracStyle(i), start: 0 },
   space:  { title: "Space Display",  row: "space-row",  fits: isSpaceStyle, start: 4 },
+  picture: { title: "Picture Display", pics: true },   // its own editor (#picpage), for the 3.5″ and 4.0″ boards
 };
 function showDisplayPage(first) {
   const key = (location.hash || "").slice(1).toLowerCase(), pg = DISPLAY_PAGES[key];
   const picker = $("dpick");
-  for (const el of picker.parentElement.children) if (el.tagName !== "HEADER" && el !== picker) el.hidden = !pg;
+  const pics = !!(pg && pg.pics);
+  for (const el of picker.parentElement.children) if (el.tagName !== "HEADER" && el !== picker) el.hidden = !pg || (pics ? el.id !== "picpage" : el.id === "picpage");
   picker.hidden = !!pg;
   $("backlink").hidden = !pg;
   $("studio-sub").hidden = !!pg;
   $("studio-title").textContent = pg ? pg.title : "Display Studio";
   ["cross-row", "portal-row", "space-row"].forEach(r => $(r).classList.toggle("mode-off", !!pg && r !== pg.row));
-  if (pg && !pg.fits(S.style)) {
+  if (typeof PDX !== "undefined" && PDX) { if (pics) PDX.enter(); else PDX.leave(); }
+  if (pg && pg.fits && !pg.fits(S.style)) {
     const b = $(pg.row).querySelector(`button[data-i="${pg.start}"]`) || $(pg.row).querySelector("button");
     if (b) b.click();
   }
@@ -697,6 +1643,7 @@ function bindAll() {
   if (typeof markStyle === "function") markStyle();
   for (const k of Object.keys(fmt)) { $(k).value = S[k]; $("o-" + k).textContent = fmt[k](S[k]); }
   $("drift").checked = S.drift; $("addr").value = S.addr; $("reverse").checked = S.reverse;
+  $("cfPal").value = S.cfPal; $("cfBg").value = S.cfBg; $("cfTgt").value = S.cfTgt;
   $("c1").value = S.c1; $("c2").value = S.c2;
   $("fade").checked = S.fade; $("fade-opts").hidden = !S.fade; $("tapnext").checked = S.tapnext;
   if (typeof renderFadeSets === "function") { renderFadeSets(); showFadeTime(); }
@@ -1093,11 +2040,12 @@ $("send-pics").addEventListener("click", sendPictures);
 const FW_BASE = "https://cdn.jsdelivr.net/gh/aye-lit/Portal-Firmware@861b9a6fa183a606851f83c01e12ccf98674c100/";
 // The firmware is locked to one exact release: a fixed GitHub commit (whose files can never change), and each file's
 // fingerprint is checked before installing. A new firmware release only reaches customers with a website update.
-const FW_VERSION = "1.21.0";
-const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/edf977d38420f075e44f978e35023238acf802e0/";
+const FW_VERSION = "1.22.0";
+const FW_FILES = "https://raw.githubusercontent.com/aye-lit/Portal-Firmware/be002bc6b13139a0699d04196cce18d88a62851f/";
 const FIRMWARE = {                     // board|screen -> prebuilt firmware (landscape for rectangles)
-  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "93a1cc39e7a1bcbaf3f8cf08f20d99c41d336a1ad0a037b8629f721bf38a6d02" },
-  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "9d11aefad5a9708df9e1c7ee12b519c06adf78f85224b1225d82202b5ffb9fae" },
+  "esp32s3|gc9a01": { file: "firmware/portal_s3_gc9a01.bin", chip: "ESP32-S3", phone: false, sha256: "79a4a0e070deab7c9301284ef5e31a8d4f28a5aa5e17ed08ca9769bf5afdc11f" },
+  "cyd35|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "265c032de0e20948fb21c9fb11fb88e1246fff052139eb04fc0cc9c834b1ce4c" },
+  "cyd40|st7796":   { file: "firmware/portal_cyd35.bin",     chip: "ESP32",    phone: true, turns: true, sha256: "265c032de0e20948fb21c9fb11fb88e1246fff052139eb04fc0cc9c834b1ce4c" },   // the 4.0″ board: same pins, same firmware
 };
 async function sha256Hex(bytes) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -1114,6 +2062,7 @@ function showFirmware() {
   if (fw) $("fw-note").textContent = IS_ANDROID && fw.phone
     ? "Select the correct board from the drop down list. Plug the board into your phone, tap the Install on my board button.\nTakes about a minute.\n(Only works with Android. A terminal app may be needed)"
     : "Select the correct board from the drop down list to the right. Plug the board into your computer, click the Install on my board button. Works in Chrome or Edge on a computer.\nTakes about a minute.";
+  if (fw && picMode()) $("fw-note").textContent = "Pick your board under Your display. Plug it into your computer and click Install on my board: needed once, so the board has the Picture Display. Works in Chrome or Edge on a computer.\nTakes about a minute.";
 }
 let esptool = null;
 async function installFirmware() {
@@ -1210,14 +2159,15 @@ $("copy").addEventListener("click", async () => {
 
 // ---------------- live tuning (Web Serial) ----------------
 const serialStatus = $("serial-status");
-const say = (msg, cls = "") => { serialStatus.className = "status " + cls; serialStatus.textContent = msg; };
+const say = (msg, cls = "") => { serialStatus.className = "status " + cls; serialStatus.textContent = msg; if (typeof PDX !== "undefined" && PDX && PDX.isOpen()) PDX.say(msg, cls); };   // (the Picture Display page shows it too)
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function fadeArgs() {           // count, then 3 core/rim pairs (unused ones are 0), then seconds
   const cols = [];
   for (let i = 0; i < 3; i++) { const st = S.fadeSets[i]; cols.push(st ? parseInt(hex6(st.core), 16) : 0, st ? parseInt(hex6(st.rim), 16) : 0); }
   return `${S.fadeSets.length} ${cols.join(" ")} ${S.fadesec}`;
 }
-const cmdLine = () => withMain(() => (M.kind === "tft" ? sceneLines() + `RIM ${S.rimw}\nXOUT ${bgOut(S)}\nXCOL ${colCode(S.crossCol)}\n` : "") + setLine());   // (older boards ignore SCN and RIM lines)
+const cmdLine = () => picMode() ? pdCmdLine() : cmdLineMain();
+const cmdLineMain = () => withMain(() => (M.kind === "tft" ? sceneLines() + `RIM ${S.rimw}\nXOUT ${bgOut(S)}\nXCOL ${colCode(S.crossCol)}\n` + (isFracStyle(S.style) ? `CFR ${S.cfBg} ${S.cfGap} ${S.cfTgt} ${S.cfPal} ${S.cfTwist} ${S.cfWob} ${S.cfFlow}\n` : "") : "") + setLine());   // (older boards ignore SCN and RIM lines)
 const setLine = () => `SET ${S.radius} ${f2(S.oval)} ${S.arms} ${(+S.twist).toFixed(1)} ${f2(S.speed)} ${S.sparks} ${(M.kind === "tft" ? S.reverse : S.drift) ? 1 : 0} ${parseInt(hex6(S.c1), 16)} ${parseInt(hex6(S.c2), 16)}${M.kind === "tft" ? ` ${S.bright} ${S.style} ${S.ripples} ${f2(S.rspeed)} ${f2(S.glow)} ${S.stars} ${S.fade ? 1 : 0} ${fadeArgs()} ${S.rimsmooth} ${sceneArgs()}` : ""}\n`;
 function sceneArgs() {
   const L = sceneList(), cols = " " + S.spaceCols.map(c => parseInt(hex6(c), 16)).join(" "), rip = ripCode(S.style, S);
@@ -1332,6 +2282,7 @@ async function sendUsb() {
     await w.write(new TextEncoder().encode(cmdLine())); w.releaseLock();
     const reply = await readReply(5000);
     if (/\bOK\b/.test(reply)) { say("Sent and saved on the board.", "ok"); refreshConn(); }
+    else if (/\bERR\b/.test(reply) && picMode()) { say("This board doesn't have the Picture Display yet. Click Install on my board first.", "warn"); refreshConn(); }
     else if (/\bERR\b/.test(reply)) { say("The board rejected those settings. If you changed the display model, copy and upload the new sketch first.", "warn"); refreshConn(); }
     else setConn("busy", "USB open, but the board isn't answering"), say("No reply from the board. If the portal program isn't on it yet, install it first (Quick install above, or upload the sketch with Arduino). Also close the Arduino Serial Monitor.", "warn");
   } catch (e) {
@@ -1442,6 +2393,508 @@ function liveSend() {
   if (!$("live").checked || (!port && !bleRx)) return;
   clearTimeout(liveTimer); liveTimer = setTimeout(send, 350);
 }
+// ---------------- the Picture Display (#picture): your own photos, GIFs and videos, for the 3.5″ and 4.0″ boards ----------------
+var PDX = (() => {
+  // a small GIF reader: every frame, with its timing
+  function readGif(buf) {
+    const d = new Uint8Array(buf); let p = 0;
+    const u16 = () => { const v = d[p] | (d[p + 1] << 8); p += 2; return v; };
+    if (String.fromCharCode(d[0], d[1], d[2]) !== "GIF") throw new Error("not a GIF");
+    p = 6; const W = u16(), H = u16(), pk = d[p++]; p += 2;
+    let gct = null;
+    if (pk & 0x80) { const n = 2 << (pk & 7); gct = d.subarray(p, p + n * 3); p += n * 3; }
+    const frames = []; let delay = 100, trans = -1, disposal = 0;
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const g = cv.getContext("2d"); const img = g.createImageData(W, H); let prev = null;
+    const subBlocks = () => { const parts = []; let n; while ((n = d[p++])) { parts.push(d.subarray(p, p + n)); p += n; } let len = 0; parts.forEach(a => len += a.length); const out = new Uint8Array(len); let o = 0; parts.forEach(a => { out.set(a, o); o += a.length; }); return out; };
+    while (p < d.length) {
+      const b = d[p++];
+      if (b === 0x3B) break;
+      if (b === 0x21) {
+        const label = d[p++];
+        if (label === 0xF9) { p++; const f = d[p++]; delay = (d[p] | (d[p + 1] << 8)) * 10; p += 2; trans = (f & 1) ? d[p] : -1; p++; disposal = (f >> 2) & 7; p++; }
+        else subBlocks();
+        continue;
+      }
+      if (b !== 0x2C) break;
+      const fx = u16(), fy = u16(), fw = u16(), fh = u16(), ip = d[p++];
+      let ct = gct; if (ip & 0x80) { const n = 2 << (ip & 7); ct = d.subarray(p, p + n * 3); p += n * 3; }
+      const interlace = !!(ip & 0x40), minCode = d[p++], data = subBlocks();
+      const px = lzw(data, minCode, fw * fh);
+      if (disposal === 3) prev = new Uint8ClampedArray(img.data);
+      const rows = [];
+      if (interlace) { for (let y = 0; y < fh; y += 8) rows.push(y); for (let y = 4; y < fh; y += 8) rows.push(y); for (let y = 2; y < fh; y += 4) rows.push(y); for (let y = 1; y < fh; y += 2) rows.push(y); }
+      else for (let y = 0; y < fh; y++) rows.push(y);
+      for (let i = 0; i < fh; i++) {
+        const y = rows[i]; if (fy + y >= H) continue;
+        for (let x = 0; x < fw; x++) { if (fx + x >= W) continue; const c = px[i * fw + x]; if (c === trans || !ct) continue; const o = ((fy + y) * W + fx + x) * 4; img.data[o] = ct[c * 3]; img.data[o + 1] = ct[c * 3 + 1]; img.data[o + 2] = ct[c * 3 + 2]; img.data[o + 3] = 255; }
+      }
+      g.putImageData(img, 0, 0);
+      const fr = document.createElement("canvas"); fr.width = W; fr.height = H; fr.getContext("2d").drawImage(cv, 0, 0);
+      frames.push({ img: fr, delay: Math.max(20, delay || 100) });
+      if (disposal === 2) { for (let y = fy; y < fy + fh && y < H; y++) for (let x = fx; x < fx + fw && x < W; x++) img.data[(y * W + x) * 4 + 3] = 0; }
+      else if (disposal === 3 && prev) img.data.set(prev);
+      delay = 100; trans = -1; disposal = 0;
+    }
+    if (!frames.length) throw new Error("this GIF has no pictures in it");
+    return { w: W, h: H, frames };
+  }
+  function lzw(data, minCode, count) {
+    const out = new Uint8Array(count), clear = 1 << minCode, eoi = clear + 1;
+    let size = minCode + 1, mask = (1 << size) - 1, next = eoi + 1, old = -1, first = 0, bits = 0, cur = 0, op = 0;
+    const pre = new Int32Array(4096), suf = new Uint8Array(4096), stack = new Uint8Array(4097);
+    for (let i = 0; i < clear; i++) suf[i] = i;
+    for (let i = 0; i < data.length && op < count; ) {
+      while (bits < size && i < data.length) { cur |= data[i++] << bits; bits += 8; }
+      if (bits < size) break;
+      let code = cur & mask; cur >>= size; bits -= size;
+      if (code === clear) { size = minCode + 1; mask = (1 << size) - 1; next = eoi + 1; old = -1; continue; }
+      if (code === eoi) break;
+      if (old === -1) { out[op++] = suf[code]; old = first = code; continue; }
+      const inCode = code; let sp = 0;
+      if (code >= next) { stack[sp++] = first; code = old; }
+      while (code >= clear) { stack[sp++] = suf[code]; code = pre[code]; }
+      first = suf[code]; stack[sp++] = first;
+      while (sp && op < count) out[op++] = stack[--sp];
+      if (next < 4096) { pre[next] = old; suf[next] = first; next++; if (next > mask && size < 12) { size++; mask = (1 << size) - 1; } }
+      old = inCode;
+    }
+    return out;
+  }
+
+  // ---------------- the show ----------------
+  const ROOM = 2301952, COLS = { photo: "#e8a92c", gif: "#8a4fd8", video: "#3a7bd5", sound: "#2fa36b" };
+  const RATE = 11025;                         // sound: samples a second (8-bit, one channel)
+  const Q = { photo: 0.85, gif: 0.75, video: 0.72 };   // JPEG quality
+  const P = { orient: "land", trans: "fade", fade: 1, shuffle: false, vol: 80 };
+  let room = ROOM, items = [], sel = -1, playAll = false, uid = 0, open = false, sending = false;
+  const scr = $("pd-scr"), g = scr.getContext("2d");
+  const SW = () => P.orient === "land" ? 480 : 320, SH = () => P.orient === "land" ? 320 : 480;
+  const half = it => it.type !== "photo";      // GIFs and videos are made at half size (the board doubles them): smoother, and 4× less memory
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const fmtT = s => s >= 60 ? Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0") : s.toFixed(1) + " s";
+  const mb = b => (b / 1048576).toFixed(b < 1048576 ? 2 : 1) + " MB";
+
+  function itemSecs(it) {
+    if (it.type === "photo") return it.secs;
+    if (it.type === "gif") return frameCount(it) / it.fps * it.plays;
+    return Math.max(0.5, it.end - it.start);
+  }
+  function frameCount(it) {
+    if (it.type === "photo") return 1;
+    if (it.type === "gif") return Math.max(1, Math.min(600, Math.round(it.gifLen / 1000 * it.fps)));
+    return Math.max(1, Math.round((it.end - it.start) * it.fps));
+  }
+  function soundBytes(it) { return it.type === "video" && it.sound && it.hasSound !== false && P.vol > 0 ? Math.round((it.end - it.start) * RATE) : 0; }
+  function place(it, W, H) {                  // where the picture sits on a W x H screen
+    let k = it.fit === "fill" ? Math.max(W / it.w, H / it.h) : Math.min(W / it.w, H / it.h);
+    k *= it.zoom;
+    const dw = it.w * k, dh = it.h * k, rx = Math.max(0, (dw - W) / 2), ry = Math.max(0, (dh - H) / 2);
+    return { x: (W - dw) / 2 + it.panX * rx, y: (H - dh) / 2 + it.panY * ry, w: dw, h: dh };
+  }
+  function gifFrame(it, t) {                  // the GIF's picture t seconds in, stepped at the board's frame rate
+    const step = 1000 / it.fps; let ms = (t * 1000) % it.gifLen;
+    ms = Math.floor(ms / step) * step;
+    let acc = 0; for (const f of it.gif.frames) { acc += f.delay; if (ms < acc) return f.img; }
+    return it.gif.frames[it.gif.frames.length - 1].img;
+  }
+  function drawOn(ctx, it, src, W, H) {
+    const r = place(it, W, H);
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+    try { ctx.drawImage(src, r.x, r.y, r.w, r.h); } catch (e) {}
+  }
+  function seekVideo(it, t) {                 // the preview follows the clock, stepping at the board's frame rate
+    const v = it.vid; if (!v || !v.duration) return;
+    const step = 1 / it.fps, want = it.start + Math.floor(Math.min(t, it.end - it.start) / step) * step;
+    if (Math.abs(v.currentTime - want) > 0.02 && !v.seeking) v.currentTime = want;
+  }
+  let t0 = performance.now();
+  function tick(now) {
+    if (!open) return;
+    requestAnimationFrame(tick);
+    const W = SW(), H = SH();
+    if (scr.width !== W || scr.height !== H) { scr.width = W; scr.height = H; scr.classList.toggle("pd-port", P.orient === "port"); }
+    g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
+    const list = playAll ? items : (sel >= 0 && items[sel] ? [items[sel]] : []);
+    if (!list.length) { g.fillStyle = "#666"; g.font = "16px 'IBM Plex Sans', sans-serif"; g.textAlign = "center"; g.fillText("Add photos, GIFs or videos", W / 2, H / 2); $("pd-now").textContent = "Add something to see it here"; return; }
+    const total = list.reduce((a, it) => a + itemSecs(it), 0);
+    let t = ((now - t0) / 1000) % total, i = 0;
+    while (t > itemSecs(list[i]) && i < list.length - 1) { t -= itemSecs(list[i]); i++; }
+    const it = list[i];
+    if (it.type === "video") seekVideo(it, t);
+    drawOn(g, it, it.type === "photo" ? it.img : it.type === "gif" ? gifFrame(it, t) : it.vid, W, H);
+    const fd = P.trans === "fade" && list.length > 1 ? Math.min(P.fade / 2, itemSecs(it) / 3) : 0;   // fading through black, like the board
+    if (fd) {
+      const left = itemSecs(it) - t, a = t < fd ? 1 - t / fd : left < fd ? 1 - left / fd : 0;
+      if (a > 0) { g.fillStyle = `rgba(0,0,0,${a.toFixed(3)})`; g.fillRect(0, 0, W, H); }
+    }
+    $("pd-now").textContent = (playAll ? "Show: " : "") + it.name + " · " + fmtT(t) + " / " + fmtT(itemSecs(it));
+  }
+
+  // ---------------- adding ----------------
+  async function addFile(f) {
+    const it = { id: ++uid, name: f.name, file: f, fit: "fill", zoom: 1, panX: 0, panY: 0, secs: 8, plays: 3, fps: 10, start: 0, end: 0, sound: true, bpf: 0 };
+    it.url = URL.createObjectURL(f);
+    if (f.type === "image/gif" || /\.gif$/i.test(f.name)) {
+      it.type = "gif";
+      it.gif = readGif(await f.arrayBuffer());
+      it.w = it.gif.w; it.h = it.gif.h;
+      it.gifLen = it.gif.frames.reduce((a, fr) => a + fr.delay, 0);
+      it.fps = Math.min(12, Math.max(4, Math.round(1000 / (it.gifLen / it.gif.frames.length))));
+      it.plays = it.gifLen > 4000 ? 1 : 3;
+      if (it.gif.frames.length === 1) { it.type = "photo"; it.img = it.gif.frames[0].img; }
+    } else if (f.type.startsWith("video/") || /\.(mp4|webm|mov|m4v)$/i.test(f.name)) {
+      it.type = "video";
+      const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = it.url;
+      await new Promise((ok, bad) => { v.onloadeddata = ok; v.onerror = () => bad(new Error("this browser can't open that video")); });
+      it.vid = v; it.w = v.videoWidth; it.h = v.videoHeight; it.dur = v.duration;
+      if (!it.w || !it.h || !isFinite(it.dur)) throw new Error("this browser can't read that video");
+      it.end = Math.min(it.dur, 10);
+    } else {
+      it.type = "photo";
+      const im = new Image(); im.src = it.url; await im.decode(); it.img = im; it.w = im.naturalWidth; it.h = im.naturalHeight;
+    }
+    items.push(it);
+    select(items.length - 1);
+    measure(it);
+  }
+  async function addFiles(list) {
+    for (const f of list) { try { await addFile(f); } catch (e) { say(f.name + ": " + ((e && e.message) || "couldn't open it") + ".", "warn"); } }
+    render();
+  }
+  $("pd-files").addEventListener("change", e => { addFiles([...e.target.files]); e.target.value = ""; });
+  const drop = $("pd-drop");
+  ["dragenter", "dragover"].forEach(k => drop.addEventListener(k, e => { e.preventDefault(); drop.classList.add("pd-over"); }));
+  ["dragleave", "drop"].forEach(k => drop.addEventListener(k, e => { e.preventDefault(); drop.classList.remove("pd-over"); }));
+  drop.addEventListener("drop", e => addFiles([...e.dataTransfer.files].filter(f => /^(image|video)\//.test(f.type) || /\.(gif|mp4|webm|mov|m4v)$/i.test(f.name))));
+
+  // ---------------- memory: a real JPEG of one framed frame, times the frames ----------------
+  let mTimer = 0;
+  function frameSize(it) { const W = SW(), H = SH(); return half(it) ? [W >> 1, H >> 1] : [W, H]; }
+  function measure(it) {
+    clearTimeout(mTimer);
+    mTimer = setTimeout(() => {
+      (it ? [it] : items).forEach(x => {
+        const [W, H] = frameSize(x), c = document.createElement("canvas"); c.width = W; c.height = H;
+        drawOn(c.getContext("2d"), x, x.type === "gif" ? x.gif.frames[Math.floor(x.gif.frames.length / 2)].img : x.type === "video" ? x.vid : x.img, W, H);
+        c.toBlob(b => { x.bpf = b ? b.size : 20000; memory(); }, "image/jpeg", Q[x.type]);
+      });
+    }, 120);
+  }
+  function itemBytes(it) { return (it.bpf || (half(it) ? 9000 : 40000)) * frameCount(it) * (it.type === "photo" ? 1 : 0.95) + soundBytes(it); }
+  function memory() {
+    let used = 64; const by = { photo: 0, gif: 0, video: 0, sound: 0 };
+    items.forEach(it => { const s = soundBytes(it), b = itemBytes(it); it.bytes = b; used += b; by[it.type] += b - s; by.sound += s; });
+    $("pd-meter").innerHTML = ["photo", "gif", "video", "sound"].map(k => `<i style="width:${Math.min(100, by[k] / room * 100)}%;background:${COLS[k]}"></i>`).join("");
+    $("pd-memused").textContent = mb(used) + " used";
+    const free = room - used;
+    $("pd-memfree").textContent = free >= 0 ? mb(free) + " free" : mb(-free) + " too much: shorten a video or lower its smoothness";
+    $("pd-memfree").classList.toggle("pd-too", free < 0);
+    $("pd-items").querySelectorAll(".pd-item").forEach((el, i) => { const it = items[i]; if (it) el.querySelector(".pd-sz").textContent = mb(it.bytes); });
+  }
+
+  // ---------------- the list ----------------
+  function render() {
+    const box = $("pd-items");
+    if (!items.length) { box.innerHTML = '<div class="pd-empty">Nothing added yet.</div>'; $("pd-edit").hidden = true; $("pd-draghint").hidden = true; memory(); return; }
+    box.innerHTML = "";
+    items.forEach((it, i) => {
+      const el = document.createElement("div"); el.className = "pd-item"; el.setAttribute("aria-current", i === sel && !playAll ? "true" : "false");
+      const th = document.createElement("canvas"); th.width = 96; th.height = 64;
+      const tc = th.getContext("2d"); tc.fillStyle = "#000"; tc.fillRect(0, 0, 96, 64);
+      const k = Math.max(96 / it.w, 64 / it.h); try { tc.drawImage(it.type === "gif" ? it.gif.frames[0].img : it.type === "video" ? it.vid : it.img, (96 - it.w * k) / 2, (64 - it.h * k) / 2, it.w * k, it.h * k); } catch (e) {}
+      const info = document.createElement("div"); info.style.minWidth = "0";
+      const what = it.type === "photo" ? `${it.secs} s` : it.type === "gif" ? `${frameCount(it)} frames × ${it.plays}` : `${fmtT(it.end - it.start)} at ${it.fps} fps${soundBytes(it) ? " · sound" : ""}`;
+      info.innerHTML = `<div class="pd-nm"><span class="pd-tag pd-${it.type}">${it.type.toUpperCase()}</span>${esc(it.name)}</div><div class="pd-meta">${what} · <span class="pd-sz"></span></div>`;
+      const bt = document.createElement("div"); bt.className = "pd-ibtns";
+      bt.innerHTML = `<button type="button" title="Earlier" aria-label="Move earlier">↑</button><button type="button" title="Later" aria-label="Move later">↓</button><button type="button" title="Remove" aria-label="Remove">✕</button>`;
+      const [up, dn, del] = bt.querySelectorAll("button");
+      up.onclick = e => { e.stopPropagation(); if (i > 0) { [items[i - 1], items[i]] = [items[i], items[i - 1]]; if (sel === i) sel--; else if (sel === i - 1) sel++; render(); } };
+      dn.onclick = e => { e.stopPropagation(); if (i < items.length - 1) { [items[i + 1], items[i]] = [items[i], items[i + 1]]; if (sel === i) sel++; else if (sel === i + 1) sel--; render(); } };
+      del.onclick = e => { e.stopPropagation(); URL.revokeObjectURL(it.url); items.splice(i, 1); if (sel >= items.length) sel = items.length - 1; select(sel); };
+      el.append(th, info, bt); el.onclick = () => select(i);
+      box.append(el);
+    });
+    memory();
+  }
+
+  // ---------------- editing one ----------------
+  function select(i) {
+    sel = i; playAll = false; t0 = performance.now();
+    $("pd-play").textContent = "▶ Play the whole show";
+    const it = items[i];
+    $("pd-edit").hidden = !it; $("pd-draghint").hidden = !it;
+    if (it) {
+      $("pd-edit-title").textContent = "Edit · " + it.name;
+      $("pd-edit").querySelectorAll("[data-for]").forEach(el => el.hidden = !el.dataset.for.split(" ").includes(it.type));
+      $("pd-fit").value = it.fit; $("pd-zoom").value = it.zoom; $("pd-secs").value = it.secs; $("pd-plays").value = it.plays; $("pd-fps").value = it.fps; $("pd-sound").checked = it.sound;
+      if (it.type === "video") { ["pd-start", "pd-end"].forEach(k => { $(k).max = it.dur.toFixed(1); }); $("pd-start").value = it.start; $("pd-end").value = it.end; }
+      outs();
+    }
+    render();
+  }
+  function outs() {
+    const it = items[sel]; if (!it) return;
+    $("pd-o-zoom").textContent = Math.round(it.zoom * 100) + "%"; $("pd-o-secs").textContent = it.secs + " s"; $("pd-o-plays").textContent = it.plays + (it.plays === 1 ? " time" : " times");
+    $("pd-o-fps").textContent = it.fps + " frames a second";
+    if (it.type === "video") { $("pd-o-start").textContent = fmtT(it.start); $("pd-o-end").textContent = fmtT(it.end) + " (" + fmtT(it.end - it.start) + ")"; }
+  }
+  function changed(remeasure) { outs(); if (remeasure) measure(items[sel]); render(); }
+  const cur = () => items[sel];
+  $("pd-fit").onchange = e => { const it = cur(); if (!it) return; it.fit = e.target.value; it.panX = it.panY = 0; changed(true); };
+  $("pd-zoom").oninput = e => { const it = cur(); if (!it) return; it.zoom = +e.target.value; changed(true); };
+  $("pd-secs").oninput = e => { const it = cur(); if (!it) return; it.secs = +e.target.value; changed(); };
+  $("pd-plays").oninput = e => { const it = cur(); if (!it) return; it.plays = +e.target.value; changed(); };
+  $("pd-fps").oninput = e => { const it = cur(); if (!it) return; it.fps = +e.target.value; changed(); };
+  $("pd-sound").onchange = e => { const it = cur(); if (!it) return; it.sound = e.target.checked; changed(); };
+  $("pd-start").oninput = e => { const it = cur(); if (!it) return; it.start = Math.min(+e.target.value, it.end - 0.5); e.target.value = it.start; t0 = performance.now(); changed(); };
+  $("pd-end").oninput = e => { const it = cur(); if (!it) return; it.end = Math.max(+e.target.value, it.start + 0.5); e.target.value = it.end; changed(); };
+  let drag = null;                              // moving the picture by dragging it
+  scr.addEventListener("pointerdown", e => { const it = cur(); if (!it || playAll) return; drag = { x: e.clientX, y: e.clientY, px: it.panX, py: it.panY }; scr.setPointerCapture(e.pointerId); scr.style.cursor = "grabbing"; });
+  scr.addEventListener("pointermove", e => {
+    if (!drag) return; const it = cur(); if (!it) return;
+    const k = scr.width / scr.getBoundingClientRect().width, r = place(it, SW(), SH());
+    const rx = Math.max(1, (r.w - SW()) / 2), ry = Math.max(1, (r.h - SH()) / 2);
+    it.panX = Math.max(-1, Math.min(1, drag.px + (e.clientX - drag.x) * k / rx)); it.panY = Math.max(-1, Math.min(1, drag.py + (e.clientY - drag.y) * k / ry));
+  });
+  scr.addEventListener("pointerup", () => { if (drag) { drag = null; scr.style.cursor = ""; measure(cur()); } });
+
+  // ---------------- the display settings ----------------
+  function seg(id, set) {
+    $(id).addEventListener("click", e => {
+      const b = e.target.closest("button"); if (!b) return;
+      $(id).querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+      set(b.dataset.v);
+    });
+  }
+  function markSeg(id, v) { $(id).querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x.dataset.v === v ? "true" : "false")); }
+  seg("pd-boardseg", v => useBoard(v));
+  seg("pd-orient", v => { P.orient = v; useOrient(); measure(); });
+  seg("pd-trans", v => { P.trans = v; $("pd-fadewrap").hidden = v !== "fade"; });
+  $("pd-fade").oninput = e => { P.fade = +e.target.value; $("pd-o-fade").textContent = P.fade.toFixed(1) + " s"; };
+  $("pd-vol").oninput = e => { P.vol = +e.target.value; $("pd-o-vol").textContent = P.vol ? P.vol + "%" : "off"; render(); };
+  $("pd-shuffle").onchange = e => P.shuffle = e.target.checked;
+  $("pd-play").onclick = () => { if (!items.length) return; playAll = !playAll; t0 = performance.now(); $("pd-play").textContent = playAll ? "■ Stop the show" : "▶ Play the whole show"; $("pd-edit").hidden = playAll || !cur(); $("pd-draghint").hidden = playAll || !cur(); render(); };
+
+  function useBoard(k) {                        // the Studio's board (and its screen) follow this page
+    markSeg("pd-boardseg", k);
+    if (S.board !== k) { $("board").value = k; $("board").dispatchEvent(new Event("change")); }
+    if (S.model !== "st7796") { $("model").value = "st7796"; $("model").dispatchEvent(new Event("change")); }
+  }
+  function useOrient() {                         // and its orientation (sent with the show)
+    const port = P.orient === "port";
+    if (!!S.portrait !== port || S.flip) { S.portrait = port; S.flip = false; $("portrait").checked = port; selectModel(S.model, false); }
+  }
+
+  // ---------------- the page opening and closing ----------------
+  const boardCard = document.querySelector('section[aria-label="Put it on your board"]');
+  let home = null;                              // where that card normally lives
+  function enter() {
+    if (open) return;
+    open = true;
+    home = { parent: boardCard.parentElement, next: boardCard.nextSibling };
+    $("pd-board-slot").appendChild(boardCard);
+    boardCard.querySelector(".manual").hidden = true;
+    useBoard(S.board === "cyd40" ? "cyd40" : "cyd35");
+    P.orient = S.portrait ? "port" : "land"; markSeg("pd-orient", P.orient); useOrient();
+    showFirmware();
+    requestAnimationFrame(tick);
+  }
+  function leave() {
+    if (!open) return;
+    open = false; playAll = false;
+    boardCard.querySelector(".manual").hidden = false;
+    if (home) home.parent.insertBefore(boardCard, home.next);
+    showFirmware();
+  }
+
+  // ---------------- packing the show ----------------
+  // Header (32 bytes), clips (32 bytes each), each clip's frame table (offset, length), then the JPEGs and sounds.
+  // The board checks it all (FNV-1a over everything after the header) and marks it done itself.
+  const canvasJpeg = (c, q) => new Promise((ok, bad) => c.toBlob(b => b ? b.arrayBuffer().then(a => ok(new Uint8Array(a)), bad) : bad(new Error("the browser couldn't make a JPEG")), "image/jpeg", q));
+  function seekTo(v, t) { return new Promise(ok => { if (Math.abs(v.currentTime - t) < 0.001 && !v.seeking) return ok(); const done = () => { v.removeEventListener("seeked", done); ok(); }; v.addEventListener("seeked", done); v.currentTime = t; setTimeout(done, 3000); }); }
+  async function clipFrames(it, scaleQ, onFrame) {
+    const [W, H] = frameSize(it), c = document.createElement("canvas"); c.width = W; c.height = H;
+    const cx = c.getContext("2d"), n = frameCount(it), out = [];
+    let v = null;
+    if (it.type === "video") { v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = it.url; await new Promise((ok, bad) => { v.onloadeddata = ok; v.onerror = () => bad(new Error("couldn't read " + it.name)); }); }
+    for (let k = 0; k < n; k++) {
+      let src;
+      if (it.type === "photo") src = it.img;
+      else if (it.type === "gif") src = gifFrame(it, k / it.fps);
+      else { await seekTo(v, Math.min(it.dur - 0.01, it.start + k / it.fps)); src = v; }
+      drawOn(cx, it, src, W, H);
+      out.push(await canvasJpeg(c, Q[it.type] * scaleQ));
+      onFrame && onFrame();
+    }
+    if (v) { v.removeAttribute("src"); v.load(); }
+    return out;
+  }
+  async function clipSound(it) {                 // the video's sound: one channel, 8-bit, RATE a second (none if it has no sound)
+    if (!soundBytes(it)) return null;
+    try {
+      const buf = await new OfflineAudioContext(1, 1, 44100).decodeAudioData(await it.file.arrayBuffer());
+      const dur = it.end - it.start, len = Math.max(1, Math.round(dur * RATE));
+      const ctx = new OfflineAudioContext(1, len, RATE), src = ctx.createBufferSource();
+      src.buffer = buf; src.connect(ctx.destination); src.start(0, it.start, dur);
+      const pcm = (await ctx.startRendering()).getChannelData(0), out = new Uint8Array(len);
+      let peak = 0; for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(pcm[i]));
+      const gain = peak > 0.001 ? Math.min(4, 0.95 / peak) : 1;   // as loud as it goes without distorting (the board's speaker is small)
+      for (let i = 0; i < len; i++) out[i] = Math.max(0, Math.min(255, Math.round(128 + pcm[i] * gain * 127)));
+      return out;
+    } catch (e) { it.hasSound = false; return null; }   // (no sound track, or one the browser can't read)
+  }
+  async function pack(W, H, scaleQ, progress) {
+    const clips = [];
+    const total = items.reduce((a, it) => a + frameCount(it), 0); let done = 0;
+    for (const it of items) {
+      const frames = await clipFrames(it, scaleQ, () => progress(++done / total));
+      clips.push({ it, frames, sound: await clipSound(it) });
+    }
+    const n = clips.length;
+    let off = 32 + 32 * n;
+    clips.forEach(c => { c.tab = off; off += 8 * c.frames.length; });
+    let size = off;
+    clips.forEach(c => { c.offs = c.frames.map(f => { const o = size; size += (f.length + 3) & ~3; return [o, f.length]; }); });
+    clips.forEach(c => { if (c.sound) { c.aoff = size; size += (c.sound.length + 3) & ~3; } });
+    const bin = new Uint8Array(size), dv = new DataView(bin.buffer);
+    clips.forEach((c, i) => {
+      const o = 32 + 32 * i, it = c.it;
+      const ms = it.type === "photo" ? it.secs * 1000 : Math.round(1000 / it.fps);
+      dv.setUint32(o, c.tab, true); dv.setUint16(o + 4, c.frames.length, true); dv.setUint16(o + 6, ms, true);
+      dv.setUint16(o + 8, it.type === "gif" ? it.plays : 1, true); dv.setUint8(o + 10, half(it) ? 2 : 1); dv.setUint8(o + 11, 0);
+      dv.setUint32(o + 12, c.sound ? c.aoff : 0, true); dv.setUint32(o + 16, c.sound ? c.sound.length : 0, true); dv.setUint16(o + 20, c.sound ? RATE : 0, true);
+      c.offs.forEach(([fo, fl], k) => { dv.setUint32(c.tab + 8 * k, fo, true); dv.setUint32(c.tab + 8 * k + 4, fl, true); bin.set(c.frames[k], fo); });
+      if (c.sound) bin.set(c.sound, c.aoff);
+    });
+    let f = 0x811c9dc5;
+    for (let i = 32; i < size; i++) { f ^= bin[i]; f = Math.imul(f, 0x01000193); }
+    f >>>= 0;
+    let id = f ^ size ^ (W << 16) ^ H; id = (id >>> 0) || 1;
+    dv.setUint32(0, 0x57485356, true); dv.setUint32(4, size, true); dv.setUint32(8, id, true); dv.setUint32(12, f, true);
+    dv.setUint16(16, W, true); dv.setUint16(18, H, true); dv.setUint16(20, n, true);
+    dv.setUint16(22, P.trans === "fade" ? Math.round(P.fade * 1000) : 0, true);
+    dv.setUint8(24, P.shuffle ? 1 : 0); dv.setUint8(25, P.vol);
+    dv.setUint32(28, 0xFFFFFFFF, true);
+    return { bin, id: id.toString(16) };
+  }
+
+  // ---------------- sending it ----------------
+  const say = (m, c = "") => { const st = $("pd-status"); st.className = "status " + c; st.textContent = m; };
+  async function reopen(baud) {                  // the same port at another speed
+    try { await port.close(); } catch (_) {}
+    await sleep(60);
+    await port.open({ baudRate: baud });
+    await sleep(120);
+  }
+  async function ping(ms) { return /PORTAL/.test(await boardRequest("PING", /PORTAL/, ms)); }
+  async function streamLines(lines, onAck) {     // many lines, a few ahead of the board's replies (each one answers K)
+    const AHEAD = 3, enc = new TextEncoder(), dec = new TextDecoder();
+    const reader = port.readable.getReader(), writer = port.writable.getWriter();
+    let acks = 0, err = null, buf = "", wake = null, last = Date.now();
+    const kick = () => { if (wake) { const w = wake; wake = null; w(); } };
+    const pump = (async () => {
+      try {
+        while (acks < lines.length && !err) {
+          const { value, done } = await reader.read(); if (done) break;
+          buf += dec.decode(value);
+          let i;
+          while ((i = buf.indexOf("\n")) >= 0) {
+            const l = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+            if (l === "K") { acks++; last = Date.now(); onAck(acks); } else if (/^ERR/.test(l)) err = l;
+          }
+          kick();
+        }
+      } catch (e) { err = err || "the connection dropped"; }
+      kick();
+    })();
+    const timer = setInterval(() => { if (Date.now() - last > 12000) { err = err || "the board stopped answering"; reader.cancel().catch(() => {}); kick(); } }, 1000);
+    try {
+      for (let k = 0; k < lines.length && !err; k++) {
+        while (k - acks >= AHEAD && !err) await new Promise(r => { wake = r; });
+        if (err) break;
+        await writer.write(enc.encode(lines[k] + "\n"));
+      }
+      while (acks < lines.length && !err) await new Promise(r => { wake = r; });
+    } finally {
+      clearInterval(timer);
+      if (acks < lines.length || err) await reader.cancel().catch(() => {});
+      await pump;
+      reader.releaseLock(); writer.releaseLock();
+    }
+    if (err) throw new Error(/ERR/.test(err) ? "the board refused the data (" + err + ")" : err);
+  }
+  async function sendShow() {
+    if (sending) return;
+    if (!items.length) { say("Add some photos, GIFs or videos first.", "warn"); return; }
+    if (!port) { say(bleRx ? "The Picture Display sends over USB (Bluetooth is too slow for pictures). Connect over USB above." : "Connect over USB first (Put it on your board, on the left).", "warn"); return; }
+    if (busy) { say("Wait a moment, the board is busy. Then try again."); return; }
+    const bar = progressBar("pd");
+    sending = true; busy = true; $("pd-send").disabled = true; say("");
+    let fast = false;
+    try {
+      bar.step(1, 3, "Setting up the board"); bar.set(null);
+      const W = SW(), H = SH();
+      const r = await boardRequest(pdCmdLine().trim(), /(^|\n)(OK|ERR)\r?\n/, 6000);   // the Picture Display, the right way round
+      if (!/(^|\n)OK\r?\n/.test(r)) throw new Error("the board doesn't have the Picture Display yet. Click Install on my board first, then Connect over USB and send again");
+      await sleep(400);                            // (a turned screen settles)
+      const info = (await boardRequest("SHOWINFO", /SHOW \d+ \d+ \d+[^\n]*\n|ERR/, 4000)).match(/SHOW (\d+) (\d+) (\d+)/);
+      if (!info) throw new Error("the board doesn't have the Picture Display yet. Click Install on my board first, then Connect over USB and send again");
+      room = +info[1]; memory();
+      if (+info[2] !== W || +info[3] !== H) throw new Error(`the board's screen is ${info[2]} × ${info[3]} right now, not ${W} × ${H}. Try again in a moment`);
+      bar.step(2, 3, "Making the frames"); bar.set(0);
+      let show = null;
+      for (const q of [1, 0.8, 0.62, 0.48]) {      // the quality that fits
+        show = await pack(W, H, q, f => bar.set(f));
+        if (show.bin.length <= room) break;
+        bar.step(2, 3, "Making the frames smaller to fit"); bar.set(0);
+      }
+      if (show.bin.length > room) throw new Error(`it's ${mb(show.bin.length - room)} too big for the board. Shorten a video, lower its smoothness, or remove something`);
+      bar.step(3, 3, "Sending to the board"); bar.set(null);
+      if (/OK/.test(await boardRequest("BAUD 921600", /(^|\n)(OK|ERR)\r?\n/, 2500))) {   // a faster link for the big part
+        try { await reopen(921600); fast = await ping(1500); } catch (_) { fast = false; }
+        if (!fast) {                               // (some USB chips can't: back to the normal speed)
+          await reopen(115200);
+          if (!(await ping(4000)) && !(await ping(4000))) throw new Error("the board stopped answering. Unplug it, plug it back in, then Connect over USB and send again");
+        }
+      }
+      const r2 = await boardRequest(`SHOW ${show.bin.length} ${show.id}`, /(^|\n)(READY|ERR[^\n]*)\r?\n/, 8000);
+      if (!/READY/.test(r2)) throw new Error("the board couldn't make room for the show");
+      const text = b64(show.bin), lines = [];
+      for (let k = 0; k < text.length; k += 1064) lines.push("B " + text.slice(k, k + 1064));
+      const tStart = Date.now();
+      await streamLines(lines, a => {
+        bar.set(a / lines.length);
+        const secs = (Date.now() - tStart) / 1000 / a * (lines.length - a);
+        if (a > 5) $("pd-stage").innerHTML = `<b>Step 3 of 3</b> Sending to the board · about ${secs > 90 ? Math.ceil(secs / 60) + " min" : Math.ceil(secs) + " s"} left`;
+      });
+      bar.step(3, 3, "Checking it on the board"); bar.set(null);
+      const e = await boardRequest("SHOWEND", /(^|\n)(OK|ERR[^\n]*)\r?\n/, 30000);
+      if (!/(^|\n)OK\r?\n/.test(e)) throw new Error(/ERR check/.test(e) ? "some of the data got mixed up on the way. Send again" : "the board couldn't store the show");
+      bar.done(`${items.length} item${items.length > 1 ? "s" : ""}, ${mb(show.bin.length)}`, "On the board");
+      say("Sent. The board is playing your show, and keeps it when it's switched off.", "ok");
+    } catch (err) {
+      bar.fail();
+      say("Couldn't send the show: " + ((err && err.message) || "the connection dropped") + ".", "warn");
+    } finally {
+      if (fast && port) {                          // back to the normal speed
+        try { await boardRequest("BAUD 115200", /(^|\n)(OK|ERR)\r?\n/, 1500); } catch (_) {}
+        try { await reopen(115200); } catch (_) {}
+      }
+      sending = false; busy = false; $("pd-send").disabled = false;
+    }
+  }
+  $("pd-send").addEventListener("click", sendShow);
+  memory();
+  return { enter, leave, isOpen: () => open, say };
+})();
+function picMode() { const pg = DISPLAY_PAGES[(location.hash || "").slice(1).toLowerCase()]; return !!(pg && pg.pics); }
+function pdCmdLine() {                            // the Picture Display: style 22, no scenes, the screen the right way round
+  const keep = { style: S.style, scenes: S.scenes };
+  S.style = 22; S.scenes = [];
+  try { return cmdLineMain(); } finally { S.style = keep.style; S.scenes = keep.scenes; }
+}
+if (picMode()) PDX.enter();
 showDisplayPage(true);
 
 })();
