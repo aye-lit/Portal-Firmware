@@ -1,21 +1,4 @@
-{% raw %}      else if (code == 2) { own[0] = 0xA400FF; own[1] = 0xFF4FD8; }
-      else if (code == 3) { own[0] = 0x1B2A8A; own[1] = 0x9FE8FF; }
-      else if (code == 0) { own[0] = 0x3B1CFF; own[1] = 0x38F0FF; }
-    }
-    uiBackCols = own;
-    uiPicture(r, 2, code);
-    uiBackCols = NULL;
-    uiText(UI_PS_NAMES[uiKind - 1][i], r.x + r.w / 2, r.y + r.h - 11, 0xFFFF, NULL, true, true);
-    uiFrame(r, i == uiSelStyle);
-  }
-  const int kind = uiColKind();
-  for (int i = 0; i < 6; i++) uiSwatch(i, kind);
-  uiButton(uiShow, "SHOW", true, 1);
-  uiButton(uiSetBtn, "Settings", false, 2);
-}
-
-void uiCfPicture(const UiRect &r, int look, const int *cf, int bright, bool rounded) {   // a cross fractal, still, in a box (the drawing is paused while the page shows)
-  int y0 = r.y > uiY0 ? r.y : uiY0, y1 = r.y + r.h < uiY0 + uiRows ? r.y + r.h : uiY0 + uiRows;
+{% raw %}  int y0 = r.y > uiY0 ? r.y : uiY0, y1 = r.y + r.h < uiY0 + uiRows ? r.y + r.h : uiY0 + uiRows;
   if (y0 >= y1) return;
   const uint8_t keep[8] = { CF_BG, CF_GAP, CF_TGT, CF_PAL, CF_TWIST, CF_WOB, CF_FLOW, BRIGHTNESS };
   CF_BG = cf[0]; CF_GAP = cf[1]; CF_TGT = cf[2]; CF_PAL = cf[3]; CF_TWIST = cf[4]; CF_WOB = cf[5]; CF_FLOW = cf[6]; BRIGHTNESS = bright;
@@ -2788,7 +2771,7 @@ var PDX = (() => {
   async function streamLines(lines, onAck) {     // many lines, a few ahead of the board's replies (each one answers K)
     const AHEAD = 1, enc = new TextEncoder(), dec = new TextDecoder();   // one line at a time: while the board writes its flash it can't take in more (bytes sent then are lost)
     const reader = port.readable.getReader(), writer = port.writable.getWriter();
-    let acks = 0, err = null, buf = "", wake = null, last = Date.now();
+    let acks = 0, err = null, buf = "", wake = null, last = Date.now(), said = "";
     const kick = () => { if (wake) { const w = wake; wake = null; w(); } };
     const pump = (async () => {
       try {
@@ -2798,7 +2781,7 @@ var PDX = (() => {
           let i;
           while ((i = buf.indexOf("\n")) >= 0) {
             const l = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-            if (l === "K") { acks++; last = Date.now(); onAck(acks); } else if (/^ERR/.test(l)) err = l;
+            if (l === "K") { acks++; last = Date.now(); onAck(acks); } else if (/^ERR/.test(l)) err = l; else if (l) said = l.slice(0, 80);
           }
           kick();
         }
@@ -2819,7 +2802,10 @@ var PDX = (() => {
       await pump;
       reader.releaseLock(); writer.releaseLock();
     }
-    if (err) throw new Error(/ERR/.test(err) ? "the board refused the data (" + err + ")" : err);
+    if (err) {
+      const e = new Error((/ERR/.test(err) ? "the board refused the data (" + err + ")" : err) + ` after ${acks} of ${lines.length} pieces` + (said ? ` (it last said "${said}")` : ""));
+      e.stall = !/ERR/.test(err); throw e;
+    }
   }
   async function sendShow() {
     if (sending) return;
@@ -2828,7 +2814,13 @@ var PDX = (() => {
     if (busy) { say("Wait a moment, the board is busy. Then try again."); return; }
     const bar = progressBar("pd");
     sending = true; busy = true; $("pd-send").disabled = true; say("");
-    let fast = false;
+    let fast = false, firstTry = "";
+    const backToNormal = async () => {            // the normal speed again (if the board missed the word, it goes back by itself after 10 quiet seconds)
+      try { await boardRequest("BAUD 115200", /(^|\n)(OK|ERR)\r?\n/, 1500); } catch (_) {}
+      try { await reopen(115200); } catch (_) {}
+      for (let k = 0; k < 8; k++) { try { if (await ping(2000)) return true; } catch (_) {} }
+      return false;
+    };
     try {
       bar.step(1, 3, "Setting up the board"); bar.set(null);
       const W = SW(), H = SH();
@@ -2855,29 +2847,37 @@ var PDX = (() => {
           if (!(await ping(4000)) && !(await ping(4000))) throw new Error("the board stopped answering. Unplug it, plug it back in, then Connect over USB and send again");
         }
       }
-      const r2 = await boardRequest(`SHOW ${show.bin.length} ${show.id}`, /(^|\n)(READY|ERR[^\n]*)\r?\n/, 8000);
-      if (!/READY/.test(r2)) throw new Error("the board couldn't make room for the show");
-      const text = b64(show.bin), lines = [];
-      for (let k = 0; k < text.length; k += 1064) lines.push("B " + text.slice(k, k + 1064));
-      const tStart = Date.now();
-      await streamLines(lines, a => {
-        bar.set(a / lines.length);
-        const secs = (Date.now() - tStart) / 1000 / a * (lines.length - a);
-        if (a > 5) $("pd-stage").innerHTML = `<b>Step 3 of 3</b> Sending to the board · about ${secs > 90 ? Math.ceil(secs / 60) + " min" : Math.ceil(secs) + " s"} left`;
-      });
-      bar.step(3, 3, "Checking it on the board"); bar.set(null);
-      const e = await boardRequest("SHOWEND", /(^|\n)(OK|ERR[^\n]*)\r?\n/, 30000);
-      if (!/(^|\n)OK\r?\n/.test(e)) throw new Error(/ERR check/.test(e) ? "some of the data got mixed up on the way. Send again" : "the board couldn't store the show");
+      const upload = async chunk => {             // the show, in pieces of chunk base64 characters, each one answered K
+        const r2 = await boardRequest(`SHOW ${show.bin.length} ${show.id}`, /(^|\n)(READY|ERR[^\n]*)\r?\n/, 8000);
+        if (!/READY/.test(r2)) throw new Error("the board couldn't make room for the show");
+        const text = b64(show.bin), lines = [];
+        for (let k = 0; k < text.length; k += chunk) lines.push("B " + text.slice(k, k + chunk));
+        const tStart = Date.now();
+        await streamLines(lines, a => {
+          bar.set(a / lines.length);
+          const secs = (Date.now() - tStart) / 1000 / a * (lines.length - a);
+          if (a > 5) $("pd-stage").innerHTML = `<b>Step 3 of 3</b> Sending to the board · about ${secs > 90 ? Math.ceil(secs / 60) + " min" : Math.ceil(secs) + " s"} left`;
+        });
+        bar.step(3, 3, "Checking it on the board"); bar.set(null);
+        const e = await boardRequest("SHOWEND", /(^|\n)(OK|ERR[^\n]*)\r?\n/, 30000);
+        if (!/(^|\n)OK\r?\n/.test(e)) throw new Error(/ERR check/.test(e) ? "some of the data got mixed up on the way. Send again" : "the board couldn't store the show");
+      };
+      try { await upload(1064); }
+      catch (e1) {                                 // didn't go through: once more at the normal speed, in the small pieces pictures use
+        if (!e1.stall && !fast) throw e1;
+        firstTry = e1.message;
+        bar.step(3, 3, "Trying again at the safe speed"); bar.set(null);
+        if (fast) { await backToNormal(); fast = false; }
+        await upload(264);
+      }
       bar.done(`${items.length} item${items.length > 1 ? "s" : ""}, ${mb(show.bin.length)}`, "On the board");
       say("Sent. The board is playing your show, and keeps it when it's switched off.", "ok");
     } catch (err) {
       bar.fail();
-      say("Couldn't send the show: " + ((err && err.message) || "the connection dropped") + ".", "warn");
+      say("Couldn't send the show: " + ((err && err.message) || "the connection dropped") + "." + (firstTry ? " (First try at the fast speed: " + firstTry + ".)" : ""), "warn");
     } finally {
       if (fast && port) {                          // back to the normal speed
-        try { await boardRequest("BAUD 115200", /(^|\n)(OK|ERR)\r?\n/, 1500); } catch (_) {}
-        try { await reopen(115200); } catch (_) {}
-        for (let k = 0; k < 8; k++) { try { if (await ping(2000)) break; } catch (_) {} }   // (if it missed that, it goes back by itself after 10 quiet seconds)
+        await backToNormal();
         if (typeof refreshConn === "function") try { refreshConn(); } catch (_) {}
       }
       sending = false; busy = false; $("pd-send").disabled = false;

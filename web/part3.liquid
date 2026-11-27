@@ -1,9 +1,4 @@
-{% raw %}    L.radius = clampf(v[1], 6, RADIUS_MAX); L.oval = clampf(v[2], 1, 2); L.arms = clampb((uint8_t)v[3], 1, 8);
-    L.twist = clampf(v[4], 0, 6); L.speed = clampf(v[5], 0, 0.4f); L.sparks = min((int)v[6], MAX_SPARKS); L.drift = v[7] ? 1 : 0;
-    L.core = (uint32_t)v[8] & 0xFFFFFF; L.rim = (uint32_t)v[9] & 0xFFFFFF; L.bright = clampb((uint8_t)v[10], 10, 100);
-    L.ripples = min((int)v[11], 6); L.ripSpeed = clampf(v[12], 0.03f, 0.3f); L.glow = clampf(v[13], 0.3f, 0.9f);
-    L.stars = clampb((uint8_t)v[14], 1, 6); L.rimSmooth = min((int)v[15], 100);
-    for (int j = 0; j < 4; j++) L.spaceCols[j] = (uint32_t)v[16 + j] & 0xFFFFFF;
+{% raw %}    for (int j = 0; j < 4; j++) L.spaceCols[j] = (uint32_t)v[16 + j] & 0xFFFFFF;
     L.fadeOn = 0;                        // a scene's own colours don't fade through the colour sets
     L.style = (uint8_t)v[20]; L.crossFill = (uint8_t)v[21]; L.crossRipple = min((int)v[22], 10);
     L.beam = clampb((uint8_t)v[23], 5, 30); L.crossW = clampb((uint8_t)v[24], 25, 100); L.bar = clampb((uint8_t)v[25], 20, 50);
@@ -2795,4 +2790,21 @@ void uiPaintPSBand() {                    // the portal and space home pages
     uint32_t own[6] = { cols[0], cols[1], cols[2], cols[3], cols[4], cols[5] };
     if (i != uiSelStyle) {                // the others in their own colours (the chosen one in yours)
       if (code == 1 || code == 6) { own[0] = 0x0B6B1A; own[1] = 0x8DFF4F; }
+      else if (code == 2) { own[0] = 0xA400FF; own[1] = 0xFF4FD8; }
+      else if (code == 3) { own[0] = 0x1B2A8A; own[1] = 0x9FE8FF; }
+      else if (code == 0) { own[0] = 0x3B1CFF; own[1] = 0x38F0FF; }
+    }
+    uiBackCols = own;
+    uiPicture(r, 2, code);
+    uiBackCols = NULL;
+    uiText(UI_PS_NAMES[uiKind - 1][i], r.x + r.w / 2, r.y + r.h - 11, 0xFFFF, NULL, true, true);
+    uiFrame(r, i == uiSelStyle);
+  }
+  const int kind = uiColKind();
+  for (int i = 0; i < 6; i++) uiSwatch(i, kind);
+  uiButton(uiShow, "SHOW", true, 1);
+  uiButton(uiSetBtn, "Settings", false, 2);
+}
+
+void uiCfPicture(const UiRect &r, int look, const int *cf, int bright, bool rounded) {   // a cross fractal, still, in a box (the drawing is paused while the page shows)
 {% endraw %}

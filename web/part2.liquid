@@ -1,13 +1,4 @@
-{% raw %}void showBacklight(float level) {        // 0-1 (and the Brightness setting)
-#if SHOW_BL >= 0
-  int d = (int)(255 * level * level * BRIGHTNESS / 100.0f + 0.5f);
-  if (d < 0) d = 0; if (d > 255) d = 255;
-  if (d != blNow) { blNow = (uint8_t)d; ledcWrite(SHOW_BL, d); }
-#endif
-}
-
-// ---- the commands ----
-const char *showCommand(char *line) {
+{% raw %}const char *showCommand(char *line) {
   if (strcasecmp(line, "SHOWINFO") == 0) {       // SHOWINFO -> SHOW room width height id (id 0: none)
     static char r[64];
     snprintf(r, sizeof(r), "SHOW %lu %u %u %lx", (unsigned long)showRoom(), SCR_W, SCR_H, (unsigned long)(showOk ? showH.id : 0));
@@ -2581,4 +2572,9 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     if (k < 0 || k > 7) return NULL;
     if (off || (n < 26 || n > 33) || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
     Look &L = pendLook[k];
+    L.radius = clampf(v[1], 6, RADIUS_MAX); L.oval = clampf(v[2], 1, 2); L.arms = clampb((uint8_t)v[3], 1, 8);
+    L.twist = clampf(v[4], 0, 6); L.speed = clampf(v[5], 0, 0.4f); L.sparks = min((int)v[6], MAX_SPARKS); L.drift = v[7] ? 1 : 0;
+    L.core = (uint32_t)v[8] & 0xFFFFFF; L.rim = (uint32_t)v[9] & 0xFFFFFF; L.bright = clampb((uint8_t)v[10], 10, 100);
+    L.ripples = min((int)v[11], 6); L.ripSpeed = clampf(v[12], 0.03f, 0.3f); L.glow = clampf(v[13], 0.3f, 0.9f);
+    L.stars = clampb((uint8_t)v[14], 1, 6); L.rimSmooth = min((int)v[15], 100);
 {% endraw %}
