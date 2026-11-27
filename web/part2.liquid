@@ -1,5 +1,4 @@
-{% raw %}const char *showCommand(char *line) {
-  if (strcasecmp(line, "SHOWINFO") == 0) {       // SHOWINFO -> SHOW room width height id (id 0: none)
+{% raw %}  if (strcasecmp(line, "SHOWINFO") == 0) {       // SHOWINFO -> SHOW room width height id (id 0: none)
     static char r[64];
     snprintf(r, sizeof(r), "SHOW %lu %u %u %lx", (unsigned long)showRoom(), SCR_W, SCR_H, (unsigned long)(showOk ? showH.id : 0));
     return r;
@@ -2577,4 +2576,8 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     L.core = (uint32_t)v[8] & 0xFFFFFF; L.rim = (uint32_t)v[9] & 0xFFFFFF; L.bright = clampb((uint8_t)v[10], 10, 100);
     L.ripples = min((int)v[11], 6); L.ripSpeed = clampf(v[12], 0.03f, 0.3f); L.glow = clampf(v[13], 0.3f, 0.9f);
     L.stars = clampb((uint8_t)v[14], 1, 6); L.rimSmooth = min((int)v[15], 100);
+    for (int j = 0; j < 4; j++) L.spaceCols[j] = (uint32_t)v[16 + j] & 0xFFFFFF;
+    L.fadeOn = 0;                        // a scene's own colours don't fade through the colour sets
+    L.style = (uint8_t)v[20]; L.crossFill = (uint8_t)v[21]; L.crossRipple = min((int)v[22], 10);
+    L.beam = clampb((uint8_t)v[23], 5, 30); L.crossW = clampb((uint8_t)v[24], 25, 100); L.bar = clampb((uint8_t)v[25], 20, 50);
 {% endraw %}

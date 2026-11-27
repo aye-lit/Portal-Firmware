@@ -1,8 +1,4 @@
-{% raw %}    for (int j = 0; j < 4; j++) L.spaceCols[j] = (uint32_t)v[16 + j] & 0xFFFFFF;
-    L.fadeOn = 0;                        // a scene's own colours don't fade through the colour sets
-    L.style = (uint8_t)v[20]; L.crossFill = (uint8_t)v[21]; L.crossRipple = min((int)v[22], 10);
-    L.beam = clampb((uint8_t)v[23], 5, 30); L.crossW = clampb((uint8_t)v[24], 25, 100); L.bar = clampb((uint8_t)v[25], 20, 50);
-    for (int j = 0; j < 4; j++) L.ripC[j] = n >= 30 ? (uint32_t)v[26 + j] & 0xFFFFFF : RIP_C[j];   // Gradient ripple colours
+{% raw %}    for (int j = 0; j < 4; j++) L.ripC[j] = n >= 30 ? (uint32_t)v[26 + j] & 0xFFFFFF : RIP_C[j];   // Gradient ripple colours
     int base = n >= 30 ? 30 : 26, tail = n - base;   // ... [rimw [crossout [crosscol]]]
     L.rimW = tail >= 1 ? (uint8_t)constrain((int)v[base], 25, 200) : RIM_W;   // Rim thickness
     L.crossOut = tail >= 2 && validOut((uint8_t)v[base + 1]) ? (uint8_t)v[base + 1] : CROSS_OUT;   // Background
@@ -2807,4 +2803,15 @@ void uiPaintPSBand() {                    // the portal and space home pages
 }
 
 void uiCfPicture(const UiRect &r, int look, const int *cf, int bright, bool rounded) {   // a cross fractal, still, in a box (the drawing is paused while the page shows)
+  int y0 = r.y > uiY0 ? r.y : uiY0, y1 = r.y + r.h < uiY0 + uiRows ? r.y + r.h : uiY0 + uiRows;
+  if (y0 >= y1) return;
+  const uint8_t keep[8] = { CF_BG, CF_GAP, CF_TGT, CF_PAL, CF_TWIST, CF_WOB, CF_FLOW, BRIGHTNESS };
+  CF_BG = cf[0]; CF_GAP = cf[1]; CF_TGT = cf[2]; CF_PAL = cf[3]; CF_TWIST = cf[4]; CF_WOB = cf[5]; CF_FLOW = cf[6]; BRIGHTNESS = bright;
+  cfPrepWH(look, r.w, r.h);
+  const int rad = 7;
+  for (int y = y0; y < y1; y++) {
+    const int ly = y - r.y;
+    uint16_t *p = uiBuf + (y - uiY0) * SCR_W;
+    for (int lx = 0; lx < r.w; lx++) {
+      if (rounded) { int cx = lx < rad ? rad - lx : lx >= r.w - rad ? lx - (r.w - rad - 1) : 0, cy = ly < rad ? rad - ly : ly >= r.h - rad ? ly - (r.h - rad - 1) : 0; if (cx && cy && cx * cx + cy * cy > rad * rad) continue; }
 {% endraw %}

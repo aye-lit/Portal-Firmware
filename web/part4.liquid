@@ -1,15 +1,4 @@
-{% raw %}  int y0 = r.y > uiY0 ? r.y : uiY0, y1 = r.y + r.h < uiY0 + uiRows ? r.y + r.h : uiY0 + uiRows;
-  if (y0 >= y1) return;
-  const uint8_t keep[8] = { CF_BG, CF_GAP, CF_TGT, CF_PAL, CF_TWIST, CF_WOB, CF_FLOW, BRIGHTNESS };
-  CF_BG = cf[0]; CF_GAP = cf[1]; CF_TGT = cf[2]; CF_PAL = cf[3]; CF_TWIST = cf[4]; CF_WOB = cf[5]; CF_FLOW = cf[6]; BRIGHTNESS = bright;
-  cfPrepWH(look, r.w, r.h);
-  const int rad = 7;
-  for (int y = y0; y < y1; y++) {
-    const int ly = y - r.y;
-    uint16_t *p = uiBuf + (y - uiY0) * SCR_W;
-    for (int lx = 0; lx < r.w; lx++) {
-      if (rounded) { int cx = lx < rad ? rad - lx : lx >= r.w - rad ? lx - (r.w - rad - 1) : 0, cy = ly < rad ? rad - ly : ly >= r.h - rad ? ly - (r.h - rad - 1) : 0; if (cx && cy && cx * cx + cy * cy > rad * rad) continue; }
-      p[r.x + lx] = look == 20 ? cfPixCC(cfU0 + lx * cfDU, cfV0 + ly * cfDU) : cfPixTun((lx - r.w / 2.0f) / cfU, (ly - cfOy) / cfU);
+{% raw %}      p[r.x + lx] = look == 20 ? cfPixCC(cfU0 + lx * cfDU, cfV0 + ly * cfDU) : cfPixTun((lx - r.w / 2.0f) / cfU, (ly - cfOy) / cfU);
     }
   }
   CF_BG = keep[0]; CF_GAP = keep[1]; CF_TGT = keep[2]; CF_PAL = keep[3]; CF_TWIST = keep[4]; CF_WOB = keep[5]; CF_FLOW = keep[6]; BRIGHTNESS = keep[7];
@@ -2543,6 +2532,18 @@ var PDX = (() => {
     render();
   }
   $("pd-files").addEventListener("change", e => { addFiles([...e.target.files]); e.target.value = ""; });
+  $("pd-test").addEventListener("click", () => {   // a colour test card, made for this screen
+    const W = SW(), H = SH(), c = document.createElement("canvas"); c.width = W; c.height = H;
+    const x = c.getContext("2d");
+    const bars = [["WHITE", "#fff"], ["RED", "#f00"], ["GREEN", "#0f0"], ["BLUE", "#00f"], ["YELLOW", "#ff0"], ["CYAN", "#0ff"], ["MAGENTA", "#f0f"], ["BLACK", "#000"]];
+    const bh = Math.round(H * 0.62), w = W / bars.length;
+    x.fillStyle = "#fff"; x.fillRect(0, 0, W, H);
+    x.font = `bold ${Math.max(9, Math.round(w / 6.5))}px sans-serif`; x.textAlign = "center"; x.textBaseline = "middle";
+    bars.forEach(([n, col], i) => { x.fillStyle = col; x.fillRect(Math.round(i * w), 0, Math.ceil(w), bh); x.fillStyle = "#000"; x.fillText(n, i * w + w / 2, bh + 14); });
+    const y0 = bh + 28, sh = (H - y0) / 2;
+    for (let i = 0; i < W; i++) { const v = Math.round(i * 255 / (W - 1)); x.fillStyle = `rgb(${v},${v},${v})`; x.fillRect(i, y0, 1, sh); x.fillStyle = `rgb(${v},0,0)`; x.fillRect(i, y0 + sh, 1, H - y0 - sh); }
+    c.toBlob(b => { if (b) addFiles([new File([b], "colour-test.png", { type: "image/png" })]); }, "image/png");
+  });
   const drop = $("pd-drop");
   ["dragenter", "dragover"].forEach(k => drop.addEventListener(k, e => { e.preventDefault(); drop.classList.add("pd-over"); }));
   ["dragleave", "drop"].forEach(k => drop.addEventListener(k, e => { e.preventDefault(); drop.classList.remove("pd-over"); }));

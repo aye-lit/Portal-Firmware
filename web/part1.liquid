@@ -386,6 +386,7 @@
             <small>JPG, PNG, GIF, MP4, WebM or MOV. Each one is fitted to the screen.</small>
             <label class="pd-pick">Choose files<input class="pd-vh" id="vps-pd-files" type="file" accept="image/*,video/*" multiple></label>
           </div>
+          <div class="pd-row" style="margin-top:10px"><button class="b ghost" id="vps-pd-test" type="button">Add a colour test card</button><span class="pd-hint" style="margin:0">Colour bars and grey steps, to check the screen shows colours right.</span></div>
           <div class="pd-items" id="vps-pd-items"><div class="pd-empty">Nothing added yet.</div></div>
         </section>
 
@@ -1127,4 +1128,5 @@ void showBacklight(float level) {        // 0-1 (and the Brightness setting)
 }
 
 // ---- the commands ----
+const char *showCommand(char *line) {
 {% endraw %}
