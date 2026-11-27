@@ -1,4 +1,14 @@
-{% raw %}  int d = (int)(255 * level * level * BRIGHTNESS / 100.0f + 0.5f);
+{% raw %}  ledcAttach(SHOW_BL, 12000, 8); ledcWrite(SHOW_BL, 255);
+#endif
+#if SHOW_AUDIO
+  pinMode(SHOW_AMP, OUTPUT); digitalWrite(SHOW_AMP, HIGH);
+#endif
+  showLoad();
+}
+uint8_t blNow = 255;
+void showBacklight(float level) {        // 0-1 (and the Brightness setting)
+#if SHOW_BL >= 0
+  int d = (int)(255 * level * level * BRIGHTNESS / 100.0f + 0.5f);
   if (d < 0) d = 0; if (d > 255) d = 255;
   if (d != blNow) { blNow = (uint8_t)d; ledcWrite(SHOW_BL, d); }
 #endif

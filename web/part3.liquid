@@ -2838,4 +2838,10 @@ float uiSlFrac(int k) {                   // where each slider's knob sits, 0-1
     case 0: return (stBright - 10) / 90.0f;
     case 1: if (uiKind) return (stRadius * 100.0f / uiPortalMax() - 30) / 70.0f; else { float pct = stRadius * 100.0f / uiCrossMax(); return (pct - 40) / 60.0f; }
     case 2: return uiKind ? (stSpeed - 0.02f) / 0.28f : (stBeam - 5) / 25.0f;
+    default: return uiKind == 1 ? stSparks / 30.0f : uiKind == 2 ? (stStars - 1) / 5.0f : uiFullDay() ? (stFdLen - 2) / 28.0f : (stSpeed - 0.02f) / 0.28f;
+  }
+}
+void uiSlSet(int k, float f) {
+  f = f < 0 ? 0 : f > 1 ? 1 : f;
+  if (uiKind == 3 && k > 0) {
 {% endraw %}

@@ -369,6 +369,11 @@
             <label class="pd-ctl" style="min-width:160px;flex:1" id="vps-pd-fadewrap"><span>Fade <output id="vps-pd-o-fade">1.0 s</output></span><input id="vps-pd-fade" type="range" min="0.3" max="3" step="0.1" value="1"></label>
           </div>
           <div class="pd-row">
+            <span class="pd-lab">Brightness</span>
+            <label class="pd-ctl" style="min-width:160px;flex:1"><span>Screen brightness <output id="vps-pd-o-bright">100%</output></span><input id="vps-pd-bright" type="range" min="10" max="100" step="5" value="100"></label>
+          </div>
+          <p class="pd-hint" style="margin-top:4px">The board's backlight. While it's connected over USB it changes right away; it's also sent with the show.</p>
+          <div class="pd-row">
             <span class="pd-lab">Screen colour</span>
             <label class="pd-chk"><input type="checkbox" id="vps-pd-auto" checked> Match this screen automatically</label>
           </div>
@@ -1125,15 +1130,5 @@ void audioStart(uint32_t, uint32_t, uint16_t, uint8_t) {}
 #endif
 
 void showBegin() {                       // in setup(): the backlight dims for fades; the sound
-#if SHOW_BL >= 0
-  ledcAttach(SHOW_BL, 12000, 8); ledcWrite(SHOW_BL, 255);
-#endif
-#if SHOW_AUDIO
-  pinMode(SHOW_AMP, OUTPUT); digitalWrite(SHOW_AMP, HIGH);
-#endif
-  showLoad();
-}
-uint8_t blNow = 255;
-void showBacklight(float level) {        // 0-1 (and the Brightness setting)
 #if SHOW_BL >= 0
 {% endraw %}

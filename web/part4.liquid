@@ -1,10 +1,4 @@
-{% raw %}    default: return uiKind == 1 ? stSparks / 30.0f : uiKind == 2 ? (stStars - 1) / 5.0f : uiFullDay() ? (stFdLen - 2) / 28.0f : (stSpeed - 0.02f) / 0.28f;
-  }
-}
-void uiSlSet(int k, float f) {
-  f = f < 0 ? 0 : f > 1 ? 1 : f;
-  if (uiKind == 3 && k > 0) {
-    if (k == 1) stSpeed = 0.02f + f * 0.28f;
+{% raw %}    if (k == 1) stSpeed = 0.02f + f * 0.28f;
     else if (k == 2) { if (uiSelStyle) stCf[4] = (int)lroundf(f * 30); else stCf[0] = (int)lroundf(f * 6); }
     else { if (uiSelStyle) stCf[5] = (int)lroundf(f * 20) * 5; else stCf[1] = 55 + (int)lroundf(f * 45); }
     return;
@@ -2620,6 +2614,14 @@ var PDX = (() => {
   $("pd-fade").oninput = e => { P.fade = +e.target.value; $("pd-o-fade").textContent = P.fade.toFixed(1) + " s"; };
   $("pd-vol").oninput = e => { P.vol = +e.target.value; $("pd-o-vol").textContent = P.vol ? P.vol + "%" : "off"; render(); };
   $("pd-shuffle").onchange = e => P.shuffle = e.target.checked;
+  let brightTimer = 0;                           // the board's backlight (the Studio's Brightness setting): sent as it changes, when connected
+  const brightOut = () => { $("pd-bright").value = S.bright; $("pd-o-bright").textContent = S.bright + "%"; };
+  $("pd-bright").oninput = e => {
+    S.bright = +e.target.value; brightOut(); save();
+    clearTimeout(brightTimer);
+    if (port && !sending) brightTimer = setTimeout(send, 350);
+  };
+  brightOut();
   // the screen's colour. Measured on the 3.5" board: its mid-tones come out far too light (half-grey already looks nearly white)
   // and it leans blue. So by default each frame is mapped through the inverse of that, to look like the picture does on a computer;
   // Colour depth and Warmth (0 = none) are only for fine-tuning on top.
