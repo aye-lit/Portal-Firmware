@@ -1,7 +1,4 @@
-{% raw %}  showLoad();
-}
-uint8_t blNow = 255;
-void showBacklight(float level) {        // 0-1 (and the Brightness setting)
+{% raw %}void showBacklight(float level) {        // 0-1 (and the Brightness setting)
 #if SHOW_BL >= 0
   int d = (int)(255 * level * level * BRIGHTNESS / 100.0f + 0.5f);
   if (d < 0) d = 0; if (d > 255) d = 255;
@@ -2582,4 +2579,6 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     while (p && n < 34) { if (strcasecmp(p, "OFF") == 0) off = true; v[n++] = atof(p); p = strtok(NULL, " "); }
     int k = n ? (int)v[0] : -1;
     if (k < 0 || k > 7) return NULL;
+    if (off || (n < 26 || n > 33) || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
+    Look &L = pendLook[k];
 {% endraw %}

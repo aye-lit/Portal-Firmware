@@ -1,7 +1,4 @@
-{% raw %}    uint32_t own[6] = { cols[0], cols[1], cols[2], cols[3], cols[4], cols[5] };
-    if (i != uiSelStyle) {                // the others in their own colours (the chosen one in yours)
-      if (code == 1 || code == 6) { own[0] = 0x0B6B1A; own[1] = 0x8DFF4F; }
-      else if (code == 2) { own[0] = 0xA400FF; own[1] = 0xFF4FD8; }
+{% raw %}      else if (code == 2) { own[0] = 0xA400FF; own[1] = 0xFF4FD8; }
       else if (code == 3) { own[0] = 0x1B2A8A; own[1] = 0x9FE8FF; }
       else if (code == 0) { own[0] = 0x3B1CFF; own[1] = 0x38F0FF; }
     }
@@ -2789,7 +2786,7 @@ var PDX = (() => {
   }
   async function ping(ms) { return /PORTAL/.test(await boardRequest("PING", /PORTAL/, ms)); }
   async function streamLines(lines, onAck) {     // many lines, a few ahead of the board's replies (each one answers K)
-    const AHEAD = 3, enc = new TextEncoder(), dec = new TextDecoder();
+    const AHEAD = 1, enc = new TextEncoder(), dec = new TextDecoder();   // one line at a time: while the board writes its flash it can't take in more (bytes sent then are lost)
     const reader = port.readable.getReader(), writer = port.writable.getWriter();
     let acks = 0, err = null, buf = "", wake = null, last = Date.now();
     const kick = () => { if (wake) { const w = wake; wake = null; w(); } };
@@ -2880,6 +2877,8 @@ var PDX = (() => {
       if (fast && port) {                          // back to the normal speed
         try { await boardRequest("BAUD 115200", /(^|\n)(OK|ERR)\r?\n/, 1500); } catch (_) {}
         try { await reopen(115200); } catch (_) {}
+        for (let k = 0; k < 8; k++) { try { if (await ping(2000)) break; } catch (_) {} }   // (if it missed that, it goes back by itself after 10 quiet seconds)
+        if (typeof refreshConn === "function") try { refreshConn(); } catch (_) {}
       }
       sending = false; busy = false; $("pd-send").disabled = false;
     }

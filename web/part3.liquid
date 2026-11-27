@@ -1,6 +1,4 @@
-{% raw %}    if (off || (n < 26 || n > 33) || v[20] > 17 || !validFill((uint8_t)v[21])) { pendHas[k] = 0; scenePending = true; return NULL; }
-    Look &L = pendLook[k];
-    L.radius = clampf(v[1], 6, RADIUS_MAX); L.oval = clampf(v[2], 1, 2); L.arms = clampb((uint8_t)v[3], 1, 8);
+{% raw %}    L.radius = clampf(v[1], 6, RADIUS_MAX); L.oval = clampf(v[2], 1, 2); L.arms = clampb((uint8_t)v[3], 1, 8);
     L.twist = clampf(v[4], 0, 6); L.speed = clampf(v[5], 0, 0.4f); L.sparks = min((int)v[6], MAX_SPARKS); L.drift = v[7] ? 1 : 0;
     L.core = (uint32_t)v[8] & 0xFFFFFF; L.rim = (uint32_t)v[9] & 0xFFFFFF; L.bright = clampb((uint8_t)v[10], 10, 100);
     L.ripples = min((int)v[11], 6); L.ripSpeed = clampf(v[12], 0.03f, 0.3f); L.glow = clampf(v[13], 0.3f, 0.9f);
@@ -2794,4 +2792,7 @@ void uiPaintPSBand() {                    // the portal and space home pages
     const UiRect &r = uiTile[i];
     if (!uiRowsHit(r.y - 4, r.h + 8)) continue;
     const int code = UI_PS[uiKind - 1][i];
+    uint32_t own[6] = { cols[0], cols[1], cols[2], cols[3], cols[4], cols[5] };
+    if (i != uiSelStyle) {                // the others in their own colours (the chosen one in yours)
+      if (code == 1 || code == 6) { own[0] = 0x0B6B1A; own[1] = 0x8DFF4F; }
 {% endraw %}

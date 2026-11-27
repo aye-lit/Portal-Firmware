@@ -1115,4 +1115,7 @@ void showBegin() {                       // in setup(): the backlight dims for f
 #if SHOW_AUDIO
   pinMode(SHOW_AMP, OUTPUT); digitalWrite(SHOW_AMP, HIGH);
 #endif
+  showLoad();
+}
+uint8_t blNow = 255;
 {% endraw %}
