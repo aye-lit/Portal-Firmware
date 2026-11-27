@@ -96,6 +96,8 @@
 #vps .pd-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; margin-top: 6px; }
 #vps .pd-legend span { display: inline-flex; gap: 5px; align-items: center; }
 #vps .pd-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+#vps .pd-fine { margin-top: 8px; font-size: 13px; }
+#vps .pd-fine summary { cursor: pointer; font-weight: 600; }
 #vps .pd-steps { margin: 0 0 12px; padding-left: 20px; font-size: 14px; }
 #vps .pd-steps li + li { margin-top: 4px; }
 #vps .dcard { background: var(--surface); border: 1.5px solid var(--accent); border-radius: 14px; padding: 24px 20px; display: flex; flex-direction: column; align-items: center; text-align: center; color: var(--ink); text-decoration: none; transition: transform .15s, box-shadow .15s; }
@@ -368,10 +370,17 @@
           </div>
           <div class="pd-row">
             <span class="pd-lab">Screen colour</span>
-            <label class="pd-ctl" style="min-width:140px;flex:1"><span>Colour depth <output id="vps-pd-o-depth">50</output></span><input id="vps-pd-depth" type="range" min="0" max="100" step="5" value="50"></label>
-            <label class="pd-ctl" style="min-width:140px;flex:1"><span>Warmth <output id="vps-pd-o-warm">50</output></span><input id="vps-pd-warm" type="range" min="0" max="100" step="5" value="50"></label>
+            <label class="pd-chk"><input type="checkbox" id="vps-pd-auto" checked> Match this screen automatically</label>
           </div>
-          <p class="pd-hint" style="margin-top:4px">This screen shows colours paler and bluer than they really are, so these darken the mid-tones and take out some blue in what's sent (the preview here shows the true colours). To tune them, send the colour test card: white should look white, and the grey fade should go evenly from black to white.</p>
+          <p class="pd-hint" style="margin-top:4px">This screen shows mid-tones too light and leans blue, so pictures are sent adjusted to look like they do here. The preview shows the true colours.</p>
+          <details class="pd-fine" id="vps-pd-fine">
+            <summary>Fine-tune the colour (only if it still looks off)</summary>
+            <div class="pd-row">
+              <label class="pd-ctl" style="min-width:140px;flex:1"><span>Colour depth <output id="vps-pd-o-depth">0</output></span><input id="vps-pd-depth" type="range" min="-50" max="100" step="5" value="0"></label>
+              <label class="pd-ctl" style="min-width:140px;flex:1"><span>Warmth <output id="vps-pd-o-warm">0</output></span><input id="vps-pd-warm" type="range" min="-50" max="100" step="5" value="0"></label>
+            </div>
+            <p class="pd-hint">Send the colour test card to check: white should look white, and the grey fade should go evenly from black to white. Too pale: more depth. Too blue: more warmth. <button class="b ghost" id="vps-pd-colreset" type="button" style="padding:3px 10px;font-size:12px">Back to 0</button></p>
+          </details>
           <div class="pd-row">
             <span class="pd-lab">Video sound</span>
             <label class="pd-ctl" style="min-width:160px;flex:1"><span>Volume <output id="vps-pd-o-vol">80%</output></span><input id="vps-pd-vol" type="range" min="0" max="100" step="5" value="80"></label>

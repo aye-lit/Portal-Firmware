@@ -2591,4 +2591,12 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     for (int j = 0; j < 4; j++) L.ripC[j] = n >= 30 ? (uint32_t)v[26 + j] & 0xFFFFFF : RIP_C[j];   // Gradient ripple colours
     int base = n >= 30 ? 30 : 26, tail = n - base;   // ... [rimw [crossout [crosscol]]]
     L.rimW = tail >= 1 ? (uint8_t)constrain((int)v[base], 25, 200) : RIM_W;   // Rim thickness
+    L.crossOut = tail >= 2 && validOut((uint8_t)v[base + 1]) ? (uint8_t)v[base + 1] : CROSS_OUT;   // Background
+    L.crossCol = tail >= 3 ? ((uint32_t)v[base + 2] > 0xFFFFFF ? 0x1000000 : (uint32_t)v[base + 2]) : CROSS_COL;   // Cross colour
+    pendHas[k] = 1; scenePending = true;
+    return NULL;
+  }
+  if (strncasecmp(line, "RIM ", 4) == 0) {   // RIM percent: Rim thickness (no reply; it's applied with the SET that follows)
+    pendRimW = (uint8_t)constrain(atoi(line + 4), 25, 200); pendRim = true; return NULL;
+  }
 {% endraw %}

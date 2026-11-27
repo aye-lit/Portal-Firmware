@@ -1,12 +1,4 @@
-{% raw %}    L.crossOut = tail >= 2 && validOut((uint8_t)v[base + 1]) ? (uint8_t)v[base + 1] : CROSS_OUT;   // Background
-    L.crossCol = tail >= 3 ? ((uint32_t)v[base + 2] > 0xFFFFFF ? 0x1000000 : (uint32_t)v[base + 2]) : CROSS_COL;   // Cross colour
-    pendHas[k] = 1; scenePending = true;
-    return NULL;
-  }
-  if (strncasecmp(line, "RIM ", 4) == 0) {   // RIM percent: Rim thickness (no reply; it's applied with the SET that follows)
-    pendRimW = (uint8_t)constrain(atoi(line + 4), 25, 200); pendRim = true; return NULL;
-  }
-  if (strncasecmp(line, "XOUT ", 5) == 0) {   // XOUT style: what's outside a glowing cross (no reply; applied with the SET that follows)
+{% raw %}  if (strncasecmp(line, "XOUT ", 5) == 0) {   // XOUT style: what's outside a glowing cross (no reply; applied with the SET that follows)
     int o = atoi(line + 5); if (o >= 0 && o <= 255 && validOut((uint8_t)o)) { pendOut = (uint8_t)o; pendXout = true; }
     return NULL;
   }
@@ -2825,4 +2817,25 @@ void uiCfSwatch(const UiRect &r, int R, int i, bool sel) {   // one of the cross
     for (int x = cx - R; x <= cx + R; x++) {
       const float dx = x - cx, dy = y - cy, d = sqrtf(dx * dx + dy * dy) / R;
       if (d > 1) continue;
+      uint32_t c = cfPalColor(i, (atan2f(dy, dx) + 3.1416f) / 6.2832f * (i == 2 ? 1 : 0.8f) + (i == 2 ? 0 : 0.1f));
+      if (d > 0.9f) c = uiMix(c, 0x000000, (d - 0.9f) * 6);
+      ug.drawPixel(x, y, uiRGB(c));
+    }
+  }
+}
+
+// ---- the settings page ----
+int uiCrossMax() { return (int)((SCR_H - 8) * 0.8f); }   // the biggest cross for the way the screen is turned (as in the Studio)
+bool uiFullDay() { return uiKind == 0 && UI_BACKS[uiSelBack] == 18; }
+int uiPortalMax() { return min(SCR_W, SCR_H) / 2 - 1; }   // the biggest portal
+float uiSlFrac(int k) {                   // where each slider's knob sits, 0-1
+  if (uiKind == 3 && k > 0) {             // the cross fractals: zoom speed, then background or twist, then spacing or wobble
+    if (k == 1) return (stSpeed - 0.02f) / 0.28f;
+    if (k == 2) return uiSelStyle ? stCf[4] / 30.0f : stCf[0] / 6.0f;
+    return uiSelStyle ? stCf[5] / 100.0f : (stCf[1] - 55) / 45.0f;
+  }
+  switch (k) {
+    case 0: return (stBright - 10) / 90.0f;
+    case 1: if (uiKind) return (stRadius * 100.0f / uiPortalMax() - 30) / 70.0f; else { float pct = stRadius * 100.0f / uiCrossMax(); return (pct - 40) / 60.0f; }
+    case 2: return uiKind ? (stSpeed - 0.02f) / 0.28f : (stBeam - 5) / 25.0f;
 {% endraw %}

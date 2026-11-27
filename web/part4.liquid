@@ -1,25 +1,4 @@
-{% raw %}      uint32_t c = cfPalColor(i, (atan2f(dy, dx) + 3.1416f) / 6.2832f * (i == 2 ? 1 : 0.8f) + (i == 2 ? 0 : 0.1f));
-      if (d > 0.9f) c = uiMix(c, 0x000000, (d - 0.9f) * 6);
-      ug.drawPixel(x, y, uiRGB(c));
-    }
-  }
-}
-
-// ---- the settings page ----
-int uiCrossMax() { return (int)((SCR_H - 8) * 0.8f); }   // the biggest cross for the way the screen is turned (as in the Studio)
-bool uiFullDay() { return uiKind == 0 && UI_BACKS[uiSelBack] == 18; }
-int uiPortalMax() { return min(SCR_W, SCR_H) / 2 - 1; }   // the biggest portal
-float uiSlFrac(int k) {                   // where each slider's knob sits, 0-1
-  if (uiKind == 3 && k > 0) {             // the cross fractals: zoom speed, then background or twist, then spacing or wobble
-    if (k == 1) return (stSpeed - 0.02f) / 0.28f;
-    if (k == 2) return uiSelStyle ? stCf[4] / 30.0f : stCf[0] / 6.0f;
-    return uiSelStyle ? stCf[5] / 100.0f : (stCf[1] - 55) / 45.0f;
-  }
-  switch (k) {
-    case 0: return (stBright - 10) / 90.0f;
-    case 1: if (uiKind) return (stRadius * 100.0f / uiPortalMax() - 30) / 70.0f; else { float pct = stRadius * 100.0f / uiCrossMax(); return (pct - 40) / 60.0f; }
-    case 2: return uiKind ? (stSpeed - 0.02f) / 0.28f : (stBeam - 5) / 25.0f;
-    default: return uiKind == 1 ? stSparks / 30.0f : uiKind == 2 ? (stStars - 1) / 5.0f : uiFullDay() ? (stFdLen - 2) / 28.0f : (stSpeed - 0.02f) / 0.28f;
+{% raw %}    default: return uiKind == 1 ? stSparks / 30.0f : uiKind == 2 ? (stStars - 1) / 5.0f : uiFullDay() ? (stFdLen - 2) / 28.0f : (stSpeed - 0.02f) / 0.28f;
   }
 }
 void uiSlSet(int k, float f) {
@@ -2421,7 +2400,7 @@ var PDX = (() => {
   const ROOM = 2301952, COLS = { photo: "#e8a92c", gif: "#8a4fd8", video: "#3a7bd5", sound: "#2fa36b" };
   const RATE = 11025;                         // sound: samples a second (8-bit, one channel)
   const Q = { photo: 0.85, gif: 0.75, video: 0.72 };   // JPEG quality
-  const P = { orient: "land", trans: "fade", fade: 1, shuffle: false, vol: 80, depth: 50, warm: 50 };
+  const P = { orient: "land", trans: "fade", fade: 1, shuffle: false, vol: 80 };
   let room = ROOM, items = [], sel = -1, playAll = false, uid = 0, open = false, sending = false;
   const scr = $("pd-scr"), g = scr.getContext("2d");
   const SW = () => P.orient === "land" ? 480 : 320, SH = () => P.orient === "land" ? 320 : 480;
@@ -2641,20 +2620,42 @@ var PDX = (() => {
   $("pd-fade").oninput = e => { P.fade = +e.target.value; $("pd-o-fade").textContent = P.fade.toFixed(1) + " s"; };
   $("pd-vol").oninput = e => { P.vol = +e.target.value; $("pd-o-vol").textContent = P.vol ? P.vol + "%" : "off"; render(); };
   $("pd-shuffle").onchange = e => P.shuffle = e.target.checked;
-  // the screen's colour: it shows mid-tones too light and leans blue, so frames are sent darker and warmer to make up for it
-  try { const c = JSON.parse(localStorage.getItem("pd-colour") || "{}"); if (c.depth >= 0) P.depth = c.depth; if (c.warm >= 0) P.warm = c.warm; } catch (_) {}
-  const colourOuts = () => { $("pd-depth").value = P.depth; $("pd-warm").value = P.warm; $("pd-o-depth").textContent = P.depth; $("pd-o-warm").textContent = P.warm; try { localStorage.setItem("pd-colour", JSON.stringify({ depth: P.depth, warm: P.warm })); } catch (_) {} };
+  // the screen's colour. Measured on the 3.5" board: its mid-tones come out far too light (half-grey already looks nearly white)
+  // and it leans blue. So by default each frame is mapped through the inverse of that, to look like the picture does on a computer;
+  // Colour depth and Warmth (0 = none) are only for fine-tuning on top.
+  const PANEL_IN = [0, 26, 38, 50, 62, 74, 87, 99, 111, 123, 147, 184, 255];          // what's sent ...
+  const PANEL_OUT = [0, .07, .18, .35, .45, .52, .60, .70, .80, .83, .92, .97, 1];     // ... and how bright it looks on the board
+  const WANT = [[0, 0], [28, .10], [57, .26], [85, .44], [113, .57], [142, .69], [170, .79], [198, .87], [227, .94], [255, 1]];   // how bright each level looks on a computer
+  const GAIN = [1, 0.86, 0.72];                  // red, green, blue: the board's white is blue
+  const lerp = (xs, ys, x) => { for (let i = 1; i < xs.length; i++) if (x <= xs[i]) { const t = (x - xs[i - 1]) / (xs[i] - xs[i - 1] || 1); return ys[i - 1] + t * (ys[i] - ys[i - 1]); } return ys[ys.length - 1]; };
+  const AUTO = [0, 1, 2].map(c => {               // per channel: level wanted -> level to send
+    const t = new Uint8ClampedArray(256);
+    for (let d = 0; d < 256; d++) t[d] = Math.round(lerp(PANEL_OUT, PANEL_IN, lerp(WANT.map(w => w[0]), WANT.map(w => w[1]), d) * GAIN[c]));
+    return t;
+  });
+  P.auto = true; P.depth = 0; P.warm = 0;
+  try { const c = JSON.parse(localStorage.getItem("pd-colour2") || "{}"); if (typeof c.auto === "boolean") P.auto = c.auto; if (isFinite(c.depth)) P.depth = c.depth; if (isFinite(c.warm)) P.warm = c.warm; } catch (_) {}
+  const colourOuts = () => {
+    $("pd-auto").checked = P.auto; $("pd-depth").value = P.depth; $("pd-warm").value = P.warm; $("pd-o-depth").textContent = P.depth; $("pd-o-warm").textContent = P.warm;
+    if (P.depth || P.warm) $("pd-fine").open = true;
+    try { localStorage.setItem("pd-colour2", JSON.stringify({ auto: P.auto, depth: P.depth, warm: P.warm })); } catch (_) {}
+  };
+  $("pd-auto").onchange = e => { P.auto = e.target.checked; colourOuts(); };
   $("pd-depth").oninput = e => { P.depth = +e.target.value; colourOuts(); };
   $("pd-warm").oninput = e => { P.warm = +e.target.value; colourOuts(); };
+  $("pd-colreset").onclick = () => { P.depth = 0; P.warm = 0; colourOuts(); };
   colourOuts();
-  function screenColour(cx, W, H) {              // the same curve as the board's Colour depth and Warmth settings (on each colour's brightness, so hues stay put)
-    if (!P.depth && !P.warm) return;
-    const g = 1 + P.depth / 100, wb = 1 - P.warm * 0.0065, wg = 1 - P.warm * 0.0018, k = new Float32Array(256);
+  function screenColour(cx, W, H) {              // fine-tuning first (on each colour's brightness, so hues stay put), then the screen match
+    if (!P.auto && !P.depth && !P.warm) return;
+    const g = Math.max(0.3, 1 + P.depth / 100), wb = Math.min(1.5, 1 - P.warm * 0.0065), wg = Math.min(1.5, 1 - P.warm * 0.0018), k = new Float32Array(256);
     for (let i = 1; i < 256; i++) k[i] = Math.pow(i / 255, g) * 255 / i;
+    const tune = P.depth || P.warm, [ar, ag, ab] = AUTO;
     const im = cx.getImageData(0, 0, W, H), d = im.data;
     for (let i = 0; i < d.length; i += 4) {
-      const r = d[i], gg = d[i + 1], b = d[i + 2], m = r > gg ? (r > b ? r : b) : (gg > b ? gg : b), f = k[m];
-      d[i] = r * f; d[i + 1] = gg * f * wg; d[i + 2] = b * f * wb;
+      let r = d[i], gg = d[i + 1], b = d[i + 2];
+      if (tune) { const m = r > gg ? (r > b ? r : b) : (gg > b ? gg : b), f = k[m]; r = Math.min(255, r * f); gg = Math.min(255, gg * f * wg); b = Math.min(255, b * f * wb); }
+      if (P.auto) { r = ar[r | 0]; gg = ag[gg | 0]; b = ab[b | 0]; }
+      d[i] = r; d[i + 1] = gg; d[i + 2] = b;
     }
     cx.putImageData(im, 0, 0);
   }
