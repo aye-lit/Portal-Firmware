@@ -1,4 +1,12 @@
-{% raw %}  if (strcasecmp(line, "SHOWINFO") == 0) {       // SHOWINFO -> SHOW room width height id (id 0: none)
+{% raw %}  int d = (int)(255 * level * level * BRIGHTNESS / 100.0f + 0.5f);
+  if (d < 0) d = 0; if (d > 255) d = 255;
+  if (d != blNow) { blNow = (uint8_t)d; ledcWrite(SHOW_BL, d); }
+#endif
+}
+
+// ---- the commands ----
+const char *showCommand(char *line) {
+  if (strcasecmp(line, "SHOWINFO") == 0) {       // SHOWINFO -> SHOW room width height id (id 0: none)
     static char r[64];
     snprintf(r, sizeof(r), "SHOW %lu %u %u %lx", (unsigned long)showRoom(), SCR_W, SCR_H, (unsigned long)(showOk ? showH.id : 0));
     return r;
@@ -2580,4 +2588,7 @@ const char* handleCommand(char *line) {   // returns the reply to send back
     L.fadeOn = 0;                        // a scene's own colours don't fade through the colour sets
     L.style = (uint8_t)v[20]; L.crossFill = (uint8_t)v[21]; L.crossRipple = min((int)v[22], 10);
     L.beam = clampb((uint8_t)v[23], 5, 30); L.crossW = clampb((uint8_t)v[24], 25, 100); L.bar = clampb((uint8_t)v[25], 20, 50);
+    for (int j = 0; j < 4; j++) L.ripC[j] = n >= 30 ? (uint32_t)v[26 + j] & 0xFFFFFF : RIP_C[j];   // Gradient ripple colours
+    int base = n >= 30 ? 30 : 26, tail = n - base;   // ... [rimw [crossout [crosscol]]]
+    L.rimW = tail >= 1 ? (uint8_t)constrain((int)v[base], 25, 200) : RIM_W;   // Rim thickness
 {% endraw %}

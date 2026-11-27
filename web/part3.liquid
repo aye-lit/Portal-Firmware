@@ -1,7 +1,4 @@
-{% raw %}    for (int j = 0; j < 4; j++) L.ripC[j] = n >= 30 ? (uint32_t)v[26 + j] & 0xFFFFFF : RIP_C[j];   // Gradient ripple colours
-    int base = n >= 30 ? 30 : 26, tail = n - base;   // ... [rimw [crossout [crosscol]]]
-    L.rimW = tail >= 1 ? (uint8_t)constrain((int)v[base], 25, 200) : RIM_W;   // Rim thickness
-    L.crossOut = tail >= 2 && validOut((uint8_t)v[base + 1]) ? (uint8_t)v[base + 1] : CROSS_OUT;   // Background
+{% raw %}    L.crossOut = tail >= 2 && validOut((uint8_t)v[base + 1]) ? (uint8_t)v[base + 1] : CROSS_OUT;   // Background
     L.crossCol = tail >= 3 ? ((uint32_t)v[base + 2] > 0xFFFFFF ? 0x1000000 : (uint32_t)v[base + 2]) : CROSS_COL;   // Cross colour
     pendHas[k] = 1; scenePending = true;
     return NULL;
@@ -2814,4 +2811,18 @@ void uiCfPicture(const UiRect &r, int look, const int *cf, int bright, bool roun
     uint16_t *p = uiBuf + (y - uiY0) * SCR_W;
     for (int lx = 0; lx < r.w; lx++) {
       if (rounded) { int cx = lx < rad ? rad - lx : lx >= r.w - rad ? lx - (r.w - rad - 1) : 0, cy = ly < rad ? rad - ly : ly >= r.h - rad ? ly - (r.h - rad - 1) : 0; if (cx && cy && cx * cx + cy * cy > rad * rad) continue; }
+      p[r.x + lx] = look == 20 ? cfPixCC(cfU0 + lx * cfDU, cfV0 + ly * cfDU) : cfPixTun((lx - r.w / 2.0f) / cfU, (ly - cfOy) / cfU);
+    }
+  }
+  CF_BG = keep[0]; CF_GAP = keep[1]; CF_TGT = keep[2]; CF_PAL = keep[3]; CF_TWIST = keep[4]; CF_WOB = keep[5]; CF_FLOW = keep[6]; BRIGHTNESS = keep[7];
+}
+void uiCfSwatch(const UiRect &r, int R, int i, bool sel) {   // one of the cross fractals' colour sets: the colours round a ring
+  const int cx = r.x + R, cy = r.y + R;
+  if (!uiRowsHit(cy - R - 5, 2 * R + 10)) return;
+  if (sel) { ug.fillCircle(cx, cy, R + 4, uiRGB(0xFFFFFF)); ug.fillCircle(cx, cy, R + 1, uiRGB(0x0B0B10)); }
+  for (int y = cy - R; y <= cy + R; y++) {
+    if (y < uiY0 || y >= uiY0 + uiRows) continue;
+    for (int x = cx - R; x <= cx + R; x++) {
+      const float dx = x - cx, dy = y - cy, d = sqrtf(dx * dx + dy * dy) / R;
+      if (d > 1) continue;
 {% endraw %}

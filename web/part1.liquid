@@ -367,6 +367,12 @@
             <label class="pd-ctl" style="min-width:160px;flex:1" id="vps-pd-fadewrap"><span>Fade <output id="vps-pd-o-fade">1.0 s</output></span><input id="vps-pd-fade" type="range" min="0.3" max="3" step="0.1" value="1"></label>
           </div>
           <div class="pd-row">
+            <span class="pd-lab">Screen colour</span>
+            <label class="pd-ctl" style="min-width:140px;flex:1"><span>Colour depth <output id="vps-pd-o-depth">50</output></span><input id="vps-pd-depth" type="range" min="0" max="100" step="5" value="50"></label>
+            <label class="pd-ctl" style="min-width:140px;flex:1"><span>Warmth <output id="vps-pd-o-warm">50</output></span><input id="vps-pd-warm" type="range" min="0" max="100" step="5" value="50"></label>
+          </div>
+          <p class="pd-hint" style="margin-top:4px">This screen shows colours paler and bluer than they really are, so these darken the mid-tones and take out some blue in what's sent (the preview here shows the true colours). To tune them, send the colour test card: white should look white, and the grey fade should go evenly from black to white.</p>
+          <div class="pd-row">
             <span class="pd-lab">Video sound</span>
             <label class="pd-ctl" style="min-width:160px;flex:1"><span>Volume <output id="vps-pd-o-vol">80%</output></span><input id="vps-pd-vol" type="range" min="0" max="100" step="5" value="80"></label>
           </div>
@@ -1121,12 +1127,4 @@ void showBegin() {                       // in setup(): the backlight dims for f
 uint8_t blNow = 255;
 void showBacklight(float level) {        // 0-1 (and the Brightness setting)
 #if SHOW_BL >= 0
-  int d = (int)(255 * level * level * BRIGHTNESS / 100.0f + 0.5f);
-  if (d < 0) d = 0; if (d > 255) d = 255;
-  if (d != blNow) { blNow = (uint8_t)d; ledcWrite(SHOW_BL, d); }
-#endif
-}
-
-// ---- the commands ----
-const char *showCommand(char *line) {
 {% endraw %}

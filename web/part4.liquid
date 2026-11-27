@@ -1,18 +1,4 @@
-{% raw %}      p[r.x + lx] = look == 20 ? cfPixCC(cfU0 + lx * cfDU, cfV0 + ly * cfDU) : cfPixTun((lx - r.w / 2.0f) / cfU, (ly - cfOy) / cfU);
-    }
-  }
-  CF_BG = keep[0]; CF_GAP = keep[1]; CF_TGT = keep[2]; CF_PAL = keep[3]; CF_TWIST = keep[4]; CF_WOB = keep[5]; CF_FLOW = keep[6]; BRIGHTNESS = keep[7];
-}
-void uiCfSwatch(const UiRect &r, int R, int i, bool sel) {   // one of the cross fractals' colour sets: the colours round a ring
-  const int cx = r.x + R, cy = r.y + R;
-  if (!uiRowsHit(cy - R - 5, 2 * R + 10)) return;
-  if (sel) { ug.fillCircle(cx, cy, R + 4, uiRGB(0xFFFFFF)); ug.fillCircle(cx, cy, R + 1, uiRGB(0x0B0B10)); }
-  for (int y = cy - R; y <= cy + R; y++) {
-    if (y < uiY0 || y >= uiY0 + uiRows) continue;
-    for (int x = cx - R; x <= cx + R; x++) {
-      const float dx = x - cx, dy = y - cy, d = sqrtf(dx * dx + dy * dy) / R;
-      if (d > 1) continue;
-      uint32_t c = cfPalColor(i, (atan2f(dy, dx) + 3.1416f) / 6.2832f * (i == 2 ? 1 : 0.8f) + (i == 2 ? 0 : 0.1f));
+{% raw %}      uint32_t c = cfPalColor(i, (atan2f(dy, dx) + 3.1416f) / 6.2832f * (i == 2 ? 1 : 0.8f) + (i == 2 ? 0 : 0.1f));
       if (d > 0.9f) c = uiMix(c, 0x000000, (d - 0.9f) * 6);
       ug.drawPixel(x, y, uiRGB(c));
     }
@@ -2435,7 +2421,7 @@ var PDX = (() => {
   const ROOM = 2301952, COLS = { photo: "#e8a92c", gif: "#8a4fd8", video: "#3a7bd5", sound: "#2fa36b" };
   const RATE = 11025;                         // sound: samples a second (8-bit, one channel)
   const Q = { photo: 0.85, gif: 0.75, video: 0.72 };   // JPEG quality
-  const P = { orient: "land", trans: "fade", fade: 1, shuffle: false, vol: 80 };
+  const P = { orient: "land", trans: "fade", fade: 1, shuffle: false, vol: 80, depth: 50, warm: 50 };
   let room = ROOM, items = [], sel = -1, playAll = false, uid = 0, open = false, sending = false;
   const scr = $("pd-scr"), g = scr.getContext("2d");
   const SW = () => P.orient === "land" ? 480 : 320, SH = () => P.orient === "land" ? 320 : 480;
@@ -2655,6 +2641,23 @@ var PDX = (() => {
   $("pd-fade").oninput = e => { P.fade = +e.target.value; $("pd-o-fade").textContent = P.fade.toFixed(1) + " s"; };
   $("pd-vol").oninput = e => { P.vol = +e.target.value; $("pd-o-vol").textContent = P.vol ? P.vol + "%" : "off"; render(); };
   $("pd-shuffle").onchange = e => P.shuffle = e.target.checked;
+  // the screen's colour: it shows mid-tones too light and leans blue, so frames are sent darker and warmer to make up for it
+  try { const c = JSON.parse(localStorage.getItem("pd-colour") || "{}"); if (c.depth >= 0) P.depth = c.depth; if (c.warm >= 0) P.warm = c.warm; } catch (_) {}
+  const colourOuts = () => { $("pd-depth").value = P.depth; $("pd-warm").value = P.warm; $("pd-o-depth").textContent = P.depth; $("pd-o-warm").textContent = P.warm; try { localStorage.setItem("pd-colour", JSON.stringify({ depth: P.depth, warm: P.warm })); } catch (_) {} };
+  $("pd-depth").oninput = e => { P.depth = +e.target.value; colourOuts(); };
+  $("pd-warm").oninput = e => { P.warm = +e.target.value; colourOuts(); };
+  colourOuts();
+  function screenColour(cx, W, H) {              // the same curve as the board's Colour depth and Warmth settings (on each colour's brightness, so hues stay put)
+    if (!P.depth && !P.warm) return;
+    const g = 1 + P.depth / 100, wb = 1 - P.warm * 0.0065, wg = 1 - P.warm * 0.0018, k = new Float32Array(256);
+    for (let i = 1; i < 256; i++) k[i] = Math.pow(i / 255, g) * 255 / i;
+    const im = cx.getImageData(0, 0, W, H), d = im.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], gg = d[i + 1], b = d[i + 2], m = r > gg ? (r > b ? r : b) : (gg > b ? gg : b), f = k[m];
+      d[i] = r * f; d[i + 1] = gg * f * wg; d[i + 2] = b * f * wb;
+    }
+    cx.putImageData(im, 0, 0);
+  }
   $("pd-play").onclick = () => { if (!items.length) return; playAll = !playAll; t0 = performance.now(); $("pd-play").textContent = playAll ? "■ Stop the show" : "▶ Play the whole show"; $("pd-edit").hidden = playAll || !cur(); $("pd-draghint").hidden = playAll || !cur(); render(); };
 
   function useBoard(k) {                        // the Studio's board (and its screen) follow this page
@@ -2705,6 +2708,7 @@ var PDX = (() => {
       else if (it.type === "gif") src = gifFrame(it, k / it.fps);
       else { await seekTo(v, Math.min(it.dur - 0.01, it.start + k / it.fps)); src = v; }
       drawOn(cx, it, src, W, H);
+      screenColour(cx, W, H);
       out.push(await canvasJpeg(c, Q[it.type] * scaleQ));
       onFrame && onFrame();
     }
